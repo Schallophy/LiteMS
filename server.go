@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -27,10 +28,15 @@ var reItemID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // Server 持有 HTTP 服务所需的全部状态。
 type Server struct {
-	cfg   *Config
-	db    *DB
-	tpl   *template.Template
-	roots []string
+	cfg           *Config
+	db            *DB
+	tpl           *template.Template
+	roots         []string
+	settingsToken string // 设置页 CSRF 令牌，进程启动时生成
+
+	// 设置页可改的凭据快照。单独存一份并加锁，避免直接写 cfg 与其它请求竞争。
+	credsMu sync.RWMutex
+	creds   scrapeCreds
 }
 
 // tplFuncs 是模板里用到的格式化助手。
@@ -71,7 +77,11 @@ func RunServer(cfg *Config, db *DB) error {
 	if err != nil {
 		return fmt.Errorf("解析模板失败: %w", err)
 	}
-	s := &Server{cfg: cfg, db: db, tpl: tpl, roots: cfg.AllRoots()}
+	s := &Server{
+		cfg: cfg, db: db, tpl: tpl, roots: cfg.AllRoots(),
+		settingsToken: newSettingsToken(),
+		creds:         credsFromConfig(cfg),
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
@@ -87,6 +97,7 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/poster/", s.handleImage(true))
 	mux.HandleFunc("/fanart/", s.handleImage(false))
 	mux.HandleFunc("/item/", s.handleItemPage)
+	mux.HandleFunc("/settings", s.handleSettings)
 	mux.HandleFunc("/", s.handleIndex)
 
 	var h http.Handler = mux

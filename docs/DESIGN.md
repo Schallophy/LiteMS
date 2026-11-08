@@ -7,7 +7,7 @@ title: DESIGN
 > 一个跑在 Termux 上的轻量媒体库服务器：负责刮削、索引、文件服务；
 > 播放交给 PC 上的本地播放器。
 >
-> 文档版本：v1.9　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
+> 文档版本：v2.0　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
 
 ---
 
@@ -894,6 +894,8 @@ OMDb Response=False → 视为 miss，不重试
 | `GET`  | `/fanart/{id}`       | 背景图片            |
 | `GET`  | `/stream/{id}`       | 视频流（支持 Range）   |
 | `GET`  | `/sub/{id}`          | 外挂字幕（支持 `?lang=`） |
+| `GET`  | `/settings`          | 设置页（HTML，写刮削凭据） |
+| `POST` | `/settings`          | 保存 / 测试凭据（需 CSRF 令牌） |
 | `GET`  | `/healthz`           | 健康检查            |
 
 `/healthz` 的语义要明确：`200` 仅在「数据库可查询」时返回，响应体带 `{"db":"ok","items":1284,"last_scan":1731000000}`。不要只 `return 200`，那样探活探不出东西。
@@ -1017,7 +1019,30 @@ ORDER BY p.updated_at DESC LIMIT 20
 
 > v1.0 只有 `position_ms`，没有 `finished`，把位置归零后无法区分「刚看完」和「从未播放」，「继续观看」必然混入已看完的条目。这是 v1.1 修掉的结构性缺陷。
 
-### 9.8 认证
+### 9.8 设置页 `GET/POST /settings`
+
+只做一件事：把刮削凭据写进配置文件。**不接管配置文件**——只在 `[scrape]` 段里改白名单内的五个键
+（`provider` / `language` / `tmdb_token` / `tmdb_key` / `omdb_key`），其余段落、注释、键顺序原样保留。
+理由：配置文件是这个项目唯一可手工编辑的配置来源，整份重写会把用户写在里面的注释和注释掉的行一起冲掉。
+
+写入行为：
+
+- 文件不存在则创建，权限 `0600`；内容先写临时文件再 `rename`，不会出现半截配置
+- 表单项留空 = 保持原值，避免「只改语言却把 token 清空」
+- 「测试连接」用**提交中的值**跑一次 `probeScraper`，不落盘；验证通过再保存
+
+**安全边界**（这是全项目唯一能写文件的外部入口，必须写清楚）：
+
+| 风险 | 处理 |
+| --- | --- |
+| 跨站表单提交（CSRF） | 表单带进程级随机令牌 `settingsToken`，提交时比对。**只靠 Basic Auth 挡不住**——浏览器会自动为同源请求带上凭据，这正是 CSRF 的前提 |
+| 明文密钥出现在页面 | 只回显掩码（首尾各 4 位），字段类型 `password`，`Cache-Control: no-store` |
+| 未启用认证时暴露 | 页面显式提示「局域网内任何人都能打开本页」，不做静默处理 |
+| 密钥被日志记录 | 任何路径都不打印 token；`probeScraper` 的错误信息在 `tmdb.go` 里做过 API Key 脱敏 |
+
+**生效时机**：保存只影响之后的 `litems scrape`。`serve` 进程内的凭据快照会同步更新用于回显，但浏览与推流本就不依赖它，因此**不需要重启服务**。
+
+### 9.9 认证
 
 可选 Basic Auth。启用后所有端点（含 `/stream`、`/poster`）均需认证。
 
@@ -1709,7 +1734,7 @@ chmod / utime 失败    → 权限与时间戳无法保持
 
 - 全部只在局域网监听，不做公网暴露
 - 至少给 Filebrowser 和 Syncthing 设强密码——它们有写权限，比只读的 LiteMS 危险得多
-- LiteMS 的 Basic Auth 是否启用见 9.8，明文传输的局限要清楚
+- LiteMS 的 Basic Auth 是否启用见 9.9，明文传输的局限要清楚
 
 #### 内存与进程数
 
@@ -1988,6 +2013,21 @@ go test ./...
 
 ## 19. 变更记录
 
+### v2.0（2026-11-09）—— 项目更名 LiteMS，新增设置页
+
+**更名**：`mediasrv` → **LiteMS**，命令 `litems`，配置目录 `~/.config/litems`，状态目录 `.litems/`，
+module `github.com/Schallophy/LiteMS`。旧环境变量 `MEDIASRV_CONFIG` 与旧状态目录名仍被识别，升级不断档。
+
+**新增 `GET/POST /settings`**：在浏览器里填 TMDB/OMDb 凭据，不必 SSH 上去改文件。
+
+- 只改 `[scrape]` 段的白名单键，其余内容与注释原样保留；文件以 `0600` 写入、临时文件 + rename 落盘
+- 「测试连接」用提交中的值跑一次自检，不落盘
+- CSRF 防护用进程级随机令牌；只靠 Basic Auth 挡不住跨站表单提交
+- 未启用认证时页面显式警告
+
+**为什么不用「整份配置重写」**：配置文件是这个项目唯一可手工编辑的配置源，`toml.Encode` 会把注释、
+注释掉的备选项、键顺序全部冲掉。宁可手写一段按行编辑的代码，也不破坏用户已有的文件。
+
 ### v1.9（2026-11-09）—— 前端重做，补上「图片引用可重建」
 
 **背景**：功能已经跑通，但界面还是原型水准——灰底占位、无层级、缺图时整块空白。同时发现一个与「删库可重建」约定冲突的实现缺口。
@@ -2255,6 +2295,8 @@ litems/
 ├── db.go                ✅ SQLite 封装（DSN/pragma/事务/迁移/查询）
 ├── server.go            ✅ 路由、Basic Auth、API、流、字幕、页面渲染
 ├── launch.go            ✅ helper（POST + Origin + token + PNA 预检）
+├── settings.go          ✅ 设置页：凭据写回配置（白名单 + CSRF 令牌）
+├── settings_test.go     ✅ 配置写回不破坏注释与其它段
 ├── net.go               ✅ DNS 自检与三级回退、代理注入
 ├── scrape.go            ✅ 刮削主流程、匹配门槛、剧集分组、落盘
 ├── scrape_test.go       ✅ 假 TMDB 端到端（含幂等与 lockdata）
@@ -2264,7 +2306,8 @@ litems/
 ├── nfo_test.go          ✅ NFO 结构与 uniqueid 优先级
 ├── web/
 │   ├── index.html       ✅ 海报墙、搜索、分页
-│   └── item.html        ✅ 详情页、播放按钮、复制命令
+│   ├── item.html
+│   └── settings.html        ✅ 详情页、播放按钮、复制命令
 ├── probe/               ✅ M0 网络自检（DNS / 可达性 / 代理）
 ├── bench/               ✅ 组件基准（SQLite / 推流，见附录 C）
 ├── docs/DESIGN.md       本文档

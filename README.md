@@ -48,20 +48,24 @@ git clone https://github.com/Schallophy/LiteMS && cd LiteMS
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
   go build -trimpath -ldflags="-s -w" -o ~/bin/litems .
 
-# 4. 配置
-mkdir -p ~/.config/litems
-cp config.example.toml ~/.config/litems/config.toml
-$EDITOR ~/.config/litems/config.toml     # 至少填 tmdb_token 或 tmdb_key
-
-# 5. 扫描 → 刮削 → 起服务
+# 4. 先把服务起起来，凭据在网页里填（首次没有配置文件也能跑）
 ~/bin/litems scan --dry-run
 ~/bin/litems scan
-~/bin/litems scrape --probe              # 先验凭据与网络，只发一次请求
-~/bin/litems scrape
 ~/bin/litems serve
 ```
 
-浏览器打开 `http://<手机IP>:8080`。
+浏览器打开 `http://<手机IP>:8080`，点右上角的设置按钮填 TMDB 凭据，点「测试连接」通过后保存。
+也可以跳过网页，直接拷一份完整配置手工改：
+
+```bash
+mkdir -p ~/.config/litems
+cp config.example.toml ~/.config/litems/config.toml
+$EDITOR ~/.config/litems/config.toml     # 至少填 tmdb_token 或 tmdb_key
+~/bin/litems scrape --probe              # 先验凭据与网络，只发一次请求
+~/bin/litems scrape
+```
+
+设置页写入的是同一份文件，**只改 `[scrape]` 段里的几个键**，你手写的注释和别的段落不会被覆盖。
 
 PC 上想一键播放，再跑一个 helper：
 

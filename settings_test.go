@@ -1,0 +1,152 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestWriteScrapeSettingsCreatesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	vals := map[string]string{
+		"provider":   "tmdb",
+		"language":   "zh-CN",
+		"tmdb_token": "eyJhbGciOiJIUzI1NiJ9.body.sig",
+		"tmdb_key":   "",
+		"omdb_key":   "",
+	}
+	if err := writeScrapeSettings(path, vals); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+
+	cfg, exists, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("重新解析失败: %v", err)
+	}
+	if !exists {
+		t.Fatal("文件应已创建")
+	}
+	if cfg.Scrape.TMDBToken != vals["tmdb_token"] {
+		t.Errorf("token = %q, want %q", cfg.Scrape.TMDBToken, vals["tmdb_token"])
+	}
+	if cfg.Scrape.Provider != "tmdb" || cfg.Scrape.Language != "zh-CN" {
+		t.Errorf("provider/language = %q/%q", cfg.Scrape.Provider, cfg.Scrape.Language)
+	}
+
+	// 含密钥的文件不能是所有人可读
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("权限 = %o, want 600", perm)
+	}
+}
+
+// 关键行为：只动白名单里的键，注释、顺序和其它段一律保留。
+func TestWriteScrapeSettingsPreservesRest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := `# 手工写的注释
+[server]
+listen = "0.0.0.0:8080"
+
+[library]
+root = "/home/u/Media"   # 行尾注释
+
+[scrape]
+# 凭据在下面
+provider    = "omdb"
+omdb_key    = "old-omdb"
+concurrency = 2          # 不许被改动
+title_sim_min = 0.75
+
+[ui]
+title = "我的媒体库"
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := map[string]string{
+		"provider":   "tmdb",
+		"language":   "zh-CN",
+		"tmdb_token": "new-token",
+		"tmdb_key":   "",
+		"omdb_key":   "",
+	}
+	if err := writeScrapeSettings(path, vals); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+
+	for _, want := range []string{
+		"# 手工写的注释",                     // 文件头注释
+		`root = "/home/u/Media"   # 行尾注释`, // 其它段原样
+		"concurrency = 2          # 不许被改动",
+		`provider = "tmdb"`,   // 白名单内被更新
+		`tmdb_token = "new-token"`,
+		`omdb_key = ""`, // 显式清空
+		"[scrape]",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("缺少内容 %q\n--- 实际 ---\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `provider    = "omdb"`) {
+		t.Error("旧的 provider 没有被替换")
+	}
+	if strings.Contains(text, "old-omdb") {
+		t.Error("旧的 omdb_key 没有被替换")
+	}
+
+	// 缺失的键应补在 [scrape] 段内，而不是追加到文件末尾
+	idxScrape := strings.Index(text, "[scrape]")
+	idxUI := strings.Index(text, "[ui]")
+	idxLang := strings.Index(text, `language = "zh-CN"`)
+	if !(idxScrape < idxLang && idxLang < idxUI) {
+		t.Errorf("language 落在错误位置：scrape=%d lang=%d ui=%d", idxScrape, idxLang, idxUI)
+	}
+}
+
+func TestWriteScrapeSettingsAppendsMissingSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[server]\nlisten = \":8080\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vals := map[string]string{
+		"provider": "tmdb", "language": "zh-CN",
+		"tmdb_token": "t", "tmdb_key": "", "omdb_key": "",
+	}
+	if err := writeScrapeSettings(path, vals); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	cfg, _, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if cfg.Server.Listen != ":8080" {
+		t.Errorf("原有配置被破坏: %q", cfg.Server.Listen)
+	}
+	if cfg.Scrape.TMDBToken != "t" {
+		t.Errorf("token = %q", cfg.Scrape.TMDBToken)
+	}
+}
+
+func TestMaskSecret(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"short", "•••••"},
+		{"eyJhbGciOiJIUzI1NiJ9.abcdefg.hijklmn", "eyJh" + strings.Repeat("•", 6) + "klmn"},
+	}
+	for _, c := range cases {
+		if got := maskSecret(c.in); got != c.want {
+			t.Errorf("maskSecret(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

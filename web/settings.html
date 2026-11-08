@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="{{.Theme}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#08090c">
+<title>设置 · {{.Title}}</title>
+<style>
+:root{
+  --bg:#08090c;
+  --surface:#12141a;
+  --surface-2:#1a1e26;
+  --line:rgba(255,255,255,.07);
+  --line-2:rgba(255,255,255,.14);
+  --text:#f4f5f7;
+  --text-2:#a2a8b3;
+  --text-3:#6d7481;
+  --gold:#e3b774;
+  --gold-2:#c9974a;
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;min-height:100vh;background:var(--bg);color:var(--text);
+  font:15px/1.65 "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+       "Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font-feature-settings:"tnum" 1;-webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(900px 460px at 18% -10%,rgba(227,183,116,.10),transparent 62%),
+    radial-gradient(760px 420px at 84% -6%,rgba(96,140,255,.06),transparent 58%);
+}
+a{color:inherit;text-decoration:none}
+
+.top{
+  position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;
+  padding:15px clamp(18px,4vw,44px);
+  background:rgba(8,9,12,.74);border-bottom:1px solid var(--line);
+  backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);
+}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.mark{
+  position:relative;width:26px;height:26px;flex:0 0 auto;border-radius:8px;
+  background:linear-gradient(145deg,#f4dcb0,var(--gold) 45%,#a9743a);
+  box-shadow:0 0 0 1px rgba(255,255,255,.14),0 8px 18px -8px rgba(227,183,116,.7);
+}
+.mark::after{
+  content:"";position:absolute;left:50%;top:50%;transform:translate(-36%,-50%);
+  border-left:8px solid rgba(8,9,12,.84);
+  border-top:5.5px solid transparent;border-bottom:5.5px solid transparent;
+}
+.name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.back{
+  margin-left:auto;padding:7px 16px;border-radius:999px;font-size:13px;color:var(--text-2);
+  border:1px solid var(--line);background:rgba(255,255,255,.04);transition:.2s;
+}
+.back:hover{color:var(--text);background:rgba(255,255,255,.09);border-color:var(--line-2)}
+
+main{position:relative;z-index:1;padding:clamp(26px,3.4vw,42px) clamp(18px,4vw,44px) 90px}
+.wrap{max-width:760px;margin:0 auto}
+h1{margin:0 0 6px;font-size:24px;font-weight:600;letter-spacing:-.01em}
+.lead{margin:0 0 26px;font-size:13.5px;color:var(--text-2)}
+
+.alert{
+  display:flex;gap:10px;align-items:flex-start;
+  padding:12px 16px;border-radius:11px;font-size:13px;margin-bottom:16px;line-height:1.6;
+}
+.alert.ok{border:1px solid rgba(110,200,150,.32);background:rgba(110,200,150,.08);color:#bfe6cd}
+.alert.err{border:1px solid rgba(235,120,120,.32);background:rgba(235,120,120,.08);color:#f2c4c4}
+.alert::before{content:"●";font-size:9px;line-height:1.9;opacity:.85}
+
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  padding:22px 24px 8px;margin-bottom:16px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+}
+.card h2{
+  margin:0 0 18px;font-size:11px;font-weight:600;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--gold);
+}
+label{display:block;margin-bottom:18px}
+.lbl{display:block;font-size:12.5px;color:var(--text-2);margin-bottom:7px}
+input[type=text],input[type=password],select{
+  width:100%;padding:10px 13px;border-radius:10px;font:inherit;font-size:13.5px;
+  color:var(--text);background:rgba(255,255,255,.045);
+  border:1px solid var(--line);outline:none;
+  transition:border-color .2s,background .2s,box-shadow .2s;
+}
+input::placeholder{color:var(--text-3);font-size:12.5px}
+input:focus,select:focus{
+  border-color:rgba(227,183,116,.45);background:rgba(255,255,255,.07);
+  box-shadow:0 0 0 3px rgba(227,183,116,.10);
+}
+select{appearance:none;-webkit-appearance:none;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--text-3) 50%),
+                   linear-gradient(135deg,var(--text-3) 50%,transparent 50%);
+  background-position:calc(100% - 19px) 18px,calc(100% - 14px) 18px;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.hint{margin:-8px 0 16px;font-size:12px;line-height:1.7;color:var(--text-3)}
+.hint a{color:var(--gold);border-bottom:1px solid rgba(227,183,116,.35)}
+
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0 8px}
+.btn{
+  display:inline-flex;align-items:center;gap:8px;padding:11px 24px;border-radius:999px;
+  border:1px solid var(--line-2);background:rgba(255,255,255,.05);color:var(--text);
+  font:inherit;font-size:13.5px;font-weight:500;cursor:pointer;
+  transition:background .2s,border-color .2s,transform .2s,box-shadow .3s;
+}
+.btn:hover{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.24);transform:translateY(-1px)}
+.btn.primary{
+  border-color:transparent;font-weight:600;color:#1a1206;
+  background:linear-gradient(160deg,#f6deb4,var(--gold) 46%,#c08f45);
+  box-shadow:0 14px 30px -12px rgba(227,183,116,.65);
+}
+.btn.primary:hover{background:linear-gradient(160deg,#fae6c2,#e8bf7f 46%,#c99a52)}
+.btn[disabled]{opacity:.55;cursor:progress;transform:none}
+
+.probe{
+  margin:18px 0 0;padding:14px 16px;border-radius:11px;overflow:auto;
+  background:#0b0d11;border:1px solid var(--line);color:var(--text-2);
+  font:12.5px/1.75 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;
+}
+
+.meta{font-size:12.5px;color:var(--text-3);line-height:1.9}
+.meta code{
+  padding:2px 7px;border-radius:5px;font-size:12px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  background:rgba(255,255,255,.07);border:1px solid var(--line);color:var(--text-2);
+  word-break:break-all;
+}
+.meta .warn{color:#e8b48a}
+
+@media(max-width:600px){
+  .top{padding:12px 16px}
+  main{padding:22px 16px 70px}
+  .card{padding:18px 16px 4px}
+  .actions .btn{flex:1 1 45%;justify-content:center}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">
+    <span class="mark"></span>
+    <span class="name">{{.Title}}</span>
+  </a>
+  <a class="back" href="/">返回媒体库</a>
+</header>
+
+<main>
+<div class="wrap">
+  <h1>设置</h1>
+  <p class="lead">刮削用的 API 凭据只保存在本机配置文件里，不会发往任何第三方。</p>
+
+  {{if .Error}}<div class="alert err">{{.Error}}</div>{{end}}
+  {{if .Message}}<div class="alert ok">{{.Message}}</div>{{end}}
+
+  <form method="post" action="/settings" autocomplete="off">
+    <input type="hidden" name="token" value="{{.Token}}">
+
+    <section class="card">
+      <h2>数据源</h2>
+      <label>
+        <span class="lbl">刮削后端</span>
+        <select name="provider">
+          <option value="tmdb" {{if eq .Provider "tmdb"}}selected{{end}}>TMDB（推荐，中文与剧集最全）</option>
+          <option value="omdb" {{if eq .Provider "omdb"}}selected{{end}}>OMDb（兜底，无中文简介）</option>
+        </select>
+      </label>
+      <label>
+        <span class="lbl">元数据语言</span>
+        <input type="text" name="language" value="{{.Language}}" placeholder="zh-CN">
+      </label>
+      <p class="hint">语言影响标题与简介。中文缺失时会按字段回落到 <code>en-US</code>，不需要改这里。</p>
+    </section>
+
+    <section class="card">
+      <h2>TMDB 凭据</h2>
+      <label>
+        <span class="lbl">API Read Access Token（v4，推荐）</span>
+        <input type="password" name="tmdb_token" spellcheck="false"
+               placeholder="{{if .TMDBMasked}}已配置 {{.TMDBMasked}} — 留空不修改{{else}}eyJhbGciOiJIUzI1NiJ9…{{end}}">
+      </label>
+      <label>
+        <span class="lbl">API Key（v3，可选）</span>
+        <input type="password" name="tmdb_key" spellcheck="false"
+               placeholder="{{if .TMDBKeyMask}}已配置 {{.TMDBKeyMask}} — 留空不修改{{else}}32 位十六进制串{{end}}">
+      </label>
+      <p class="hint">
+        在 <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org → 设置 → API</a>
+        申请，免费、当场生成。填 v4 token 就够了，v3 只是给不方便设请求头的客户端用。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>OMDb 凭据（可选）</h2>
+      <label>
+        <span class="lbl">API Key</span>
+        <input type="password" name="omdb_key" spellcheck="false"
+               placeholder="{{if .OMDBMasked}}已配置 {{.OMDBMasked}} — 留空不修改{{else}}仅在后端切到 omdb 时需要{{end}}">
+      </label>
+      <p class="hint">OMDb 免费档每天 1000 次，没有中文简介、没有背景图，只在新片匹配失败时当兜底。</p>
+    </section>
+
+    <div class="actions">
+      <button class="btn primary" type="submit" name="action" value="save">保存</button>
+      <button class="btn" type="submit" name="action" value="test">测试连接</button>
+    </div>
+  </form>
+
+  {{if .Probe}}<pre class="probe">{{.Probe}}</pre>{{end}}
+
+  <div class="meta" style="margin-top:26px">
+    配置文件 <code>{{.ConfigPath}}</code>
+    （{{if .ConfigExists}}已存在{{else}}尚不存在，保存时创建{{end}}，权限 600）
+    <br>
+    保存只影响之后启动的 <code>litems scrape</code>；浏览与播放不受影响，也不需要重启服务。
+    {{if not .AuthOn}}
+    <br>
+    <span class="warn">当前未启用 Basic Auth —— 局域网内任何人都能打开本页并修改凭据。</span>
+    {{end}}
+  </div>
+</div>
+</main>
+</body>
+</html>

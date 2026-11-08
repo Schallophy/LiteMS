@@ -19,6 +19,9 @@ type Config struct {
 	UI       UIConfig       `toml:"ui"`
 	Watch    WatchConfig    `toml:"watch"`
 	Launch   LaunchConfig   `toml:"launch"`
+
+	// Path 是实际使用的配置文件路径（可能源文件并不存在），设置页写回时用。
+	Path string `toml:"-"`
 }
 
 type ServerConfig struct {
@@ -161,6 +164,7 @@ func LoadConfig(path string) (*Config, bool, error) {
 	if path == "" {
 		path = DefaultConfigPath()
 	}
+	cfg.Path = path
 	fi, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -241,7 +241,7 @@ func cmdScrape(args []string) {
 			os.Exit(1)
 		}
 		start := time.Now()
-		if err := probeScraper(ctx, sc, cfg); err != nil {
+		if err := probeScraper(ctx, sc, cfg, logf); err != nil {
 			errf("自检失败：%v", err)
 			os.Exit(1)
 		}
@@ -277,7 +277,8 @@ func cmdScrape(args []string) {
 }
 
 // probeScraper 发一次最小请求，验证凭据与网络。
-func probeScraper(ctx context.Context, sc Scraper, cfg *Config) error {
+// log 由调用方提供：CLI 写 stderr，设置页收集成文本显示。
+func probeScraper(ctx context.Context, sc Scraper, cfg *Config, log func(string, ...any)) error {
 	if c, ok := sc.(*TMDBClient); ok {
 		if err := c.Probe(ctx); err != nil {
 			return err
@@ -289,12 +290,12 @@ func probeScraper(ctx context.Context, sc Scraper, cfg *Config) error {
 		if len(cands) == 0 {
 			return fmt.Errorf("接口通了，但搜索没有返回结果")
 		}
-		logf("搜索 \"Interstellar\"：%d 个候选，首个是 %q（%d）", len(cands), cands[0].Title, cands[0].Year)
+		log("搜索 \"Interstellar\"：%d 个候选，首个是 %q（%d）", len(cands), cands[0].Title, cands[0].Year)
 		meta, err := c.Detail(ctx, cands[0].Key, KindMovie)
 		if err != nil {
 			return err
 		}
-		logf("详情：%q %d 年 %d 分钟 评分 %.1f，海报 %v，背景 %v",
+		log("详情：%q %d 年 %d 分钟 评分 %.1f，海报 %v，背景 %v",
 			meta.Title, meta.Year, meta.RuntimeMin, meta.Rating, meta.PosterPath != "", meta.FanartPath != "")
 		return nil
 	}
@@ -305,7 +306,7 @@ func probeScraper(ctx context.Context, sc Scraper, cfg *Config) error {
 	if len(cands) == 0 {
 		return fmt.Errorf("接口通了，但搜索没有返回结果")
 	}
-	logf("搜索 \"Interstellar\"：%d 个候选，首个 %q（%d）", len(cands), cands[0].Title, cands[0].Year)
+	log("搜索 \"Interstellar\"：%d 个候选，首个 %q（%d）", len(cands), cands[0].Title, cands[0].Year)
 	return nil
 }
 
