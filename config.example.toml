@@ -1,0 +1,92 @@
+# litems 配置示例
+# 复制到 ~/.config/litems/config.toml 后按需修改。
+# 所有键都有默认值，最小可运行配置只需要 [library] 与 [scrape]。
+
+[server]
+listen                  = "0.0.0.0:8080"
+# 可选 Basic Auth。启用后 /stream、/poster 也需要认证。
+# 注意：明文 HTTP 传输，等同把密码广播到局域网，仅在可信网络使用。
+# auth_user = "media"
+# auth_pass = "changeme"
+read_header_timeout_sec = 10
+idle_timeout_sec        = 120
+
+[net]
+# DNS 服务器。
+#   "auto"  = 探测本机出口地址推断网关（推荐，换网络无需改配置）
+#   ""      = 用系统默认；GOOS=linux 产物读 /etc/resolv.conf，Termux 上该文件不存在 → 必然失败
+#   "IP:53" = 写死，如 "192.168.137.1:53"
+dns = "auto"
+# 代理。仅在 api.tmdb.org 也被污染时才需要；OMDb 直连可达。
+# 支持 "socks5://127.0.0.1:7890" 与 "http://127.0.0.1:7890"
+proxy = ""
+
+[library]
+# 媒体根。放在 $HOME 下的 ext4，不要放 /storage/emulated/0（FUSE）：
+# 那边 sendfile/inotify 会退化，SQLite 还会上锁失败。
+root = "/data/data/com.termux/files/home/Media"
+# 可追加多个根目录
+# extra_roots = ["/storage/1A2B-3C4D/Movies"]
+video_ext = [".mkv", ".mp4", ".avi", ".ts", ".m4v", ".mov", ".wmv"]
+sub_ext   = [".srt", ".ass", ".ssa", ".vtt"]
+
+[database]
+# 必须在 ext4（$HOME 下）。落在共享存储会拒绝启动。
+path = "/data/data/com.termux/files/home/.config/litems/index.db"
+
+[scrape]
+# 数据源。tmdb = 元数据最全（中文、背景图、分集剧照），omdb = 直连可达但只有英文简介与单张海报。
+# 实测：api.themoviedb.org 被污染，改用同一后端的 api.tmdb.org 可直连（见文档 13.2）。
+provider = "tmdb"
+
+# OMDb 免费 key：https://www.omdbapi.com/apikey.aspx  免费 1000 次/天
+omdb_key = ""
+
+# TMDB：二选一，token 优先。
+#   v4 Read Access Token（推荐）：个人设置 → API → 读访问令牌
+#   v3 API Key：老界面拿到的 32 位字符串
+tmdb_token      = ""
+tmdb_key        = ""
+tmdb_base       = "https://api.tmdb.org/3"
+tmdb_image_base = "https://image.tmdb.org/t/p"
+
+# 用豆瓣补中文标题与简介。非官方接口，失败会静默跳过，不影响主流程。
+douban_enrich = true
+
+language          = "zh-CN"
+fallback_language = "en-US"
+concurrency       = 2      # 起步值，遇 429 自动降级
+interval_ms       = 200
+daily_limit       = 1000   # OMDb 免费额度，达到后停止并提示
+write_nfo         = true
+write_images      = true
+poster_size       = "w500"
+fanart_size       = "w1280"
+title_sim_min     = 0.75
+sub_langs         = ["chs", "cht", "eng"]
+
+[ui]
+title     = "我的媒体库"
+theme     = "dark"
+page_size = 60
+
+[watch]
+enabled      = true
+interval_min = 30
+
+[launch]
+# PC 侧 helper。只允许回环地址。
+listen = "127.0.0.1:9876"
+server = "http://192.168.1.10:8080"
+# 必填，且必须与服务端配置一致；为空则 helper 拒绝启动。
+token  = "change-me-to-a-random-string"
+
+[[launch.players]]
+name    = "mpv"
+command = "mpv"
+args    = ["{url}", "--sub-file={sub}", "--start={start}", "--force-window=yes"]
+
+[[launch.players]]
+name    = "vlc"
+command = "vlc"
+args    = ["{url}", "--sub-file={sub}", "--start-time={start}"]

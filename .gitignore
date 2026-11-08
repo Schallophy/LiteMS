@@ -1,0 +1,19 @@
+# 构建产物
+dist/
+litems
+litems.exe
+probe/probe*
+bench/bench*
+
+# 索引库（纯缓存，可重建）
+*.db
+*.db-wal
+*.db-shm
+
+# 本地配置
+config.toml
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/

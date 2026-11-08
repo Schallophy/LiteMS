@@ -1,0 +1,8 @@
+# 仓库统一用 LF，避免 Windows 上提交 CRLF 后 build.sh 在 Linux/Termux 里报错
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.go    text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.html  text eol=lf

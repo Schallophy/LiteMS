@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="{{.Theme}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#08090c">
+<meta name="helper-token" content="{{.HelperToken}}">
+<title>{{.Item.Title}} · {{.Title}}</title>
+<style>
+:root{
+  --bg:#08090c;
+  --surface:#12141a;
+  --surface-2:#1a1e26;
+  --line:rgba(255,255,255,.07);
+  --line-2:rgba(255,255,255,.14);
+  --text:#f4f5f7;
+  --text-2:#a2a8b3;
+  --text-3:#6d7481;
+  --gold:#e3b774;
+  --gold-2:#c9974a;
+  --radius:14px;
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;min-height:100vh;background:var(--bg);color:var(--text);
+  font:15px/1.7 "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+       "Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font-feature-settings:"tnum" 1;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit;text-decoration:none}
+.shell{width:100%;max-width:1120px;margin:0 auto;padding:0 clamp(18px,4vw,44px)}
+
+/* ── 头图 ───────────────────────────────── */
+.hero{position:relative;display:flex;flex-direction:column;justify-content:flex-end;
+  min-height:440px;overflow:hidden}
+.bg{
+  position:absolute;inset:0;
+  background:#0b0d11 center/cover no-repeat;
+  transform:scale(1.02);
+}
+/* 无背景图时用一个冷调渐变兜底，不像纯黑那么空 */
+.bg::before{
+  content:"";position:absolute;inset:0;
+  background:
+    radial-gradient(1100px 520px at 50% -10%,rgba(120,140,200,.16),transparent 66%),
+    linear-gradient(160deg,#14171f,#08090c 70%);
+}
+/* 没有背景图时，用海报本身做大范围虚化兜底，比纯渐变有内容感 */
+.bg.blurred{filter:blur(52px) saturate(1.4) brightness(.85);
+  transform:scale(1.4);opacity:.72}
+.veil{position:absolute;inset:0;
+  background:
+    linear-gradient(180deg,rgba(8,9,12,.62) 0%,rgba(8,9,12,.30) 28%,
+                    rgba(8,9,12,.80) 68%,var(--bg) 100%),
+    radial-gradient(130% 90% at 12% 26%,transparent 18%,rgba(8,9,12,.66) 100%);}
+/* 极轻的胶片颗粒，给整块暗部一点质感；下缘渐隐，避免与正文区出现一条硬边 */
+.veil::after{
+  content:"";position:absolute;inset:0;opacity:.15;mix-blend-mode:overlay;
+  -webkit-mask-image:linear-gradient(180deg,#000 0%,#000 52%,transparent 86%);
+          mask-image:linear-gradient(180deg,#000 0%,#000 52%,transparent 86%);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.45'/%3E%3C/svg%3E");
+}
+.topbar{position:absolute;inset:0 0 auto;padding-top:22px;z-index:3}
+.back{
+  display:inline-flex;align-items:center;gap:7px;padding:8px 16px 8px 13px;
+  border-radius:999px;font-size:13px;color:var(--text);
+  background:rgba(14,15,19,.52);border:1px solid rgba(255,255,255,.15);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  transition:background .22s,border-color .22s,transform .22s;
+}
+.back:hover{background:rgba(22,24,31,.82);border-color:rgba(255,255,255,.28);transform:translateX(-2px)}
+.back svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+
+.inner{position:relative;z-index:2;display:flex;align-items:flex-end;
+  gap:clamp(20px,3vw,40px);padding-bottom:44px}
+.poster{
+  position:relative;width:200px;flex:0 0 200px;aspect-ratio:2/3;
+  border-radius:var(--radius);overflow:hidden;background:#14161c;
+  box-shadow:0 34px 64px -24px rgba(0,0,0,1),
+             0 0 0 1px rgba(255,255,255,.10),
+             0 0 70px -24px rgba(227,183,116,.28);
+}
+.poster img{width:100%;height:100%;object-fit:cover;display:block}
+.poster.ph{display:grid;place-items:center;
+  background:linear-gradient(155deg,#1d212a,#0d0f14 72%)}
+.poster.ph::before{
+  content:"";position:absolute;inset:0;opacity:.5;
+  background-image:
+    linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+  background-size:30px 30px;
+  -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 26%,transparent 78%);
+          mask-image:radial-gradient(circle at 50% 42%,#000 26%,transparent 78%);
+}
+.poster.ph span{position:relative;font-size:52px;font-weight:600;line-height:1;
+  color:rgba(255,255,255,.14)}
+
+.head{flex:1;min-width:0;padding-bottom:4px}
+.eyebrow{margin-bottom:11px;font-size:11px;font-weight:600;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--gold)}
+h1{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;line-height:1.16;
+  letter-spacing:-.012em;text-wrap:balance}
+.alt{margin:9px 0 0;font-size:14px;color:var(--text-2);letter-spacing:.01em}
+
+.meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:16px;
+  font-size:13px;color:var(--text-2)}
+.meta>*{position:relative}
+.meta>*+*{padding-left:14px}
+.meta>*+*::before{
+  content:"";position:absolute;left:0;top:50%;width:3px;height:3px;border-radius:50%;
+  background:var(--text-3);transform:translateY(-50%);opacity:.7;
+}
+.meta .score{display:inline-flex;align-items:center;gap:5px;color:var(--gold);font-weight:600}
+.meta .score svg{width:11px;height:11px;fill:currentColor}
+.meta .done{color:var(--text-3)}
+
+.tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}
+.tag{padding:3px 9px;border-radius:6px;font-size:11px;font-weight:500;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);
+  border:1px solid var(--line-2);background:rgba(255,255,255,.03)}
+
+/* 续播：文字在上、进度条在下，读起来才是「进度」而不是一条分隔线 */
+.resume{max-width:240px;margin-top:24px}
+.resume span{display:block;margin-bottom:9px;font-size:11.5px;letter-spacing:.06em;
+  color:var(--text-3)}
+.resume .bar{height:4px;border-radius:99px;overflow:hidden;
+  background:rgba(255,255,255,.12)}
+.resume .bar i{display:block;height:100%;border-radius:99px;
+  background:linear-gradient(90deg,var(--gold-2),var(--gold));
+  box-shadow:0 0 10px rgba(227,183,116,.65)}
+
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+.btn{
+  display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:999px;
+  border:1px solid var(--line-2);background:rgba(255,255,255,.05);color:var(--text);
+  font:inherit;font-size:13.5px;font-weight:500;cursor:pointer;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  transition:background .2s,border-color .2s,transform .2s,box-shadow .3s;
+}
+.btn:hover{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.24);
+  transform:translateY(-1px)}
+.btn svg{width:13px;height:13px;fill:currentColor}
+.btn.primary{
+  border-color:transparent;font-weight:600;color:#1a1206;
+  background:linear-gradient(160deg,#f6deb4,var(--gold) 46%,#c08f45);
+  box-shadow:0 14px 30px -12px rgba(227,183,116,.7);
+}
+.btn.primary:hover{
+  background:linear-gradient(160deg,#fae6c2,#e8bf7f 46%,#c99a52);
+  box-shadow:0 18px 38px -12px rgba(227,183,116,.85);
+}
+
+/* ── 正文 ───────────────────────────────── */
+main{position:relative;z-index:1;padding:44px 0 0}
+section{padding-top:0}
+h2{margin:0 0 16px;font-size:11px;font-weight:600;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--gold)}.plot{margin:0;max-width:68ch;font-size:15px;line-height:1.9;color:#c8ccd3;
+  white-space:pre-wrap}
+code{padding:2px 7px;border-radius:5px;font-size:12.5px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  background:rgba(255,255,255,.07);border:1px solid var(--line);color:var(--text-2)}
+
+.toast{
+  position:fixed;left:50%;bottom:28px;transform:translate(-50%,10px);
+  padding:11px 20px;border-radius:999px;font-size:13px;max-width:82vw;
+  background:rgba(22,24,31,.92);border:1px solid var(--line-2);color:var(--text);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  box-shadow:0 18px 40px -16px rgba(0,0,0,.9);
+  opacity:0;transition:opacity .26s,transform .26s var(--ease);pointer-events:none;
+}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+@media(max-width:700px){
+  .hero{min-height:0}
+  /* 顶部留出固定返回按钮的高度，避免压住海报 */
+  .inner{flex-direction:column;align-items:flex-start;padding-top:64px;padding-bottom:32px}
+  .poster{width:132px;flex-basis:auto}
+  .poster.ph span{font-size:38px}
+  h1{font-size:24px}
+  .topbar{padding-top:16px}
+  .actions .btn{flex:1 1 auto;justify-content:center}
+}
+@media(prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+<div class="hero">
+  {{if .Item.Fanart}}
+  <div class="bg" style="background-image:url('{{.Item.Fanart}}')"></div>
+  {{else if .Item.Poster}}
+  <div class="bg blurred" style="background-image:url('{{.Item.Poster}}')"></div>
+  {{else}}
+  <div class="bg"></div>
+  {{end}}
+  <div class="veil"></div>
+  <div class="topbar"><div class="shell">
+    <a class="back" href="/">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      返回
+    </a>
+  </div></div>
+
+  <div class="shell inner">
+    {{if .Item.Poster}}
+    <div class="poster"><img src="{{.Item.Poster}}" alt="{{.Item.Title}}"></div>
+    {{else}}
+    <div class="poster ph"><span>{{initial .Item.Title}}</span></div>
+    {{end}}
+
+    <div class="head">
+      <div class="eyebrow">{{if eq .Item.Kind "movie"}}影片{{else}}剧集{{end}}{{with .Item.Year}} · {{.}}{{end}}</div>
+      <h1>{{.Item.Title}}</h1>
+      {{with .Item.OriginalTitle}}<p class="alt">{{.}}</p>{{end}}
+
+      <div class="meta">
+        {{with .Item.Rating}}<span class="score"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>{{printf "%.1f" .}}</span>{{end}}
+        {{with .Item.RuntimeMin}}<span>{{.}} 分钟</span>{{end}}
+        {{if eq .Item.Kind "episode"}}<span>第 {{.Item.Season}} 季 · 第 {{.Item.Episode}} 集</span>{{end}}
+        {{if .Item.Finished}}<span class="done">已看完</span>{{end}}
+      </div>
+
+      {{if .Item.Subs}}
+      <div class="tags">
+        {{range .Item.Subs}}<span class="tag">{{.Lang}}</span>{{end}}
+      </div>
+      {{end}}
+
+      {{if .Item.PositionMS}}
+      <div class="resume">
+        <span>已观看 {{duration .Item.PositionMS}} / {{duration .Item.DurationMS}}</span>
+        <div class="bar"><i style="width:{{pct .Item.PositionMS .Item.DurationMS}}"></i></div>
+      </div>
+      {{end}}
+
+      <div class="actions">
+        <button class="btn primary" id="play">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          {{if .Item.PositionMS}}继续播放{{else}}播放{{end}}
+        </button>
+        <button class="btn" id="copy">复制命令</button>
+        <a class="btn" href="/stream/{{.Item.ID}}" target="_blank" rel="noopener">直接打开</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="shell">
+    {{if .Item.Overview}}
+    <section>
+      <h2>剧情简介</h2>
+      <p class="plot">{{.Item.Overview}}</p>
+    </section>
+    {{else}}
+    <section>
+      <h2>剧情简介</h2>
+      <p class="plot" style="color:var(--text-3)">还没有简介。运行 <code>litems scrape</code> 刮削后会自动补上。</p>
+    </section>
+    {{end}}
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+<script>
+const ITEM = "{{.Item.ID}}";
+const HELPER = "http://127.0.0.1:{{.HelperPort}}";
+const TOKEN = document.querySelector('meta[name=helper-token]').content;
+const toastEl = document.getElementById('toast');
+let toastTimer;
+function toast(msg){
+  toastEl.textContent = msg; toastEl.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toastEl.classList.remove('on'), 3200);
+}
+document.getElementById('play').addEventListener('click', async ()=>{
+  try{
+    const res = await fetch(HELPER + '/play', {
+      method:'POST',
+      mode:'cors',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id: ITEM, token: TOKEN, start: 0})
+    });
+    if(res.status === 204){ toast('已交给本地播放器'); return; }
+    toast('播放器返回 ' + res.status + '，可改用「复制命令」');
+  }catch(e){
+    toast('没连上本地 helper，请先运行 litems launch，或用「复制命令」');
+  }
+});
+document.getElementById('copy').addEventListener('click', async ()=>{
+  try{
+    const r = await fetch('/api/cmd/' + ITEM);
+    const j = await r.json();
+    if(!j.command) throw new Error(j.error || 'no command');
+    await navigator.clipboard.writeText(j.command);
+    toast('命令已复制，粘贴到终端即可播放');
+  }catch(e){
+    toast('复制失败：' + e.message);
+  }
+});
+</script>
+</body>
+</html>
