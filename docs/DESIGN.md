@@ -7,7 +7,7 @@ title: DESIGN
 > 一个跑在 Termux 上的轻量媒体库服务器：负责刮削、索引、文件服务；
 > 播放交给 PC 上的本地播放器。
 >
-> 文档版本：v2.0　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
+> 文档版本：v2.1　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
 
 ---
 
@@ -106,7 +106,7 @@ title: DESIGN
 ```
 ┌──────────────────────┐
 │  PC 浏览器            │
-│  http://phone:8080   │
+│  http://phone:7788   │
 │  ┌────────────────┐  │
 │  │ 海报墙 / 详情页 │  │
 │  └───────┬────────┘  │
@@ -118,7 +118,7 @@ title: DESIGN
 ┌──────────────────────┐        ┌─────────────────────────┐
 │  PC 本地 helper       │        │  Termux 服务端           │
 │  litems launch     │───────>│  litems serve          │
-│  127.0.0.1:9876      │ ③ exec │  0.0.0.0:8080            │
+│  127.0.0.1:9876      │ ③ exec │  0.0.0.0:7788            │
 └──────────┬───────────┘        │  ┌───────────────────┐  │
            │                    │  │ SQLite 索引        │  │
            ↓ ④                   │  │ NFO / 图片         │  │
@@ -146,7 +146,7 @@ title: DESIGN
 
 ### 3.3 helper 的浏览器兼容性（必须先验证）
 
-从 `http://192.168.1.10:8080` 这样的**私网页面**去请求 `http://127.0.0.1:9876`，Chrome/Edge 的 Private Network Access（新版叫 Local Network Access）会要求预检，且**`no-cors` 模式满足不了**——请求会被浏览器直接阻断，前端拿不到任何响应，表现为「点了没反应」。
+从 `http://192.168.1.10:7788` 这样的**私网页面**去请求 `http://127.0.0.1:9876`，Chrome/Edge 的 Private Network Access（新版叫 Local Network Access）会要求预检，且**`no-cors` 模式满足不了**——请求会被浏览器直接阻断，前端拿不到任何响应，表现为「点了没反应」。
 
 因此协议必须按下面设计，且 M0 阶段（见 [16-里程碑](#16-里程碑)）就要在真浏览器上验证一次：
 
@@ -1055,7 +1055,7 @@ auth_pass = "xxxxxxxx"
 由于播放器请求 `/stream` 时也要带认证，helper 需要把凭据拼进 URL：
 
 ```
-http://media:pass@192.168.1.10:8080/stream/a3f9...
+http://media:pass@192.168.1.10:7788/stream/a3f9...
 ```
 
 mpv 与 VLC 均支持 URL 内嵌凭据。两点必须写进 README：
@@ -1072,7 +1072,7 @@ mpv 与 VLC 均支持 URL 内嵌凭据。两点必须写进 README：
 ```bash
 litems launch \
   --listen 127.0.0.1:9876 \
-  --server http://192.168.1.10:8080 \
+  --server http://192.168.1.10:7788 \
   --token  <与服务端 [launch].token 相同>
 ```
 
@@ -1106,10 +1106,10 @@ litems launch \
 
 ```http
 OPTIONS /play HTTP/1.1
-Origin: http://192.168.1.10:8080
+Origin: http://192.168.1.10:7788
 
 HTTP/1.1 204 No Content
-Access-Control-Allow-Origin: http://192.168.1.10:8080
+Access-Control-Allow-Origin: http://192.168.1.10:7788
 Access-Control-Allow-Methods: POST, OPTIONS
 Access-Control-Allow-Headers: content-type
 Access-Control-Allow-Private-Network: true
@@ -1126,7 +1126,7 @@ Access-Control-Max-Age: 600
 
 ```json
 {
-  "command": "mpv \"http://192.168.1.10:8080/stream/a3f9...\" --sub-file=\"http://192.168.1.10:8080/sub/a3f9...?lang=chs\" --start=2535",
+  "command": "mpv \"http://192.168.1.10:7788/stream/a3f9...\" --sub-file=\"http://192.168.1.10:7788/sub/a3f9...?lang=chs\" --start=2535",
   "server_auth_hint": "含认证时命令里会内嵌 user:pass"
 }
 ```
@@ -1191,7 +1191,7 @@ helper 连接该 socket，每 10 秒发送：
 
 ```toml
 [server]
-listen    = "0.0.0.0:8080"
+listen    = "0.0.0.0:7788"
 # auth_user = "media"
 # auth_pass = "changeme"
 read_header_timeout_sec = 10
@@ -1247,7 +1247,7 @@ enabled      = true
 
 [launch]
 listen  = "127.0.0.1:9876"
-server  = "http://192.168.1.10:8080"
+server  = "http://192.168.1.10:7788"
 token   = "change-me-to-a-random-string"
 
 [[launch.players]]
@@ -1366,7 +1366,7 @@ DNS 网关 192.168.137.1（由本机 192.168.137.193 推断）
 ### 12.3 serve
 
 ```
-litems serve [--listen 0.0.0.0:8080] [--no-watch]
+litems serve [--listen 0.0.0.0:7788] [--no-watch]
 ```
 
 启动时若索引为空，提示先执行 `scan`。`[watch].enabled=true` 时后台每 `interval_min` 分钟触发一次增量**扫描**（`--no-watch` 可临时关闭）。注意后台定时任务只做索引，不做刮削——刮削是显式命令，避免在你不注意的时候烧配额。
@@ -1381,7 +1381,7 @@ litems launch [--player mpv] [--port 9876]
 
 ```
 helper 已启动  http://127.0.0.1:9876
-服务端         http://192.168.1.10:8080
+服务端         http://192.168.1.10:7788
 播放器         mpv
 如果浏览器点击无反应，请在网页上使用「复制播放命令」。
 ```
@@ -1657,7 +1657,7 @@ chmod +x $HOME/.termux/boot/start-litems.sh
 
 - 在路由器上为手机 MAC 绑定固定 IP，避免 DHCP 变更导致所有客户端失效
 - 建议关闭 Wi-Fi 省电模式（部分 ROM 在息屏后降低 Wi-Fi 功率，导致推流卡顿）
-- 端口 8080 无需转发到公网；如需外网访问，另设隧道方案（本期不实现）
+- 端口 7788 无需转发到公网；如需外网访问，另设隧道方案（本期不实现）
 
 ### 13.8 电源与散热
 
@@ -1672,11 +1672,11 @@ chmod +x $HOME/.termux/boot/start-litems.sh
 
 #### 端口规划
 
-**必须提前分配，不能都留在默认值上。** Filebrowser 的默认端口恰好也是 `8080`，与 LiteMS 完全相同，后启动的那个会静默失败。
+**必须提前分配，不能都留在默认值上。** Filebrowser 的默认端口恰好也是 `7788`，与 LiteMS 完全相同，后启动的那个会静默失败。
 
 | 服务              | 端口                | 用途                          |
 | --------------- | ----------------- | --------------------------- |
-| litems        | `8080`            | 媒体库 UI / API / 视频流         |
+| litems        | `7788`            | 媒体库 UI / API / 视频流         |
 | Filebrowser     | `8081`            | 文件管理 Web UI（上传/下载/重命名/删除）  |
 | rclone serve    | `8082`            | WebDAV（给 Infuse / nPlayer 挂载） |
 | Syncthing       | `8384` / `22000`  | 同步管理界面 / 同步协议               |
@@ -2013,6 +2013,16 @@ go test ./...
 
 ## 19. 变更记录
 
+### v2.1（2026-11-09）—— 默认端口 8080 → 7788
+
+8080 是最容易被占用的端口：开发服务器、路由器管理页、各种网页面板都默认抢它。
+这个项目跑在手机上，端口撞车时排查成本远高于改个数。
+
+- 默认监听改为 `0.0.0.0:7788`，示例配置、文档、bench 工具同步
+- `serve` 启动失败且原因为端口占用时，单独提示「换一个端口」而不是只吐底层错误
+  （`isAddrInUse` 同时匹配 `syscall.EADDRINUSE` 与 Windows 的 `WSAEADDRINUSE` 文案）
+- **已有配置文件里写死的 `listen` 不受影响**：默认值只在字段为空时生效
+
 ### v2.0（2026-11-09）—— 项目更名 LiteMS，新增设置页
 
 **更名**：`mediasrv` → **LiteMS**，命令 `litems`，配置目录 `~/.config/litems`，状态目录 `.litems/`，
@@ -2234,7 +2244,7 @@ module `github.com/Schallophy/LiteMS`。旧环境变量 `MEDIASRV_CONFIG` 与旧
 **改动**：
 
 - 2.2「不做」表新增一条，指向 13.9
-- 新增 13.9：端口规划（Filebrowser 默认 8080 与 LiteMS 冲突，必须显式改）、数据库禁止落 `/sdcard`、第三方写媒体目录与后台扫描的关系、多服务并发读 FUSE 的影响、Syncthing 在 FUSE 上的 inotify/原子 rename 限制、认证各自独立
+- 新增 13.9：端口规划（Filebrowser 默认 7788 与 LiteMS 冲突，必须显式改）、数据库禁止落 `/sdcard`、第三方写媒体目录与后台扫描的关系、多服务并发读 FUSE 的影响、Syncthing 在 FUSE 上的 inotify/原子 rename 限制、认证各自独立
 - 关键结论：`[watch].enabled` 不能关，否则 Filebrowser 写入的文件永远不会进索引
 
 ### v1.1（2026-11-08）—— 设计评审修订

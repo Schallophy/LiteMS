@@ -100,7 +100,7 @@ func DefaultConfig() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
 		Server: ServerConfig{
-			Listen:         "0.0.0.0:8080",
+			Listen:         "0.0.0.0:7788",
 			ReadHeaderSec:  10,
 			IdleTimeoutSec: 120,
 		},

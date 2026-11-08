@@ -3,7 +3,7 @@
 # 所有键都有默认值，最小可运行配置只需要 [library] 与 [scrape]。
 
 [server]
-listen                  = "0.0.0.0:8080"
+listen                  = "0.0.0.0:7788"
 # 可选 Basic Auth。启用后 /stream、/poster 也需要认证。
 # 注意：明文 HTTP 传输，等同把密码广播到局域网，仅在可信网络使用。
 # auth_user = "media"
@@ -77,7 +77,7 @@ interval_min = 30
 [launch]
 # PC 侧 helper。只允许回环地址。
 listen = "127.0.0.1:9876"
-server = "http://192.168.1.10:8080"
+server = "http://192.168.1.10:7788"
 # 必填，且必须与服务端配置一致；为空则 helper 拒绝启动。
 token  = "change-me-to-a-random-string"
 

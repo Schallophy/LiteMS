@@ -1,7 +1,7 @@
 // litems 组件基准
 //
 //	go run . -mode=sqlite -db ~/bench.db -n 10000
-//	go run . -mode=serve  -root ~/big.bin -addr 0.0.0.0:8080
+//	go run . -mode=serve  -root ~/big.bin -addr 0.0.0.0:7788
 package main
 
 import (
@@ -60,7 +60,7 @@ func main() {
 	dbPath := flag.String("db", "bench.db", "数据库路径")
 	n := flag.Int("n", 10000, "条目数")
 	root := flag.String("root", "", "serve 模式下要发送的文件")
-	addr := flag.String("addr", "0.0.0.0:8080", "监听地址")
+	addr := flag.String("addr", "0.0.0.0:7788", "监听地址")
 	flag.Parse()
 
 	switch *mode {

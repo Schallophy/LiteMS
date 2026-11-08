@@ -71,6 +71,17 @@ var tplFuncs = template.FuncMap{
 	},
 }
 
+// isAddrInUse 判断错误是否为端口被占用。
+// 端口冲突的解决办法只有一个：换端口。值得单独提示，而不是把底层错误原样丢给用户。
+func isAddrInUse(err error) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "address already in use") ||
+		strings.Contains(msg, "Only one usage of each socket address")
+}
+
 // RunServer 启动 HTTP 服务，阻塞直到收到信号。
 func RunServer(cfg *Config, db *DB) error {
 	tpl, err := template.New("").Funcs(tplFuncs).ParseFS(webFS, "web/*.html")

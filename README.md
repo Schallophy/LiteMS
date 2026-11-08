@@ -54,7 +54,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
 ~/bin/litems serve
 ```
 
-浏览器打开 `http://<手机IP>:8080`，点右上角的设置按钮填 TMDB 凭据，点「测试连接」通过后保存。
+浏览器打开 `http://<手机IP>:7788`，点右上角的设置按钮填 TMDB 凭据，点「测试连接」通过后保存。
 也可以跳过网页，直接拷一份完整配置手工改：
 
 ```bash
@@ -97,7 +97,7 @@ litems scrape --probe        # 验凭据与网络（一次请求）
 litems scrape --dry-run      # 列出待刮削条目，不调 API
 litems scrape --limit 5      # 先试 5 条，看效果再全量
 litems scrape --force        # 全部重刮（仍尊重 lockdata）
-litems serve --listen 0.0.0.0:8080
+litems serve --listen 0.0.0.0:7788
 litems launch --player mpv
 ```
 

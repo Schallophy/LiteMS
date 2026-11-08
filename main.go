@@ -61,7 +61,7 @@ func usage() {
   litems scan --dry-run
   litems scrape --probe
   litems scrape
-  litems serve --listen 0.0.0.0:8080
+  litems serve --listen 0.0.0.0:7788
 `)
 }
 
@@ -319,7 +319,7 @@ func cmdServe(args []string) {
 	fs.Usage = func() {
 		fmt.Print(`litems serve [flags]
 
-  --listen ADDR    监听地址，如 0.0.0.0:8080
+  --listen ADDR    监听地址，如 0.0.0.0:7788
   --no-watch       关闭后台定时扫描
   --config PATH    配置文件路径
 `)
@@ -348,6 +348,9 @@ func cmdServe(args []string) {
 	}
 
 	if err := RunServer(cfg, db); err != nil {
+		if isAddrInUse(err) {
+			errf("端口 %s 已被占用。换个端口：serve --listen 0.0.0.0:<端口>，或改配置里的 [server].listen", cfg.Server.Listen)
+		}
 		errf("服务退出：%v", err)
 		os.Exit(1)
 	}
