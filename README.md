@@ -1,5 +1,16 @@
 # LiteMS
 
+**LiteMS** is a single-binary personal media library for Android/Termux. It scans a local
+video collection, fetches metadata from TMDB, writes it back as Kodi-compatible `.nfo`
+files plus poster/fanart images, indexes everything in SQLite, and serves the files over
+HTTP with `Range` support. Playback is delegated to a local player (mpv/VLC) on the PC —
+there is no transcoding, no web player, and no runtime dependency.
+
+Personal, non-commercial, single-user. Metadata is cached to disk and requests back off on
+HTTP 429; nothing is collected or redistributed.
+
+---
+
 跑在 Android/Termux 上的家庭媒体库服务：负责扫描、刮削、索引，把文件按 HTTP 发出去；解码交给客户端。
 
 一个静态二进制，无运行时依赖，`CGO_ENABLED=0` 交叉编译到九个平台。
