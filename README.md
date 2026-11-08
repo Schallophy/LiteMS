@@ -6,6 +6,11 @@
 
 设计文档见 [`docs/DESIGN.md`](docs/DESIGN.md)。
 
+## 状态
+
+M1–M5 已实现：扫描、刮削（TMDB/OMDb）、HTTP 服务、Web UI、进度续播、九平台构建。
+刮削的真实匹配率还没验过，等一个 TMDB API key。
+
 ## 它做什么
 
 - 递归扫描媒体目录，按文件名识别电影 / 剧集
@@ -28,7 +33,7 @@ pkg install -y golang
 go env -w GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 
 # 3. 编译
-git clone <repo> && cd litems
+git clone https://github.com/Schallophy/LiteMS && cd LiteMS
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
   go build -trimpath -ldflags="-s -w" -o ~/bin/litems .
 
