@@ -328,6 +328,7 @@ type tmdbGenre struct {
 }
 
 type tmdbCountry struct {
+	Code string `json:"iso_3166_1"`
 	Name string `json:"name"`
 }
 
@@ -533,8 +534,8 @@ func (c *TMDBClient) movieDetail(ctx context.Context, id int) (*Meta, error) {
 		}
 	}
 	for _, p := range m.ProductionCountries {
-		if p.Name != "" {
-			meta.Countries = append(meta.Countries, p.Name)
+		if zh := zhCountry(p.Code, p.Name); zh != "" {
+			meta.Countries = append(meta.Countries, zh)
 		}
 	}
 	meta.Directors, meta.Writers, meta.Actors = splitCrew(m.Credits)
@@ -581,8 +582,8 @@ func (c *TMDBClient) tvDetail(ctx context.Context, id int) (*Meta, error) {
 		}
 	}
 	for _, c := range t.OriginCountry {
-		if c != "" {
-			meta.Countries = append(meta.Countries, c)
+		if zh := zhCountry(c, ""); zh != "" {
+			meta.Countries = append(meta.Countries, zh)
 		}
 	}
 	meta.Directors, meta.Writers, meta.Actors = splitCrew(t.Credits)
