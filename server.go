@@ -249,6 +249,15 @@ type ItemDTO struct {
 	DurationMS    int64      `json:"duration_ms,omitempty"`
 }
 
+// artworkExists 校验图片文件真的在盘上（>512 字节，与刮削时的判定一致）。
+func (s *Server) artworkExists(it Item, rel string) bool {
+	if it.RootIdx < 0 || it.RootIdx >= len(s.roots) {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(rel)))
+	return err == nil && fi.Mode().IsRegular() && fi.Size() > 512
+}
+
 func (s *Server) toDTO(it Item) ItemDTO {
 	d := ItemDTO{
 		ID: it.ID, Title: it.Title, OriginalTitle: it.OriginalTitle,
@@ -259,14 +268,17 @@ func (s *Server) toDTO(it Item) ItemDTO {
 	// 图片 URL 带版本号：/poster 的缓存头是 max-age=604800，URL 不变的话
 	// 重刮之后浏览器还会拿旧图（哪怕服务端已经换了文件），刷新和重启都救不回来。
 	// 用 ScrapedAt 当版本号，重刮一次 URL 就变，缓存自然失效。
+	// 图片要「路径在 DB 且文件真在盘上」才输出 URL。
+	// 刮削失败或图片被删后 DB 里的路径还在，直接渲染只会得到裂图；
+	// 占位符只在「确实没有图」时出现，这是它的唯一含义。
 	ver := ""
 	if it.ScrapedAt > 0 {
 		ver = fmt.Sprintf("?v=%d", it.ScrapedAt)
 	}
-	if it.PosterPath != "" {
+	if it.PosterPath != "" && s.artworkExists(it, it.PosterPath) {
 		d.Poster = "/poster/" + it.ID + ver
 	}
-	if it.FanartPath != "" {
+	if it.FanartPath != "" && s.artworkExists(it, it.FanartPath) {
 		d.Fanart = "/fanart/" + it.ID + ver
 	}
 	if p, err := s.db.GetProgress(it.ID); err == nil && p != nil {

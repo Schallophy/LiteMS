@@ -276,6 +276,75 @@ func cmdScrape(args []string) {
 	}
 }
 
+
+// autoScrape 启动补刮：没刮过的、上次失败的、以及「状态是成功但海报文件实际不在」的条目，
+// 在 serve 启动后自动补一轮。用户不需要记住 scrape 或 --force——重启一次服务就把欠账补上。
+//
+// 未匹配（miss）与手动锁定（manual）不重试：反复调 API 只会烧配额（文档 8.6），
+// 想纠正走 override.json。
+func autoScrape(ctx context.Context, cfg *Config, db *DB, delay time.Duration) {
+	sc, err := buildScraper(cfg)
+	if err != nil || sc == nil {
+		// 没配凭据是正常状态，安静跳过
+		return
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(delay):
+	}
+
+	roots := cfg.AllRoots()
+	all, err := db.ListForScrape(true, "", 0)
+	if err != nil {
+		warnf("启动补刮：读取条目失败：%v", err)
+		return
+	}
+
+	var ids []string
+	for _, it := range all {
+		switch {
+		case it.ScrapedAt == 0, it.ScrapeStatus == "error":
+			ids = append(ids, it.ID)
+		case it.ScrapeStatus != "miss" && it.ScrapeStatus != "manual" && !posterUsable(roots, it):
+			// 元数据有了，海报文件却不在——多半是当时下载中断，捡回来
+			ids = append(ids, it.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	logf("启动补刮：%d 条待处理", len(ids))
+	if err := db.ResetScrapeStatus(ids); err != nil {
+		warnf("启动补刮：重置状态失败：%v", err)
+		return
+	}
+
+	r := NewRunner(cfg, db, sc, false, false, "", 0)
+	stats, err := r.Run(ctx)
+	if err != nil {
+		warnf("启动补刮中断：%v", err)
+		return
+	}
+	logf("启动补刮完成：成功 %d，未匹配 %d，失败 %d，图片 %d 张，耗时 %s",
+		stats.OK, stats.Miss, stats.Failed, stats.Images, stats.Elapsed)
+}
+
+// posterUsable 检查条目的海报文件是否真的在盘上。
+// 状态是「成功」不代表图片下载成功过——当时断网就会留下缺图的成功条目。
+func posterUsable(roots []string, it Item) bool {
+	if it.PosterPath == "" {
+		return false
+	}
+	if it.RootIdx < 0 || it.RootIdx >= len(roots) {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(roots[it.RootIdx], filepath.FromSlash(it.PosterPath)))
+	return err == nil && fi.Mode().IsRegular() && fi.Size() > 512
+}
+
 // probeScraper 发一次最小请求，验证凭据与网络。
 // log 由调用方提供：CLI 写 stderr，设置页收集成文本显示。
 func probeScraper(ctx context.Context, sc Scraper, cfg *Config, log func(string, ...any)) error {
@@ -349,6 +418,11 @@ func cmdServe(args []string) {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// 后台补刮：HTTP 先起来，5 秒后再开始，不影响页面可用性
+	scrapeCtx, scrapeCancel := context.WithCancel(context.Background())
+	defer scrapeCancel()
+	go autoScrape(scrapeCtx, cfg, db, 5*time.Second)
 
 	if n, _ := db.CountItems(); n == 0 {
 		warnf("索引为空，请先执行 `litems scan`")

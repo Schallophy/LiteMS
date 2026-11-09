@@ -568,6 +568,18 @@ func (d *DB) RelPathOf(it *Item, roots []string) string {
 	return ""
 }
 
+// ResetScrapeStatus 把指定条目打回待刮削。
+// 用于启动补刮：把「状态是成功、但海报文件实际不在」的条目捡回来重试。
+func (d *DB) ResetScrapeStatus(ids []string) error {
+	for _, id := range ids {
+		if _, err := d.sql.Exec(
+			`UPDATE items SET scraped_at=0, scrape_status='pending' WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ListForScrape 返回本次要刮削的条目。
 //
 //	onlyID 非空 → 只处理这一条（调试用）
