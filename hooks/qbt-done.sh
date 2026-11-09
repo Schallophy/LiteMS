@@ -58,12 +58,21 @@ if [ -d "$src" ]; then
         fi
     done < <(find "$src" -type f 2>/dev/null)
 else
-    target="$LIB/$(basename "$src")"
+    # 单文件种子没有目录层。文件名与种子名一致时保持平铺；
+    # 不一致（改过名、自定义保存路径）就补一层种子名目录：
+    # 否则链接直接落在 下载/ 根下，两个不同种子产出同名文件时
+    # ln -sfn 会悄悄覆盖前一个。
+    if [ "$(basename "$src")" = "$name" ]; then
+        target="$LIB/$name"
+    else
+        mkdir -p "$LIB/$name" 2>>"$LOG"
+        target="$LIB/$name/$(basename "$src")"
+    fi
     if ln -sfn "$src" "$target" 2>>"$LOG"; then
         echo ok >>"$LOG.links"
     else
         echo fail >>"$LOG.links"
-        log "建链失败：$(basename "$src")"
+        log "建链失败：$target"
     fi
 fi
 
