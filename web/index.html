@@ -240,9 +240,9 @@ code{
     {{if .Kind}}<input type="hidden" name="kind" value="{{.Kind}}">{{end}}
   </form>
   <nav class="seg">
-    <a href="/" class="{{if not .Kind}}on{{end}}">全部</a>
-    <a href="/?kind=movie" class="{{if eq .Kind "movie"}}on{{end}}">电影</a>
-    <a href="/?kind=episode" class="{{if eq .Kind "episode"}}on{{end}}">剧集</a>
+    <a href="/" data-base="/" class="{{if not .Kind}}on{{end}}">全部</a>
+    <a href="/?kind=movie" data-base="/?kind=movie" class="{{if eq .Kind "movie"}}on{{end}}">电影</a>
+    <a href="/?kind=episode" data-base="/?kind=episode" class="{{if eq .Kind "episode"}}on{{end}}">剧集</a>
   </nav>
   <a class="gear" href="/settings" title="设置" aria-label="设置">
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -296,5 +296,132 @@ code{
   </div>
   {{end}}
 </main>
+
+<script>
+/* ── 实时搜索 ──────────────────────────────────────────────
+   输入即搜（180ms 防抖）：请求 /api/items，用同一套 DTO 在客户端重建卡片。
+   搜索键在服务端已做「去空格/标点、忽略大小写」折叠，所以 lala / lalaland /
+   La La Land 都能命中。回车仍走整页 GET（保留 SSR 与分页）。 */
+const KIND = "{{.Kind}}";
+const form = document.querySelector('.search');
+const input = form.querySelector('input[name=q]');
+const mainEl = document.querySelector('main');
+const segLinks = Array.from(document.querySelectorAll('.seg a'));
+const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>';
+
+let timer = null, seq = 0;
+
+function el(tag, cls, text){
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function makeCard(it){
+  const a = el('a', 'card');
+  a.href = '/item/' + it.id;
+
+  const art = el('div', 'art');
+  if (it.poster){
+    const img = el('img');
+    img.src = it.poster; img.alt = it.title;
+    img.loading = 'lazy'; img.decoding = 'async';
+    art.appendChild(img);
+  } else {
+    art.appendChild(el('div', 'ph'));
+  }
+  art.appendChild(el('div', 'scrim'));
+  if (it.rating){
+    const b = el('div', 'badge');
+    b.innerHTML = STAR;
+    b.appendChild(document.createTextNode(it.rating.toFixed(1)));
+    art.appendChild(b);
+  }
+  if (it.duration_ms){
+    const p = el('div', 'prog'), i = el('i');
+    i.style.width = Math.min(100, it.position_ms / it.duration_ms * 100).toFixed(1) + '%';
+    p.appendChild(i);
+    art.appendChild(p);
+  }
+  art.appendChild(el('div', 'play'));
+  a.appendChild(art);
+
+  const cap = el('div', 'cap');
+  cap.appendChild(el('h3', null, it.title));
+  const meta = el('p');
+  if (it.year) meta.appendChild(el('span', null, String(it.year)));
+  if (it.kind === 'episode'){
+    meta.appendChild(el('span', 'dot'));
+    meta.appendChild(el('span', null, 'S' + it.season + 'E' + it.episode));
+  }
+  if (it.finished){
+    meta.appendChild(el('span', 'dot'));
+    meta.appendChild(el('span', null, '已看完'));
+  }
+  if (!it.year && it.kind !== 'episode') meta.appendChild(el('span', null, '未识别'));
+  cap.appendChild(meta);
+  a.appendChild(cap);
+  return a;
+}
+
+function render(payload, q){
+  const frag = document.createDocumentFragment();
+  if (payload.items && payload.items.length){
+    frag.appendChild(el('p', 'count', '共 ' + payload.total + ' 条'));
+    const grid = el('div', 'grid');
+    for (const it of payload.items) grid.appendChild(makeCard(it));
+    frag.appendChild(grid);
+  } else {
+    const box = el('div', 'empty');
+    box.appendChild(el('div', 'ring'));
+    box.appendChild(el('h2', null, q ? '没有匹配「' + q + '」的条目' : '媒体库还是空的'));
+    box.appendChild(el('p', null, q ? '换个关键词，或切到「全部」看看' : '运行 litems scan 建立索引'));
+    frag.appendChild(box);
+  }
+  mainEl.replaceChildren(frag);
+}
+
+async function live(q){
+  const my = ++seq;                      // 丢弃过期响应，避免乱序覆盖
+  const u = new URL('/api/items', location.origin);
+  if (q) u.searchParams.set('q', q);
+  if (KIND) u.searchParams.set('kind', KIND);
+  u.searchParams.set('limit', '200');
+  try{
+    const r = await fetch(u);
+    if (!r.ok) return;
+    const j = await r.json();
+    if (my !== seq) return;
+    render(j, q);
+  }catch(e){ /* 网络抖动保留旧结果 */ }
+}
+
+function syncURL(q){
+  const u = new URL('/', location.origin);
+  if (q) u.searchParams.set('q', q);
+  if (KIND) u.searchParams.set('kind', KIND);
+  history.replaceState(null, '', u.pathname + u.search);
+}
+
+function syncSegLinks(q){
+  for (const a of segLinks){
+    const u = new URL(a.dataset.base || '/', location.origin);
+    if (q) u.searchParams.set('q', q);
+    a.href = u.pathname + u.search;
+  }
+}
+
+input.addEventListener('input', () => {
+  const q = input.value.trim();
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    syncURL(q);
+    syncSegLinks(q);
+    live(q);
+  }, 180);
+});
+syncSegLinks(input.value.trim());
+</script>
 </body>
 </html>

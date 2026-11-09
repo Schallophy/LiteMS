@@ -917,7 +917,7 @@ GET /api/items?q=星际&sort=recent&page=1&limit=60&kind=movie&year=2014
 
 | 参数      | 取值                                     | 默认       |
 | ------- | -------------------------------------- | -------- |
-| `q`     | 关键词（匹配 title / original_title）         | 空        |
+| `q`     | 关键词（匹配 title / original_title，忽略空格、标点与大小写）         | 空        |
 | `sort`  | `recent` / `title` / `year` / `rating` | `recent` |
 | `page`  | ≥1                                     | 1        |
 | `limit` | 1–200                                  | 60       |
@@ -925,6 +925,13 @@ GET /api/items?q=星际&sort=recent&page=1&limit=60&kind=movie&year=2014
 | `year`  | 四位年份                                   | 不限       |
 
 `sort=recent` 按 `mtime_unix DESC`（发现时间），非 `scraped_at`。`sort=rating` 时 `rating IS NULL` 的条目排在最后。
+
+**折叠搜索（v2.10）**：`items.search_key` 保存「标题|原名」去掉空格/标点、统一小写后的键
+（`SearchKey`，复用 `foldForCompare`），查询时对 key 与 q 双向折叠，所以
+`lala` / `LALALAND` / `La La Land` / `la-la land` 都能命中同一部片；原样 LIKE 仍保留兜底。
+老库通过 `migrateSearchKey` 做 `ALTER TABLE ADD COLUMN` 并回填——**不升 SchemaVersion**
+（升版本会整库删除，观看进度一起丢）。首页搜索框为实时搜索：180ms 防抖请求本接口，
+客户端重建卡片，回车仍走整页 GET 保留分页。
 
 响应：
 

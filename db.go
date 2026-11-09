@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS items (
     kind           TEXT NOT NULL,
     title          TEXT NOT NULL DEFAULT '',
     original_title TEXT NOT NULL DEFAULT '',
+    -- 折叠搜索键：去空格/标点、统一小写后的「标题|原名」，让 "lalaland" 能命中
+    -- "La La Land"。老库由 migrateSearchKey 补列回填，不触发整库重建。
+    search_key     TEXT NOT NULL DEFAULT '',
     year           INTEGER,
     tmdb_id        INTEGER,
     season         INTEGER,
@@ -155,6 +158,10 @@ func OpenDB(path string) (*DB, error) {
 		h.Close()
 		return nil, fmt.Errorf("建表失败: %w", err)
 	}
+	if err := migrateSearchKey(h); err != nil {
+		h.Close()
+		return nil, err
+	}
 	if _, err := h.Exec(`INSERT INTO kv(k,v) VALUES('schema_version',?)
 		ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprint(SchemaVersion)); err != nil {
 		h.Close()
@@ -186,6 +193,61 @@ func peekSchemaVersion(path string) (int, bool) {
 
 func (d *DB) Close() error { return d.sql.Close() }
 
+// SearchKey 生成折叠搜索键：去空格/标点、统一小写后的「标题|原名」。
+// 有了它 "lala" / "lalaland" / "La La Land" 都能命中同一部片。
+func SearchKey(title, original string) string {
+	k := foldForCompare(title)
+	if o := foldForCompare(original); o != "" && o != k {
+		k += "|" + o
+	}
+	return k
+}
+
+// migrateSearchKey 给老库补 search_key 列并回填。走 ALTER 而不是升 SchemaVersion：
+// 升版本会整库删除，观看进度也一起没了，而这里只是加一个派生列。
+func migrateSearchKey(h *sql.DB) error {
+	var n int
+	if err := h.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='search_key'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := h.Exec(`ALTER TABLE items ADD COLUMN search_key TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("补 search_key 列失败: %w", err)
+		}
+	}
+	rows, err := h.Query(`SELECT id, title, original_title FROM items WHERE search_key=''`)
+	if err != nil {
+		return err
+	}
+	type pending struct{ id, key string }
+	var todo []pending
+	for rows.Next() {
+		var id, title, orig string
+		if err := rows.Scan(&id, &title, &orig); err != nil {
+			rows.Close()
+			return err
+		}
+		if k := SearchKey(title, orig); k != "" {
+			todo = append(todo, pending{id, k})
+		}
+	}
+	rows.Close()
+	if len(todo) == 0 {
+		return nil
+	}
+	tx, err := h.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, p := range todo {
+		if _, err := tx.Exec(`UPDATE items SET search_key=? WHERE id=?`, p.key, p.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SyncRoots 把配置里的根目录同步进 roots 表。
 func (d *DB) SyncRoots(roots []string) error {
 	tx, err := d.sql.Begin()
@@ -209,10 +271,10 @@ func (d *DB) UpsertItem(it *Item) error {
 		subs = []byte("[]")
 	}
 	_, err := d.sql.Exec(`
-INSERT INTO items(id,root_idx,rel_path,kind,title,original_title,year,tmdb_id,season,episode,
+INSERT INTO items(id,root_idx,rel_path,kind,title,original_title,search_key,year,tmdb_id,season,episode,
   runtime_min,rating,votes,overview,poster_path,fanart_path,logo_path,sub_paths,container,
   size_bytes,mtime_unix,nfo_mtime_unix,scraped_at,scrape_status)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
   kind=excluded.kind,
   container=excluded.container,
@@ -227,9 +289,11 @@ ON CONFLICT(id) DO UPDATE SET
                    ELSE COALESCE(NULLIF(excluded.fanart_path,''), items.fanart_path) END,
   title=CASE WHEN items.scraped_at=0 THEN excluded.title ELSE items.title END,
   year=CASE WHEN items.scraped_at=0 THEN excluded.year ELSE items.year END,
+  search_key=CASE WHEN items.scraped_at=0 THEN excluded.search_key ELSE items.search_key END,
   season=excluded.season,
   episode=excluded.episode`,
 		it.ID, it.RootIdx, filepath.ToSlash(it.RelPath), string(it.Kind), it.Title, it.OriginalTitle,
+		SearchKey(it.Title, it.OriginalTitle),
 		nullableInt(it.Year), nullableInt(it.TmdbID), nullableInt(it.Season), nullableInt(it.Episode),
 		nullableInt(it.RuntimeMin), nullableFloat(it.Rating), nullableInt(it.Votes), it.Overview,
 		it.PosterPath, it.FanartPath, it.LogoPath, string(subs), it.Container,
@@ -471,9 +535,17 @@ func (d *DB) ListItems(f ItemFilter) ([]Item, int, error) {
 	var where []string
 	var args []any
 	if f.Q != "" {
-		where = append(where, `(title LIKE ? OR original_title LIKE ?)`)
-		like := "%" + f.Q + "%"
-		args = append(args, like, like)
+		// 折叠键上匹配：忽略空格/标点/大小写，"lala" 与 "La La Land" 等价；
+		// 原样 LIKE 保留兜底（拼音、符号查询等折叠后为空的场景）。
+		if key := foldForCompare(f.Q); key != "" {
+			where = append(where, `(search_key LIKE ? OR title LIKE ? OR original_title LIKE ?)`)
+			like := "%" + f.Q + "%"
+			args = append(args, "%"+key+"%", like, like)
+		} else {
+			where = append(where, `(title LIKE ? OR original_title LIKE ?)`)
+			like := "%" + f.Q + "%"
+			args = append(args, like, like)
+		}
 	}
 	if f.Kind != "" {
 		where = append(where, `kind = ?`)
@@ -624,11 +696,12 @@ func (d *DB) ListForScrape(force bool, onlyID string, limit int) ([]Item, error)
 func (d *DB) UpdateScraped(it *Item) error {
 	_, err := d.sql.Exec(`
 UPDATE items SET
-  title=?, original_title=?, year=?, tmdb_id=?, runtime_min=?, rating=?, votes=?,
+  title=?, original_title=?, search_key=?, year=?, tmdb_id=?, runtime_min=?, rating=?, votes=?,
   overview=?, poster_path=?, fanart_path=?, nfo_mtime_unix=?, scraped_at=?,
   scrape_status='ok'
 WHERE id=?`,
-		it.Title, it.OriginalTitle, nullableInt(it.Year), nullableInt(it.TmdbID),
+		it.Title, it.OriginalTitle, SearchKey(it.Title, it.OriginalTitle),
+		nullableInt(it.Year), nullableInt(it.TmdbID),
 		nullableInt(it.RuntimeMin), nullableFloat(it.Rating), nullableInt(it.Votes),
 		it.Overview, nullString(it.PosterPath), nullString(it.FanartPath),
 		it.NfoMtimeUnix, time.Now().Unix(), it.ID)
