@@ -32,7 +32,7 @@ body{
   -webkit-font-smoothing:antialiased;
 }
 a{color:inherit;text-decoration:none}
-.shell{width:100%;max-width:1120px;margin:0 auto;padding:0 clamp(18px,4vw,44px)}
+.shell{width:100%;max-width:1360px;margin:0 auto;padding:0 clamp(18px,4vw,44px)}
 
 /* ── 头图 ───────────────────────────────── */
 .hero{position:relative;display:flex;flex-direction:column;justify-content:flex-end;
@@ -81,7 +81,7 @@ a{color:inherit;text-decoration:none}
 .inner{position:relative;z-index:2;display:flex;align-items:flex-end;
   gap:clamp(24px,3.5vw,56px);padding:76px 0 48px}
 .poster{
-  position:relative;width:200px;flex:0 0 200px;aspect-ratio:2/3;
+  position:relative;width:224px;flex:0 0 224px;aspect-ratio:2/3;
   border-radius:var(--radius);overflow:hidden;background:#14161c;
   box-shadow:0 34px 64px -24px rgba(0,0,0,1),
              0 0 0 1px rgba(255,255,255,.10),
@@ -173,8 +173,14 @@ h1{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;line-height:1.16;
 
 /* ── 正文 ───────────────────────────────── */
 main{position:relative;z-index:1;padding:44px 0 72px}
-/* 第一个 section 的顶部间距由 main 提供，其余靠相邻间距分隔 */
-section + section{padding-top:44px}
+/* 相邻内容的纵向节奏：cols 内部由 grid gap 负责 */
+main .shell > * + *{padding-top:44px}
+/* 桌面端双栏：简介在左，详细信息在右，充分利用横向空间；只有一段时铺满 */
+.cols{display:grid;gap:44px 72px}
+@media(min-width:960px){
+  .cols{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}
+  .cols > section:only-child{grid-column:1/-1}
+}
 h2{margin:0 0 16px;font-size:11px;font-weight:600;letter-spacing:.18em;
   text-transform:uppercase;color:var(--gold)}.plot{margin:0;max-width:68ch;font-size:15px;line-height:1.9;color:#c8ccd3;
   white-space:pre-wrap}
@@ -283,37 +289,41 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
 
 <main>
   <div class="shell">
-    {{if .Item.Overview}}
-    <section>
-      <h2>剧情简介</h2>
-      <p class="plot">{{.Item.Overview}}</p>
-    </section>
-    {{else}}
-    <section>
-      <h2>剧情简介</h2>
-      <p class="plot" style="color:var(--text-3)">还没有简介。运行 <code>litems scrape</code> 刮削后会自动补上。</p>
-    </section>
-    {{end}}
+    <div class="cols">
+      {{if .Item.Overview}}
+      <section>
+        <h2>剧情简介</h2>
+        <p class="plot">{{.Item.Overview}}</p>
+      </section>
+      {{else}}
+      <section>
+        <h2>剧情简介</h2>
+        <p class="plot" style="color:var(--text-3)">还没有简介。运行 <code>litems scrape</code> 刮削后会自动补上。</p>
+      </section>
+      {{end}}
+
+      {{if .Detail}}
+      {{if or .Detail.Directors .Detail.Writers .Detail.Countries .Detail.AirDate .Detail.HasTmdb .Detail.HasImdb}}
+      <section>
+        <h2>详细信息</h2>
+        <dl class="info">
+          {{with .Detail.Directors}}<dt>导演</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
+          {{with .Detail.Writers}}<dt>编剧</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
+          {{with .Detail.Countries}}<dt>国家/地区</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
+          {{with .Detail.AirDate}}<dt>播出日期</dt><dd>{{.}}</dd>{{end}}
+          {{if or .Detail.HasTmdb .Detail.HasImdb}}<dt>外部链接</dt><dd><span class="extlinks">
+            {{if .Detail.HasTmdb}}<a class="chip" target="_blank" rel="noopener noreferrer"
+               href="https://www.themoviedb.org/{{if eq .Item.Kind "movie"}}movie{{else}}tv{{end}}/{{.Detail.TmdbID}}">TMDB ↗</a>{{end}}
+            {{if .Detail.HasImdb}}<a class="chip" target="_blank" rel="noopener noreferrer"
+               href="https://www.imdb.com/title/{{.Detail.ImdbID}}/">IMDb ↗</a>{{end}}
+          </span></dd>{{end}}
+        </dl>
+      </section>
+      {{end}}
+      {{end}}
+    </div>
 
     {{if .Detail}}
-    {{if or .Detail.Directors .Detail.Writers .Detail.Countries .Detail.AirDate .Detail.HasTmdb .Detail.HasImdb}}
-    <section>
-      <h2>详细信息</h2>
-      <dl class="info">
-        {{with .Detail.Directors}}<dt>导演</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
-        {{with .Detail.Writers}}<dt>编剧</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
-        {{with .Detail.Countries}}<dt>国家/地区</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
-        {{with .Detail.AirDate}}<dt>播出日期</dt><dd>{{.}}</dd>{{end}}
-        {{if or .Detail.HasTmdb .Detail.HasImdb}}<dt>外部链接</dt><dd><span class="extlinks">
-          {{if .Detail.HasTmdb}}<a class="chip" target="_blank" rel="noopener noreferrer"
-             href="https://www.themoviedb.org/{{if eq .Item.Kind "movie"}}movie{{else}}tv{{end}}/{{.Detail.TmdbID}}">TMDB ↗</a>{{end}}
-          {{if .Detail.HasImdb}}<a class="chip" target="_blank" rel="noopener noreferrer"
-             href="https://www.imdb.com/title/{{.Detail.ImdbID}}/">IMDb ↗</a>{{end}}
-        </span></dd>{{end}}
-      </dl>
-    </section>
-    {{end}}
-
     {{if .Detail.Cast}}
     <section>
       <h2>主演</h2>
