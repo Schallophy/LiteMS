@@ -75,22 +75,6 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
 .notice.warn{border-color:rgba(227,183,116,.4)}
 .notice .more{color:var(--text-3)}
 
-/* 开声按钮：预转码模式的声音走独立 <audio>，浏览器一定拦它的自动播放。
-   画面那边因为原音轨解不了被当成无声内容放行，于是「画面在跑、没有声音」。
-   这颗按钮和任意一次点击/按键都能把手势补给 audio.play()。 */
-.audiogate{
-  position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:12;
-  display:inline-flex;align-items:center;gap:9px;cursor:pointer;
-  padding:13px 24px;border:0;border-radius:999px;
-  font:inherit;font-size:14px;font-weight:600;color:#1a1206;
-  background:var(--gold);box-shadow:0 12px 34px rgba(0,0,0,.5);
-  transition:transform .18s var(--ease),box-shadow .18s var(--ease);
-}
-.audiogate:hover{transform:translate(-50%,-50%) scale(1.03)}
-.audiogate[hidden]{display:none}
-.audiogate svg{width:17px;height:17px;stroke:currentColor;fill:none;
-  stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-
 @media(max-width:560px){
   main{padding-top:64px}
 }
@@ -111,10 +95,6 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
 
 <main>
   <div id="player"></div>
-  <button class="audiogate" id="audiogate" type="button" hidden>
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 8.8a5 5 0 0 1 0 6.4"/><path d="M18.6 6a9 9 0 0 1 0 12"/></svg>
-    点一下开启声音
-  </button>
   {{if eq .AudioHint "bad"}}
   <div class="notice warn" id="hint">
     这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码，浏览器解不了（画面正常但没声音）。
@@ -256,25 +236,16 @@ function setSubVisible(on){
 // 内容"放行，于是画面自己在跑，audio.play() 却静默 reject —— 症状就是
 // 「画面正常、一点声音都没有」，控制台也不报错。
 //
-// 所以要等一次用户手势才可能出声。入口只有两个：视频真正开始播放（playing
-// 事件），以及那颗"点一下开启声音"。不绑全局点击——ArtPlayer 的点击是
-// 播放/暂停开关，边打开声音边被 pause() 打断，只会得到
+// 所以要等一次用户手势才可能出声。入口只有一个：视频真正开始播放（playing
+// 事件）——那时候用户刚点过播放器，手势已经有了。不绑全局点击，也不往画面上
+// 盖按钮：ArtPlayer 的点击本身就是播放/暂停开关，重复补手势只会拿到
 // "play() request was interrupted by a call to pause()" 这种假报警。
 let audioOn = false;
 let audioRetry = 0;
 
-const gateEl = document.getElementById('audiogate');
-function gateShow(on){ if (gateEl) gateEl.hidden = !on; }
-
-function startPreAudio(resumeVideo){
+function startPreAudio(){
   if (!audioEl || !art || !art.video) return;
   const v = art.video;
-  // 点「开启声音」这颗按钮时，画面要是停着也一起放起来——不然会变成
-  // 声音在走、画面不动。
-  if (resumeVideo && v.paused) {
-    const p = v.play();
-    if (p && p.catch) p.catch(()=>{});
-  }
   // 已经在播且对得上，就别每次调用都重设时间
   if (!audioEl.paused && Math.abs(audioEl.currentTime - v.currentTime) < 0.3) return;
   // readyState 为 0 时赋 currentTime 会被忽略，交给 loadedmetadata 再补
@@ -284,7 +255,6 @@ function startPreAudio(resumeVideo){
   audioEl.play().then(() => {
     audioOn = true;
     audioRetry = 0;
-    gateShow(false);
   }).catch(err => {
     // AbortError：这次 play 还没落地就被 pause() 打断（用户暂停、切播放方式、
     // 或者进度同步触发的 seek）。这不是故障，视频还在播就补一次，最多三轮。
@@ -297,10 +267,11 @@ function startPreAudio(resumeVideo){
       return;
     }
     if (err && err.name === 'NotAllowedError'){
-      gateShow(true);            // 还没拿到手势，等用户点一下
-    } else {
-      showHint('声音启动失败：' + (msg || err));
+      // 这一次播放还不算用户手势。不弹提示、也不盖按钮——再点一次播放器，
+      // playing 事件会重新走到这里。
+      return;
     }
+    showHint('声音启动失败：' + (msg || err));
   });
 }
 
@@ -344,10 +315,6 @@ function setupPreAudio(){
     try { audioEl.currentTime = now.currentTime; } catch(e){}
     if (audioOn || !now.paused) startPreAudio();
   });
-
-  // 只有这颗按钮代表「我要看、我要听」的明确意图；页面上的普通点击交给
-  // ArtPlayer（它是播放/暂停开关），不再全局补手势。
-  if (gateEl) gateEl.addEventListener('click', ev => { ev.stopPropagation(); startPreAudio(true); });
 
   // 桌面端已授权自动播放的话，这一次就直接成了
   startPreAudio();
@@ -679,7 +646,6 @@ window.__litemsAudio = () => ({
     decoded: audioEl.webkitAudioDecodedByteCount,
     error: audioEl.error && audioEl.error.code,
   } : null,
-  gate: !!(gateEl && !gateEl.hidden),
   audioOn: audioOn,
 });
 

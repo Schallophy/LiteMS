@@ -1330,8 +1330,11 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 - **预转码模式的 `<audio>` 自动播放一定被拦**：视频那侧的原音轨（EAC3/DTS）本来
   解不了，浏览器把它当「无声内容」放行，于是画面自己在跑；而独立 `<audio>` 元素
   有声，`play()` 必然以 NotAllowedError 被拒，`.catch(()=>{})` 一吞就变成
-  「画面正常、一点声音都没有」。必须等一次用户手势：点播放器（`play` 事件）、
-  页面上任意 `pointerdown`/`keydown`（capture 阶段补手势）、或那颗「点一下开启声音」
+  「画面正常、一点声音都没有」。只留**一个**入口：`playing` 事件（用户刚点过
+  播放器，手势已经有了）。不绑全局 `pointerdown`/`keydown`——ArtPlayer 的点击本身
+  是播放/暂停开关，重复补手势只会抢同一个元素、拿到
+  `play() request was interrupted by a call to pause()` 这种假报警；也不往画面上
+  盖「点一下开启声音」的按钮，那只是把同一件事重复一遍，还挡画面
 - `-tag:v hvc1`：Chromium 的 MSE 只认 hvc1 这个 sample entry，ffmpeg 默认写 hev1，
   会直接 MEDIA_ERR_SRC_NOT_SUPPORTED
 - master.m3u8 自己生成（ffmpeg 的不带 CODECS，hls.js 不知道给 MSE 什么 mime）；
