@@ -1343,6 +1343,18 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
   如果照跑，窗口会滑过去，回来全 404；暂停期间前端每 20 秒心跳续命，避免会话被回收
 - 播放器时间轴只是本次会话窗口，控件里的时间读数容易误读成「一分钟短片」，
   所以去掉 `time` 控件，右上角另显示全片进度（`base + currentTime` / 总时长）
+- **进度条与跳转必须按全片折算**：内置进度条按 `video.duration`（窗口长度）算
+  比例，拖到哪儿都像接近结尾，用户"为实时转码付出无法跳转的代价"不可接受。
+  `/api/live` 返回 `total`（ffprobe 容器时长，进程内缓存），live 模式下
+  换成自定义全片进度条：位置 = `(base + currentTime) / total`，拖动 =
+  比例 × total → `restartLive(target)`（服务端本来就能从任意位置重起流）。
+  跳转的代价是 1–2 秒重起流，这是转码的物理成本；但"跳到哪"必须是真的
+- `art.controls.add()` **不返回控件元素**（源码 `super.add(e)` 没有 return），
+  拿返回值 `.querySelector` 会抛 TypeError 且中断后续初始化——从 DOM 取
+  `document.querySelector('.livebar')`，拿不到就跳过绑定
+- `seeking` 监听必须先判断 `buffered.length`：起播瞬间 buffer 还是空的
+  （`0 > end-0.5` 恒真），hls.js 处理分段间隙的内部 seek 也会被误判成
+  "跳出窗口"——都会白白重启整个会话
 
 - 依赖：`pkg install ffmpeg`（Termux）；未安装时接口报错引导
 - 状态：只存内存 + 以文件存在为准；同一时刻只跑一个预转码任务；源更新过则重转

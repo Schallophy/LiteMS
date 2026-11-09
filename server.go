@@ -526,6 +526,9 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		"token": sess.Token,
 		"start": sess.Start,
 		"url":   "/hls/" + id + "/" + sess.Token + "/master.m3u8",
+		// 全片时长（秒）。HLS 播放列表是滑动窗口，video.duration 只有已转出的
+		// 部分，前端进度条必须按这个值折算成全片比例，跳转才有意义。
+		"total": mediaDurationSec(src),
 	})
 }
 

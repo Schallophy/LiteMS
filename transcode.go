@@ -276,6 +276,27 @@ func probeChannels(src string) int {
 	return n
 }
 
+// durCache 缓存容器时长探测结果：key = 文件路径。实时转码每次重启会话都要
+// 把全片时长带给前端（进度条按全片折算），同一个文件反复 ffprobe 没有意义。
+var durCache sync.Map
+
+// mediaDurationSec 取容器时长（秒），探测失败返回 0。结果进程内缓存。
+func mediaDurationSec(src string) int {
+	if v, ok := durCache.Load(src); ok {
+		return v.(int)
+	}
+	n := 0
+	out, err := exec.Command("ffprobe", "-v", "error",
+		"-show_entries", "format=duration", "-of", "csv=p=0", src).Output()
+	if err == nil {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64); err == nil && f > 0 {
+			n = int(f)
+		}
+	}
+	durCache.Store(src, n)
+	return n
+}
+
 // probeVideoCodec 取第一条视频流的编码名（hevc/h264/av1…），拿不到返回空串。
 func probeVideoCodec(src string) string {
 	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
