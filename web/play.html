@@ -289,6 +289,13 @@ function startPreAudio(resumeVideo){
 function setupPreAudio(){
   audioEl = new Audio('/audio/' + ITEM);
   audioEl.preload = 'auto';
+  // 必须挂进 DOM。游离的 media 元素在规范上可以播，但部分移动端浏览器不给它
+  // 分音频输出：解码计数在涨、currentTime 在走、muted=false、音量也正常，
+  // 就是一点声音都没有。塞进文档树（1px、透明、不可交互）最稳。
+  audioEl.setAttribute('playsinline', '');
+  audioEl.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;'
+    + 'opacity:0;pointer-events:none;z-index:-1';
+  document.body.appendChild(audioEl);
   const v = art.video;
 
   // 音量/静音/倍速跟随播放器控件。用事件而不是定时轮询：轮询会把用户刚调过的
@@ -607,6 +614,47 @@ async function boot(){
   art.on('video:play', wakeBar);
   art.on('video:pause', wakeBar);
   wakeBar();
+}
+
+/* ---------- 诊断 ---------- */
+// 手机上开不了控制台，把关键状态摊开：音轨到底有没有解码（decoded 是不是在涨）、
+// 是不是被静音、时间轴有没有推进。URL 后面加 ?diag=1 就能看到。
+window.__litemsAudio = () => ({
+  mode: mode,
+  base: base,
+  video: art && art.video ? {
+    paused: art.video.paused,
+    t: Math.round(art.video.currentTime * 100) / 100,
+    muted: art.video.muted,
+    vol: art.video.volume,
+    readyState: art.video.readyState,
+    error: art.video.error && art.video.error.code,
+  } : null,
+  audio: audioEl ? {
+    paused: audioEl.paused,
+    t: Math.round(audioEl.currentTime * 100) / 100,
+    muted: audioEl.muted,
+    vol: audioEl.volume,
+    readyState: audioEl.readyState,
+    networkState: audioEl.networkState,
+    decoded: audioEl.webkitAudioDecodedByteCount,
+    error: audioEl.error && audioEl.error.code,
+  } : null,
+  gate: !!(gateEl && !gateEl.hidden),
+  audioOn: audioOn,
+});
+
+if (/[?&]diag(=1)?(&|$)/.test(location.search)) {
+  const box = document.createElement('pre');
+  box.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99;max-width:92vw;'
+    + 'margin:0;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.85);'
+    + 'color:#9fe870;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;'
+    + 'white-space:pre-wrap;pointer-events:none';
+  document.body.appendChild(box);
+  setInterval(() => {
+    box.textContent = JSON.stringify(window.__litemsAudio(), null, 1)
+      .replace(/[{}\"]/g, '').replace(/\n\s*\n/g, '\n');
+  }, 500);
 }
 
 boot();
