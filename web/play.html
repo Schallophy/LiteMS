@@ -238,9 +238,12 @@ function setSubVisible(on){
 // 内容"放行，于是画面自己在跑，audio.play() 却静默 reject —— 症状就是
 // 「画面正常、一点声音都没有」，控制台也不报错。
 //
-// 所以要等一次用户手势才可能出声。三条路都把声音拉起来：点播放器（play 事件）、
-// 页面上任意一次点击/按键（capture 阶段补手势）、以及那颗"点一下开启声音"。
+// 所以要等一次用户手势才可能出声。入口只有两个：视频真正开始播放（playing
+// 事件），以及那颗"点一下开启声音"。不绑全局点击——ArtPlayer 的点击是
+// 播放/暂停开关，边打开声音边被 pause() 打断，只会得到
+// "play() request was interrupted by a call to pause()" 这种假报警。
 let audioOn = false;
+let audioRetry = 0;
 
 const gateEl = document.getElementById('audiogate');
 function gateShow(on){ if (gateEl) gateEl.hidden = !on; }
@@ -249,12 +252,12 @@ function startPreAudio(resumeVideo){
   if (!audioEl || !art || !art.video) return;
   const v = art.video;
   // 点「开启声音」这颗按钮时，画面要是停着也一起放起来——不然会变成
-  // 声音在走、画面不动。页面上的其它手势不碰播放状态，免得误触把人暂停的片放起来。
+  // 声音在走、画面不动。
   if (resumeVideo && v.paused) {
     const p = v.play();
     if (p && p.catch) p.catch(()=>{});
   }
-  // 已经在播且对得上，就别每次点击都重设时间
+  // 已经在播且对得上，就别每次调用都重设时间
   if (!audioEl.paused && Math.abs(audioEl.currentTime - v.currentTime) < 0.3) return;
   // readyState 为 0 时赋 currentTime 会被忽略，交给 loadedmetadata 再补
   if (audioEl.readyState > 0 && Math.abs(audioEl.currentTime - v.currentTime) > 0.3){
@@ -262,12 +265,23 @@ function startPreAudio(resumeVideo){
   }
   audioEl.play().then(() => {
     audioOn = true;
+    audioRetry = 0;
     gateShow(false);
   }).catch(err => {
+    // AbortError：这次 play 还没落地就被 pause() 打断（用户暂停、切播放方式、
+    // 或者进度同步触发的 seek）。这不是故障，视频还在播就补一次，最多三轮。
+    const msg = (err && err.message) || '';
+    if ((err && err.name === 'AbortError') || /interrupted by a call to pause/i.test(msg)){
+      if (!v.paused && audioRetry < 3){
+        audioRetry++;
+        setTimeout(() => { if (art && art.video && !art.video.paused) startPreAudio(); }, 300);
+      }
+      return;
+    }
     if (err && err.name === 'NotAllowedError'){
       gateShow(true);            // 还没拿到手势，等用户点一下
     } else {
-      showHint('声音启动失败：' + ((err && err.message) || err));
+      showHint('声音启动失败：' + (msg || err));
     }
   });
 }
@@ -287,7 +301,9 @@ function setupPreAudio(){
   ['volumechange', 'ratechange'].forEach(ev => v.addEventListener(ev, syncVol));
   syncVol();
 
-  v.addEventListener('play', () => startPreAudio());
+  // 用 playing 而不是 play：play 只是"请求播放"，被暂停打断过也会触发一次；
+  // playing 才是真的出画面了，这时候拉音轨不会和 pause 打架。
+  v.addEventListener('playing', () => startPreAudio());
   v.addEventListener('pause', () => audioEl.pause());
   v.addEventListener('seeking', () => {
     if (!audioOn) return;
@@ -311,11 +327,8 @@ function setupPreAudio(){
     if (audioOn || !now.paused) startPreAudio();
   });
 
-  // 任意一次点击/按键都把「用户手势」补上
-  const gesture = () => { if (!audioOn) startPreAudio(); };
-  document.addEventListener('pointerdown', gesture, true);
-  document.addEventListener('keydown', gesture, true);
-  document.addEventListener('touchstart', gesture, {capture:true, passive:true});
+  // 只有这颗按钮代表「我要看、我要听」的明确意图；页面上的普通点击交给
+  // ArtPlayer（它是播放/暂停开关），不再全局补手势。
   if (gateEl) gateEl.addEventListener('click', ev => { ev.stopPropagation(); startPreAudio(true); });
 
   // 桌面端已授权自动播放的话，这一次就直接成了
