@@ -81,7 +81,7 @@ a{color:inherit;text-decoration:none}
 .inner{position:relative;z-index:2;display:flex;align-items:flex-end;
   gap:clamp(24px,3.5vw,56px);padding:76px 0 48px}
 .poster{
-  position:relative;width:224px;flex:0 0 224px;aspect-ratio:2/3;
+  position:relative;width:256px;flex:0 0 256px;aspect-ratio:2/3;
   border-radius:var(--radius);overflow:hidden;background:#14161c;
   box-shadow:0 34px 64px -24px rgba(0,0,0,1),
              0 0 0 1px rgba(255,255,255,.10),
@@ -244,7 +244,7 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
     <div class="head">
       <div class="eyebrow">{{if eq .Item.Kind "movie"}}影片{{else}}剧集{{end}}{{with .Item.Year}} · {{.}}{{end}}</div>
       <h1>{{.Item.Title}}</h1>
-      {{with .Item.OriginalTitle}}<p class="alt">{{.}}</p>{{end}}
+      {{if and .Item.OriginalTitle (ne .Item.OriginalTitle .Item.Title)}}<p class="alt">{{.Item.OriginalTitle}}</p>{{end}}
       {{with .Detail}}{{with .Tagline}}<p class="tagline">{{.}}</p>{{end}}{{end}}
 
       <div class="meta">
