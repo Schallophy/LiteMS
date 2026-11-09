@@ -150,6 +150,9 @@ func (t *Transcoder) run(ctx context.Context, id, src string, srcMod time.Time, 
 		"-vn",
 		"-map", "0:a:0?",
 		"-c:a", "aac", "-b:a", audioBitrate(src),
+		// -ac 必须显式给：5.1(side) 这类布局 ffmpeg 默认写 channelConfig=0（要读 PCE），
+		// Chromium 的 mp4 解析器不认，<audio> 会直接放不出来。理由同 hls.go。
+		"-ac", strconv.Itoa(audioChannels(src)),
 		"-progress", "pipe:1", "-nostats",
 		"-f", "mp4", part,
 	}
