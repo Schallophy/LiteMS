@@ -127,21 +127,9 @@ main{position:relative;z-index:1;padding:clamp(22px,3.2vw,38px) clamp(18px,4vw,4
 .card:hover .art>img{transform:scale(1.055)}
 
 /* 缺图占位：细网格 + 首字，比一块灰底体面 */
-.ph{position:absolute;inset:0;display:grid;place-items:center;
-  background:linear-gradient(155deg,#1d212a,#0d0f14 72%)}
-.ph::before{
-  content:"";position:absolute;inset:0;opacity:.5;
-  background-image:
-    linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);
-  background-size:26px 26px;
-  -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 24%,transparent 76%);
-          mask-image:radial-gradient(circle at 50% 42%,#000 24%,transparent 76%);
-}
-.ph span{
-  position:relative;font-size:32px;font-weight:600;line-height:1;letter-spacing:.04em;
-  color:rgba(255,255,255,.11);transform:translateY(-2px);
-}
+.ph{position:absolute;inset:0}
+{{template "phCore"}}
+.ph span{font-size:32px;transform:translateY(-2px)}
 
 /* 角标与底部压暗 */
 .scrim{position:absolute;inset:0;pointer-events:none;

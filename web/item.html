@@ -85,19 +85,8 @@ a{color:inherit;text-decoration:none}
              0 0 70px -24px rgba(227,183,116,.28);
 }
 .poster img{width:100%;height:100%;object-fit:cover;display:block}
-.poster.ph{display:grid;place-items:center;
-  background:linear-gradient(155deg,#1d212a,#0d0f14 72%)}
-.poster.ph::before{
-  content:"";position:absolute;inset:0;opacity:.5;
-  background-image:
-    linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
-  background-size:30px 30px;
-  -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 26%,transparent 78%);
-          mask-image:radial-gradient(circle at 50% 42%,#000 26%,transparent 78%);
-}
-.poster.ph span{position:relative;font-size:52px;font-weight:600;line-height:1;
-  color:rgba(255,255,255,.14)}
+{{template "phCore"}}
+.poster.ph span{font-size:52px}
 
 .head{flex:1;min-width:0;padding-bottom:4px}
 .eyebrow{margin-bottom:11px;font-size:11px;font-weight:600;letter-spacing:.18em;

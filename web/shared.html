@@ -1,0 +1,16 @@
+{{define "phCore"}}
+/* 海报占位符（没有真海报时的唯一视觉）：渐变底 + 网格纹理 + 标题首字。
+   这里只定义观感；几何（定位与字号）由各页面按自己的容器指定。
+   它不是图片：没有任何文件落盘，也不会随条目数量增殖。 */
+.ph{display:grid;place-items:center;
+  background:linear-gradient(155deg,#1d212a,#0d0f14 72%)}
+.ph::before{content:"";position:absolute;inset:0;opacity:.5;
+  background-image:
+    linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+  background-size:28px 28px;
+  -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 25%,transparent 77%);
+          mask-image:radial-gradient(circle at 50% 42%,#000 25%,transparent 77%)}
+.ph span{position:relative;font-weight:600;line-height:1;letter-spacing:.04em;
+  color:rgba(255,255,255,.13)}
+{{end}}
