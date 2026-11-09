@@ -183,16 +183,9 @@ if (resume > 30000) {
   art.on('ready', () => { art.currentTime = resume / 1000; });
 }
 
-// 静音兜底：从详情页点过来是一次导航，新页面的有声自动播放可能被浏览器拦。
-// 表现是视频停在暂停——1.2s 后仍暂停就静音重试一次，并提示去开音量。
-setTimeout(() => {
-  if (art && art.video && art.video.paused && !art.video.error) {
-    art.video.muted = true;
-    art.video.play().then(() => {
-      showHint('浏览器拦截了自动播放的声音，已静音起播——点击播放器右下角<b>音量图标</b>取消静音。');
-    }).catch(()=>{});
-  }
-}, 1200);
+// 自动播放被拦就停在暂停态，等用户点播放（用户手势，一定带声音）。
+// 不做「静音重试 + 提示去开音量」那套：既会被用户主动暂停误触发，也把
+// 有声播放变成静音播放，反而要人多找一次音量图标。
 
 // 字幕：默认用扫描排序的第一条（[scrape].sub_langs 的偏好顺序）。
 // 必须走 art.subtitle.switch()——v5.4 里 art.subtitle 是 Subtitle 实例，
