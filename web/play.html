@@ -289,13 +289,6 @@ function startPreAudio(resumeVideo){
 function setupPreAudio(){
   audioEl = new Audio('/audio/' + ITEM);
   audioEl.preload = 'auto';
-  // 必须挂进 DOM。游离的 media 元素在规范上可以播，但部分移动端浏览器不给它
-  // 分音频输出：解码计数在涨、currentTime 在走、muted=false、音量也正常，
-  // 就是一点声音都没有。塞进文档树（1px、透明、不可交互）最稳。
-  audioEl.setAttribute('playsinline', '');
-  audioEl.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;'
-    + 'opacity:0;pointer-events:none;z-index:-1';
-  document.body.appendChild(audioEl);
   const v = art.video;
 
   // 音量/静音/倍速跟随播放器控件。用事件而不是定时轮询：轮询会把用户刚调过的
