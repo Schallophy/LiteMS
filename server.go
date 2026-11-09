@@ -256,11 +256,18 @@ func (s *Server) toDTO(it Item) ItemDTO {
 		RuntimeMin: it.RuntimeMin, Rating: it.Rating, Overview: it.Overview,
 		Subs: it.SubPaths,
 	}
+	// 图片 URL 带版本号：/poster 的缓存头是 max-age=604800，URL 不变的话
+	// 重刮之后浏览器还会拿旧图（哪怕服务端已经换了文件），刷新和重启都救不回来。
+	// 用 ScrapedAt 当版本号，重刮一次 URL 就变，缓存自然失效。
+	ver := ""
+	if it.ScrapedAt > 0 {
+		ver = fmt.Sprintf("?v=%d", it.ScrapedAt)
+	}
 	if it.PosterPath != "" {
-		d.Poster = "/poster/" + it.ID
+		d.Poster = "/poster/" + it.ID + ver
 	}
 	if it.FanartPath != "" {
-		d.Fanart = "/fanart/" + it.ID
+		d.Fanart = "/fanart/" + it.ID + ver
 	}
 	if p, err := s.db.GetProgress(it.ID); err == nil && p != nil {
 		d.Finished = p.Finished
