@@ -130,7 +130,6 @@ main{position:relative;z-index:1;padding:clamp(22px,3.2vw,38px) clamp(18px,4vw,4
 /* 缺图占位：细网格 + 首字，比一块灰底体面 */
 .ph{position:absolute;inset:0}
 {{template "phCore"}}
-.ph span{font-size:32px;transform:translateY(-2px)}
 
 /* 角标与底部压暗 */
 .scrim{position:absolute;inset:0;pointer-events:none;
@@ -211,7 +210,6 @@ code{
   .seg{order:2}
   .grid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:26px 16px}
   .cap h3{font-size:12.5px}
-  .ph span{font-size:32px}
 }
 @media(max-width:560px){
   main{padding:20px 16px 64px}
@@ -221,7 +219,6 @@ code{
   .grid{grid-template-columns:repeat(3,1fr);gap:22px 12px}
   .cap h3{font-size:12px;line-height:1.4}
   .cap p{font-size:11px;gap:5px}
-  .ph span{font-size:26px}
   .badge{top:7px;right:7px;padding:2px 7px 2px 5px;font-size:10.5px}
 }
 @media(prefers-reduced-motion:reduce){
@@ -265,7 +262,7 @@ code{
         {{if .Poster}}
           <img src="{{.Poster}}" alt="{{.Title}}" loading="lazy" decoding="async">
         {{else}}
-          <div class="ph"><span>{{initial .Title}}</span></div>
+          <div class="ph"></div>
         {{end}}
         <div class="scrim"></div>
         {{with .Rating}}<div class="badge"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>{{printf "%.1f" .}}</div>{{end}}
