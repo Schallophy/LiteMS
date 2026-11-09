@@ -193,18 +193,45 @@ func peekSchemaVersion(path string) (int, bool) {
 
 func (d *DB) Close() error { return d.sql.Close() }
 
-// SearchKey 生成折叠搜索键：去空格/标点、统一小写后的「标题|原名」。
-// 有了它 "lala" / "lalaland" / "La La Land" 都能命中同一部片。
-func SearchKey(title, original string) string {
-	k := foldForCompare(title)
-	if o := foldForCompare(original); o != "" && o != k {
-		k += "|" + o
+// SearchKey 生成折叠搜索键：去空格/标点、统一小写后的「标题|原名|文件路径」。
+// 有了它 "lala" / "lalaland" / "La La Land" 都能命中同一部片；文件名也要进键，
+// 因为国产片的英文国际名（如 The Shadow's Edge）不在 TMDB original_title 里，
+// 只存在于发布文件名中——不带上它，搜 "shadow" 就找不到《捕风追影》。
+func SearchKey(title, original, relPath string) string {
+	parts := []string{foldForCompare(title)}
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		for _, p := range parts {
+			if p == s {
+				return
+			}
+		}
+		parts = append(parts, s)
 	}
-	return k
+	add(foldForCompare(original))
+	add(foldForCompare(relPath))
+	out := ""
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		if out != "" {
+			out += "|"
+		}
+		out += p
+	}
+	return out
 }
 
-// migrateSearchKey 给老库补 search_key 列并回填。走 ALTER 而不是升 SchemaVersion：
-// 升版本会整库删除，观看进度也一起没了，而这里只是加一个派生列。
+// searchKeyVersion 是搜索键格式版本：键内容（字段集合）变过就靠它触发全量重算，
+// 不能只看空值——旧格式的键非空，但缺了新增字段。
+const searchKeyVersion = "2"
+
+// migrateSearchKey 给老库补 search_key 列并按当前格式全量回填。
+// 走 ALTER 而不是升 SchemaVersion：升版本会整库删除，观看进度也一起没了，
+// 而这里只是加一个派生列。
 func migrateSearchKey(h *sql.DB) error {
 	var n int
 	if err := h.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='search_key'`).Scan(&n); err != nil {
@@ -215,26 +242,29 @@ func migrateSearchKey(h *sql.DB) error {
 			return fmt.Errorf("补 search_key 列失败: %w", err)
 		}
 	}
-	rows, err := h.Query(`SELECT id, title, original_title FROM items WHERE search_key=''`)
+	var ver string
+	if err := h.QueryRow(`SELECT v FROM kv WHERE k='search_key_ver'`).Scan(&ver); err == nil && ver == searchKeyVersion {
+		return nil
+	}
+	rows, err := h.Query(`SELECT id, title, original_title, rel_path FROM items`)
 	if err != nil {
 		return err
 	}
 	type pending struct{ id, key string }
 	var todo []pending
 	for rows.Next() {
-		var id, title, orig string
-		if err := rows.Scan(&id, &title, &orig); err != nil {
+		var id, title, orig, rel string
+		if err := rows.Scan(&id, &title, &orig, &rel); err != nil {
 			rows.Close()
 			return err
 		}
-		if k := SearchKey(title, orig); k != "" {
-			todo = append(todo, pending{id, k})
-		}
+		todo = append(todo, pending{id, SearchKey(title, orig, rel)})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
 	}
 	rows.Close()
-	if len(todo) == 0 {
-		return nil
-	}
 	tx, err := h.Begin()
 	if err != nil {
 		return err
@@ -244,6 +274,10 @@ func migrateSearchKey(h *sql.DB) error {
 		if _, err := tx.Exec(`UPDATE items SET search_key=? WHERE id=?`, p.key, p.id); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(`INSERT INTO kv(k,v) VALUES('search_key_ver',?)
+		ON CONFLICT(k) DO UPDATE SET v=excluded.v`, searchKeyVersion); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -293,7 +327,7 @@ ON CONFLICT(id) DO UPDATE SET
   season=excluded.season,
   episode=excluded.episode`,
 		it.ID, it.RootIdx, filepath.ToSlash(it.RelPath), string(it.Kind), it.Title, it.OriginalTitle,
-		SearchKey(it.Title, it.OriginalTitle),
+		SearchKey(it.Title, it.OriginalTitle, it.RelPath),
 		nullableInt(it.Year), nullableInt(it.TmdbID), nullableInt(it.Season), nullableInt(it.Episode),
 		nullableInt(it.RuntimeMin), nullableFloat(it.Rating), nullableInt(it.Votes), it.Overview,
 		it.PosterPath, it.FanartPath, it.LogoPath, string(subs), it.Container,
@@ -700,7 +734,7 @@ UPDATE items SET
   overview=?, poster_path=?, fanart_path=?, nfo_mtime_unix=?, scraped_at=?,
   scrape_status='ok'
 WHERE id=?`,
-		it.Title, it.OriginalTitle, SearchKey(it.Title, it.OriginalTitle),
+		it.Title, it.OriginalTitle, SearchKey(it.Title, it.OriginalTitle, it.RelPath),
 		nullableInt(it.Year), nullableInt(it.TmdbID),
 		nullableInt(it.RuntimeMin), nullableFloat(it.Rating), nullableInt(it.Votes),
 		it.Overview, nullString(it.PosterPath), nullString(it.FanartPath),
