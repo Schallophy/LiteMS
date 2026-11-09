@@ -181,8 +181,15 @@ function saveProgress(){
 
 /* ---------- 播放方式 ---------- */
 const MODE_KEY = 'litems.playmode';
-const MODE_LABEL = {auto:'自动', pre:'预转码', live:'实时转码'};
+const MODE_LABEL = {auto:'自动', pre:'预转码', live:'实时转码', native:'原生'};
+// ?mode=live|pre|native 直接指定播放方式，不落 localStorage：
+// 用来对比两种模式的实际表现，或者分享一条「这条用实时转码看」的链接。
+const MODE_OVERRIDE = (new URLSearchParams(location.search).get('mode') || '').toLowerCase();
+
 function pickMode(){
+  if (MODE_OVERRIDE === 'pre' && PRE_READY) return 'pre';
+  if (MODE_OVERRIDE === 'live' && LIVE_READY) return 'live';
+  if (MODE_OVERRIDE === 'native') return 'native';
   const pref = localStorage.getItem(MODE_KEY) || 'auto';
   if (pref === 'pre' && PRE_READY) return 'pre';
   if (pref === 'live' && LIVE_READY) return 'live';
@@ -362,7 +369,10 @@ function attachHls(video, url, a){
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     try { video.currentTime = 0; } catch(e){}
   });
-  art.hls = hls;
+  // 第三个参数就是 ArtPlayer 实例。这里必须用它，不能用全局 art——
+  // customType 是在 new ArtPlayer() 构造期间调用的，那时全局 art 还没赋值，
+  // 写成 art.hls 会抛 TypeError，hls 实例就丢了（切模式/重起流时销毁不掉）。
+  a.hls = hls;
   a.on('destroy', () => { try { hls.destroy(); } catch(e){} });
 }
 
@@ -562,7 +572,9 @@ async function boot(){
       html: '播放方式',
       name: 'play-mode',
       width: 240,
-      tooltip: MODE_LABEL[pref] || '自动',
+      tooltip: MODE_OVERRIDE && MODE_LABEL[MODE_OVERRIDE]
+        ? 'URL 指定 · ' + MODE_LABEL[MODE_OVERRIDE]
+        : (MODE_LABEL[pref] || '自动'),
       selector: optsList.map(o => ({...o, default: o.value === mode})),
       onSelect(item){
         localStorage.setItem(MODE_KEY, item.value);
