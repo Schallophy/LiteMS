@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="{{.Theme}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>正在播放 · {{.Item.Title}}</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#08090c;
+  --surface:#12141a;
+  --line:rgba(255,255,255,.07);
+  --line-2:rgba(255,255,255,.14);
+  --text:#f4f5f7;
+  --text-2:#a2a8b3;
+  --text-3:#6d7481;
+  --gold:#e3b774;
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;min-height:100vh;background:var(--bg);color:var(--text);
+  font:15px/1.7 "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+       "Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit;text-decoration:none}
+
+/* 顶栏：沉浸播放时悬浮在画面上方，鼠标不动几秒后淡出 */
+.bar{
+  position:fixed;inset:0 0 auto;z-index:10;
+  display:flex;align-items:center;gap:16px;
+  padding:14px clamp(16px,3vw,28px);
+  background:linear-gradient(180deg,rgba(8,9,12,.85),rgba(8,9,12,0));
+  transition:opacity .3s var(--ease);
+}
+.bar.hide{opacity:0;pointer-events:none}
+.back{
+  display:inline-flex;align-items:center;gap:7px;padding:8px 16px 8px 13px;
+  border-radius:999px;font-size:13px;color:var(--text);
+  background:rgba(14,15,19,.6);border:1px solid rgba(255,255,255,.15);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  transition:background .22s,border-color .22s;
+}
+.back:hover{background:rgba(22,24,31,.85);border-color:rgba(255,255,255,.28)}
+.back svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.bar .title{
+  min-width:0;font-size:14px;font-weight:500;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.bar .title small{font-weight:400;color:var(--text-3);margin-left:8px}
+
+/* 播放器：桌面占满可视区宽度上限，小屏贴边 */
+main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
+#player{aspect-ratio:16/9;width:100%;border-radius:12px;overflow:hidden;
+  border:1px solid var(--line);background:#000}
+
+/* 提示条：音轨警告 / 静音起播提示，出现在播放器下方 */
+.notice{
+  margin:14px 0 0;padding:11px 16px;border-radius:10px;
+  font-size:13.5px;line-height:1.8;color:var(--text-2);
+  background:var(--surface);border:1px solid var(--line);
+}
+.notice b{color:var(--gold);font-weight:600}
+.notice.warn{border-color:rgba(227,183,116,.4)}
+.notice .more{color:var(--text-3)}
+
+@media(max-width:560px){
+  main{padding-top:64px}
+}
+@media(prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+<header class="bar" id="bar">
+  <a class="back" href="/item/{{.Item.ID}}">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+    返回
+  </a>
+  <div class="title">{{.Item.Title}}{{if .Item.Year}}<small>{{.Item.Year}}</small>{{end}}</div>
+</header>
+
+<main>
+  <div id="player"></div>
+  {{if eq .AudioHint "bad"}}
+  <div class="notice warn" id="hint">
+    这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码——浏览器内核不带这种解码器，
+    表现就是<b>画面正常但没有声音</b>。请回详情页用「播放」交给本地 mpv，或「复制命令」手动播放。
+  </div>
+  {{else if eq .AudioHint "maybe"}}
+  <div class="notice warn" id="hint">
+    音轨标注为 <b>AC3 / EAC3</b>：Edge 等自带专有解码器的浏览器可以出声，
+    Chrome/Firefox 大概率解不了。若画面正常但没有声音，就是这个原因，请改用 mpv。
+  </div>
+  {{else}}
+  <div class="notice" id="hint" hidden></div>
+  {{end}}
+</main>
+
+<script src="/vendor/artplayer.js"></script>
+<script>
+const ITEM = "{{.Item.ID}}";
+const SUBS = [{{range $i, $s := .Item.Subs}}{{if $i}},{{end}}{lang:"{{$s.Lang}}"}{{end}}];
+let art = null, lastSave = 0;
+
+const langLabel = l => ({chs:'简体中文', cht:'繁體中文', eng:'English',
+  jpn:'日本語', kor:'한국어'}[l] || l);
+
+const hintEl = document.getElementById('hint');
+function showHint(html){
+  hintEl.hidden = false;
+  hintEl.classList.add('warn');
+  hintEl.innerHTML = html;
+}
+
+function saveProgress(){
+  if (!art || !art.video || !art.video.duration) return;
+  fetch('/api/progress', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      item_id: ITEM,
+      position_ms: Math.round(art.video.currentTime * 1000),
+      duration_ms: Math.round(art.video.duration * 1000),
+    })}).catch(()=>{});
+}
+
+const opts = {
+  container: '#player',
+  url: '/stream/' + ITEM,
+  autoplay: true,
+  setting: true,
+  playbackRate: true,
+  aspectRatio: true,
+  fullscreen: true,
+  pip: true,
+  hotkey: true,
+};
+{{if .Item.Poster}}opts.poster = "{{.Item.Poster}}";{{end}}
+art = new Artplayer(opts);
+
+const resume = parseInt("{{.Item.PositionMS}}", 10);
+if (resume > 30000) {
+  art.on('ready', () => { art.currentTime = resume / 1000; });
+}
+
+// 静音兜底：从详情页点过来是一次导航，新页面的有声自动播放可能被浏览器拦。
+// 表现是视频停在暂停——1.2s 后仍暂停就静音重试一次，并提示去开音量。
+setTimeout(() => {
+  if (art && art.video && art.video.paused && !art.video.error) {
+    art.video.muted = true;
+    art.video.play().then(() => {
+      showHint('浏览器拦截了自动播放的声音，已静音起播——点击播放器右下角<b>音量图标</b>取消静音。');
+    }).catch(()=>{});
+  }
+}, 1200);
+
+// 外挂字幕：默认用扫描排序的第一条（[scrape].sub_langs 的偏好顺序）
+if (SUBS.length) {
+  art.subtitle = {url: '/sub/' + ITEM + '?lang=' + SUBS[0].lang + '&fmt=vtt',
+                  type: 'vtt', encoding: 'utf-8'};
+  if (SUBS.length > 1) {
+    art.setting.add({
+      html: '字幕',
+      width: 200,
+      tooltip: langLabel(SUBS[0].lang),
+      selector: SUBS.map((s, i) => ({html: langLabel(s.lang), lang: s.lang, default: i === 0})),
+      onSelect(item){
+        art.subtitle = {url: '/sub/' + ITEM + '?lang=' + item.lang + '&fmt=vtt',
+                        type: 'vtt', encoding: 'utf-8'};
+        return item.html;
+      },
+    });
+  }
+}
+
+// 进度上报：播放中节流 10s，暂停/播完立刻存；离页用 sendBeacon
+art.on('video:timeupdate', () => {
+  const now = Date.now();
+  if (now - lastSave > 10000) { lastSave = now; saveProgress(); }
+});
+art.on('video:pause', saveProgress);
+art.on('video:ended', saveProgress);
+window.addEventListener('pagehide', () => {
+  if (!art || !art.video || !art.video.duration) return;
+  navigator.sendBeacon('/api/progress', new Blob([JSON.stringify({
+    item_id: ITEM,
+    position_ms: Math.round(art.video.currentTime * 1000),
+    duration_ms: Math.round(art.video.duration * 1000),
+  })], {type: 'application/json'}));
+});
+
+// 解码失败：文件整个打不开时才走这里；音轨解不了不会触发（见下方说明）
+art.on('video:error', () => {
+  showHint('浏览器解码不了这个文件。请回详情页用「播放」交给本地 mpv，或「复制命令」手动播放——它们不挑编码。');
+});
+
+// 顶栏：播放时鼠标（或触摸）不动 2.6s 后淡出，动了再出现
+const bar = document.getElementById('bar');
+let barTimer;
+function wakeBar(){
+  bar.classList.remove('hide');
+  clearTimeout(barTimer);
+  barTimer = setTimeout(() => {
+    if (art && !art.video.paused) bar.classList.add('hide');
+  }, 2600);
+}
+document.addEventListener('mousemove', wakeBar);
+document.addEventListener('touchstart', wakeBar, {passive:true});
+art.on('video:play', wakeBar);
+art.on('video:pause', wakeBar);
+wakeBar();
+</script>
+</body>
+</html>

@@ -115,11 +115,6 @@ h1{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;line-height:1.16;
   letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);
   border:1px solid var(--line-2);background:rgba(255,255,255,.03)}
 
-/* 网页播放器：16:9 容器，错误提示替代画面 */
-#player{aspect-ratio:16/9;border-radius:12px;overflow:hidden;
-  border:1px solid var(--line);background:#000}
-.player-err{margin:12px 0 0;font-size:14px;line-height:1.8;color:var(--text-2)}
-
 /* NFO 补充信息：左标签右内容的两列网格 */
 .info{display:grid;grid-template-columns:88px 1fr;gap:14px 18px;max-width:68ch;
   font-size:14px;line-height:1.7}
@@ -265,7 +260,7 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
           {{if .Item.PositionMS}}继续播放{{else}}播放{{end}}
         </button>
-        <button class="btn" id="webplay">网页播放</button>
+        <a class="btn" id="webplay" href="/play/{{.Item.ID}}">网页播放</a>
         <button class="btn" id="copy">复制命令</button>
         <a class="btn" href="/stream/{{.Item.ID}}" target="_blank" rel="noopener">直接打开</a>
       </div>
@@ -275,14 +270,6 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
 
 <main>
   <div class="shell">
-    <section id="playerSec" hidden
-             data-poster="{{.Item.Poster}}" data-resume="{{.Item.PositionMS}}">
-      <div id="player"></div>
-      <p id="playerErr" class="player-err" hidden>
-        浏览器解码不了这个文件的音视频（常见于 DTS 音轨等规格）。
-        请用「播放」交给本地 mpv，或「复制命令」——它们不挑编码。
-      </p>
-    </section>
     {{if .Item.Overview}}
     <section>
       <h2>剧情简介</h2>
@@ -328,7 +315,6 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
 </main>
 
 <div class="toast" id="toast"></div>
-<script src="/vendor/artplayer.js"></script>
 <script>
 const ITEM = "{{.Item.ID}}";
 const HELPER = "http://127.0.0.1:{{.HelperPort}}";
@@ -375,97 +361,6 @@ async function copyText(text){
   window.prompt('自动复制被浏览器拒绝，请全选下面的命令手动复制：', text);
   return 'prompted';
 }
-/* ---------- 网页播放器 ---------- */
-const SUBS = [{{range $i, $s := .Item.Subs}}{{if $i}},{{end}}{lang:"{{$s.Lang}}"}{{end}}];
-const playerSec = document.getElementById('playerSec');
-const playerBox = document.getElementById('player');
-const playerErr = document.getElementById('playerErr');
-const webplayBtn = document.getElementById('webplay');
-let art = null, lastSave = 0;
-
-const langLabel = l => ({chs:'简体中文', cht:'繁體中文', eng:'English',
-  jpn:'日本語', kor:'한국어'}[l] || l);
-
-function saveProgress(){
-  if (!art || !art.video || !art.video.duration) return;
-  fetch('/api/progress', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      item_id: ITEM,
-      position_ms: Math.round(art.video.currentTime * 1000),
-      duration_ms: Math.round(art.video.duration * 1000),
-    })}).catch(()=>{});
-}
-
-webplayBtn.addEventListener('click', async ()=>{
-  if (art) {                       // 再点一次 = 收起
-    art.destroy(false); art = null;
-    playerSec.hidden = true; playerErr.hidden = true; playerBox.hidden = false;
-    webplayBtn.textContent = '网页播放';
-    return;
-  }
-  playerSec.hidden = false;
-  playerSec.scrollIntoView({behavior:'smooth', block:'center'});
-
-  const opts = {
-    container: '#player',
-    url: '/stream/' + ITEM,
-    autoplay: true,
-    setting: true,
-    playbackRate: true,
-    aspectRatio: true,
-    fullscreen: true,
-    pip: true,
-    hotkey: true,
-  };
-  if (playerSec.dataset.poster) opts.poster = playerSec.dataset.poster;
-  art = new Artplayer(opts);
-  webplayBtn.textContent = '收起播放器';
-
-  const resume = parseInt(playerSec.dataset.resume || '0', 10);
-  if (resume > 30000) {
-    art.on('ready', () => { art.currentTime = resume / 1000; });
-  }
-
-  // 外挂字幕：默认用扫描排序的第一条（[scrape].sub_langs 的偏好顺序）
-  if (SUBS.length) {
-    art.subtitle = {url: '/sub/' + ITEM + '?lang=' + SUBS[0].lang + '&fmt=vtt',
-                    type: 'vtt', encoding: 'utf-8'};
-    if (SUBS.length > 1) {
-      art.setting.add({
-        html: '字幕',
-        width: 200,
-        tooltip: langLabel(SUBS[0].lang),
-        selector: SUBS.map((s, i) => ({html: langLabel(s.lang), lang: s.lang, default: i === 0})),
-        onSelect(item){
-          art.subtitle = {url: '/sub/' + ITEM + '?lang=' + item.lang + '&fmt=vtt',
-                          type: 'vtt', encoding: 'utf-8'};
-          return item.html;
-        },
-      });
-    }
-  }
-
-  // 进度上报：播放中节流 10s，暂停/播完立刻存；离页用 sendBeacon
-  art.on('video:timeupdate', () => {
-    const now = Date.now();
-    if (now - lastSave > 10000) { lastSave = now; saveProgress(); }
-  });
-  art.on('video:pause', saveProgress);
-  art.on('video:ended', saveProgress);
-  window.addEventListener('pagehide', () => {
-    if (!art || !art.video || !art.video.duration) return;
-    navigator.sendBeacon('/api/progress', new Blob([JSON.stringify({
-      item_id: ITEM,
-      position_ms: Math.round(art.video.currentTime * 1000),
-      duration_ms: Math.round(art.video.duration * 1000),
-    })], {type: 'application/json'}));
-  });
-
-  // 解码失败（DTS 音轨等）：换成交代文案，按钮仍可走 mpv
-  art.on('video:error', () => {
-    playerBox.hidden = true; playerErr.hidden = false;
-  });
-});
 
 document.getElementById('copy').addEventListener('click', async ()=>{
   try{

@@ -7,7 +7,7 @@ title: DESIGN
 > 一个跑在 Termux 上的轻量媒体库服务器：负责刮削、索引、文件服务；
 > 播放交给 PC 上的本地播放器。
 >
-> 文档版本：v2.6　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
+> 文档版本：v2.7　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
 
 ---
 
@@ -889,6 +889,7 @@ OMDb Response=False → 视为 miss，不重试
 | ------ | -------------------- | --------------- |
 | `GET`  | `/`                  | Web UI 首页（HTML） |
 | `GET`  | `/item/{id}`         | 详情页（HTML）       |
+| `GET`  | `/play/{id}`         | 网页播放页（HTML，沉浸式）  |
 | `GET`  | `/api/items`         | 列表查询            |
 | `GET`  | `/api/items/{id}`    | 单条详情            |
 | `GET`  | `/api/continue`      | 继续观看            |
@@ -1188,6 +1189,21 @@ helper 连接该 socket，每 10 秒发送：
 ```
 
 读到位置后 POST 回服务端 `/api/progress`。播放器退出时再上报一次。VLC 无对应的简单 IPC，此功能仅对 mpv 生效。
+
+### 10.8 网页播放页 `/play/{id}`
+
+详情页只承担信息浏览，网页播放跳到专门的沉浸式页面（v2.7 起，不再内嵌在详情页里）。
+页面职责：ArtPlayer 播放 `/stream/{id}`、外挂字幕（`/sub/{id}?fmt=vtt`，设置面板多语言切换）、
+续播 >30s 跳转、进度上报（节流 10s + pause/ended + `sendBeacon`）。
+
+**无声提示（audio.go）**：浏览器内核自带解码器只有 AAC/MP3/FLAC/Opus/Vorbis，
+DTS/TrueHD/Atmos/PCM（bad 级）与 AC3/EAC3/DDP（maybe 级）解不了时的表现是
+**画面正常播放、零报错、没声音**——`video:error` 不触发，前端无从感知。
+LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（`audioHint`，正则边界注意
+`DDP5.1` 尾随的是数字），在播放页顶部分级提示。aac/flac 等通用编码不提示。
+
+**静音兜底**：从详情页点过来是一次导航，新页面的有声自动播放可能被浏览器策略拦截
+（表现为停在暂停）。起播 1.2s 后仍 paused 则静音重试一次，并提示用户点音量图标恢复。
 
 ---
 

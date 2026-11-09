@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"embed"
-	"io/fs"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"mime"
 	"net"
 	"net/http"
@@ -115,6 +115,7 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/poster/", s.handleImage(true))
 	mux.HandleFunc("/fanart/", s.handleImage(false))
 	mux.HandleFunc("/item/", s.handleItemPage)
+	mux.HandleFunc("/play/", s.handlePlayPage)
 	mux.HandleFunc("/settings", s.handleSettings)
 	mux.HandleFunc("/", s.handleIndex)
 
@@ -561,6 +562,8 @@ type pageData struct {
 	RootPath    string
 	HelperToken string
 	HelperPort  string
+	// AudioHint 播放页用：从文件名识别的音频标签提示等级（bad/maybe/""）
+	AudioHint string
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -624,6 +627,32 @@ func (s *Server) handleItemPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tpl.ExecuteTemplate(w, "item.html", data); err != nil {
 		warnf("渲染详情页失败：%v", err)
+	}
+}
+
+// handlePlayPage 沉浸式网页播放页（/play/<id>）：详情页只留信息，
+// 网页播放跳到专门页面，看完/中途退出再回来。
+func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(r.URL.Path, "/play/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	it, err := s.db.GetItem(id)
+	if err != nil || it == nil {
+		http.NotFound(w, r)
+		return
+	}
+	d := s.toDTO(*it)
+	data := pageData{
+		Title:     s.cfg.UI.Title,
+		Theme:     s.cfg.UI.Theme,
+		Item:      &d,
+		AudioHint: audioHint(it.RelPath, it.Container),
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tpl.ExecuteTemplate(w, "play.html", data); err != nil {
+		warnf("渲染播放页失败：%v", err)
 	}
 }
 
