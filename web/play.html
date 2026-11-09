@@ -119,6 +119,8 @@ const SUBS = [
 // 两种转码模式就绪情况：预转码=音轨已提前转好；实时=ffmpeg 可用
 const PRE_READY  = {{if .AudioReady}}true{{else}}false{{end}};
 const LIVE_READY = {{if .LiveReady}}true{{else}}false{{end}};
+// 音轨兼容性（bad/maybe/""），来自文件名识别；"" 表示没发现浏览器解不了的音轨
+const AUDIO_HINT = "{{.AudioHint}}";
 const RESUME_MS  = parseInt("{{.Item.PositionMS}}", 10) || 0;
 const DURATION_MS= parseInt("{{.Item.DurationMS}}", 10) || 0;
 
@@ -173,6 +175,10 @@ function pickMode(){
   const pref = localStorage.getItem(MODE_KEY) || 'auto';
   if (pref === 'pre' && PRE_READY) return 'pre';
   if (pref === 'live' && LIVE_READY) return 'live';
+  // auto：音轨没问题的先试原生直连——零转码、完整时长、Range 拖动最流畅。
+  // 实时转码是滑动窗口，总时长只有已转出的部分（几十秒起），拖动还会重起
+  // 流，能不走的路就不走。音轨解不了才转码：有预转码产物用预转码，否则实时。
+  if (AUDIO_HINT === '') return 'native';
   if (PRE_READY) return 'pre';
   if (LIVE_READY) return 'live';
   return 'native';

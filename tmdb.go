@@ -134,6 +134,8 @@ func NewTMDBClient(cfg *Config) *TMDBClient {
 		hc: &http.Client{
 			Timeout: 20 * time.Second,
 			Transport: &http.Transport{
+				// netDial 启用 DoH 后指向 DoH 拨号（见 doh.go），未启用时就是普通拨号
+				DialContext:         dialForHTTP,
 				Proxy:               http.ProxyFromEnvironment,
 				MaxIdleConns:        16,
 				MaxIdleConnsPerHost: 8,
@@ -170,7 +172,8 @@ func (c *TMDBClient) newRequest(ctx context.Context, path string, q url.Values) 
 	if q == nil {
 		q = url.Values{}
 	}
-	if c.language != "" {
+	// 调用方显式给了 language 就尊重它（Search 固定用 en-US，见其注释）
+	if c.language != "" && q.Get("language") == "" {
 		q.Set("language", c.language)
 	}
 	if c.apiToken == "" {
@@ -418,6 +421,11 @@ func (c *TMDBClient) Search(ctx context.Context, q Query) ([]Candidate, error) {
 	vals := url.Values{}
 	vals.Set("query", q.Title)
 	vals.Set("include_adult", "false")
+	// 搜索固定用 en-US：匹配是纯字符串比对（Levenshtein），而 zh-CN 下返回的
+	// title/original_title 都是中文译名，与英文查询词的相似度恒为 0，硬门槛
+	// 必然拒绝——中文片（original_title 本身就是中文）尤其无解。
+	// 详情接口仍用配置语言拿中文简介/标题，两边各司其职。
+	vals.Set("language", "en-US")
 
 	path := "/search/movie"
 	if q.Kind == KindEpisode {

@@ -21,7 +21,7 @@ import (
 // dnsProbeHost 是自检用的域名。要求稳定、全球可解析、响应快。
 const dnsProbeHost = "www.baidu.com"
 
-// SetupNet 按配置准备网络：接管 DNS、注入代理环境变量。
+// SetupNet 按配置准备网络：接管 DNS、启用 DoH、注入代理环境变量。
 // 返回实际使用的 DNS 描述，便于日志与排错。
 func SetupNet(cfg *Config) string {
 	if p := strings.TrimSpace(cfg.Net.Proxy); p != "" {
@@ -30,7 +30,11 @@ func SetupNet(cfg *Config) string {
 		}
 		logf("代理 %s", p)
 	}
-	return setupDNS(cfg)
+	desc := setupDNS(cfg)
+	if d := installDoH(cfg.Net.DoH, dnsProbeHost); d != "未启用" {
+		logf("DoH %s", d)
+	}
+	return desc
 }
 
 // setupDNS 决定用哪个 DNS 服务器。

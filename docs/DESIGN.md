@@ -1726,6 +1726,38 @@ $ cat /proc/net/route           → Permission denied（Android 10+ 侧信道防
 
 **改 `resolv.conf` 对本项目无效**：那只对 `GOOS=android` 的产物起作用（[13.2.3](#1323-三个组合的行为差异实测)）。留着不用管，Termux 的 `curl` 走 bionic 也不看它。
 
+#### 13.2.6.1 DoH：查不到就问加密 DNS
+
+`[net].dns` 解决「本机没有解析器」，解决不了「解析结果本身被投毒」——上游把
+`api.themoviedb.org` 应答成 `0.0.0.0` 时，换哪个 53 端口的服务器都可能拿到同样的
+假答案（实测 8.8.8.8、223.5.5.5 都返回 `0.0.0.0`）。DoH（RFC 8484）把查询塞进
+HTTPS，中间链路看不见也改不了。
+
+实现要点（`doh.go`，约 200 行、零新依赖）：
+
+- 不接管 `net.DefaultResolver`：Go 的 Resolver 需要一条能跑 DNS 协议的连接
+  （UDP/TCP 53），DoH 是 HTTP，塞不进去。改为只接管 **HTTP 出站**：
+  `http.Transport.DialContext` 统一换成 `dialForHTTP` → 先 DoH 解析、按 IP 建连，
+  TLS 的 SNI 仍是原域名。未启用/解析失败都回落系统解析，DoH 挂了不等于断网
+- 报文手工拼：查询（RD=1 + QNAME + QTYPE）和响应解析（跳过 name，兼容压缩指针
+  0xC0）各 30 行，不需要 `golang.org/x/net/dns/dnsmessage`
+- 只查 A/AAAA；A 无记录再查 AAAA（纯 IPv6 环境不被误判为不存在）
+- 缓存 TTL 夹在 [30s, 10min]：太短打爆端点，太长钉死过期结果
+- 自检先于启用：启动时真实解析一次 `dnsProbeHost`，失败就保持系统解析并告警
+- `[net].doh`：`""`/`"off"` 关闭；`"auto"` 用内置端点
+  （doh.pub → dns.alidns.com → 1.1.1.1，国内优先）；或逗号分隔的 URL 列表
+
+另一个容易被误判的坑：**匹配是字符串比对，翻译会毁掉它**。TMDB 搜索在
+`language=zh-CN` 下返回的 `title/original_title` 都是中文，与（通常是英文的）查询词
+Levenshtein 相似度恒为 0，`TitleSimMin=0.75` 的硬门槛必然拒绝——中文片
+（original_title 本身就是中文）尤其无解。所以 `Search` 固定 `language=en-US`
+（匹配用原文），`Detail` 仍用配置语言（拿中文简介），两边各司其职。
+
+配套的救回路径：文件名里的发布标记（`HC` / `Chinese` / 发布组名）会污染标题，数据源
+对整个长串直接搜不到。`searchMovie` 现在从尾部逐词剥掉重搜（最多 4 次，剩 3 词为止，
+最后一次不带年份、靠匹配门槛的年份差兜底）——实测
+`"The Wandering Earth II Chinese HC HHWEB"` 剥到 `"The Wandering Earth II"` 命中。
+
 #### 13.2.7 代理
 
 现在不需要代理。仅在 `api.tmdb.org` 也被污染时才用得上——已验证 Go 的 `http.ProxyFromEnvironment` 支持 `socks5://`，且走代理时域名由代理解析，本地 DNS 完全不参与。

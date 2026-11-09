@@ -32,7 +32,13 @@ func NewOMDbClient(cfg *Config) *OMDbClient {
 	return &OMDbClient{
 		base:   "https://www.omdbapi.com/",
 		apiKey: strings.TrimSpace(cfg.Scrape.OMDBKey),
-		hc:     &http.Client{Timeout: 20 * time.Second},
+		hc: &http.Client{
+			Timeout: 20 * time.Second,
+			Transport: &http.Transport{
+				DialContext: dialForHTTP,
+				Proxy:       http.ProxyFromEnvironment,
+			},
+		},
 		delay:  time.Duration(cfg.Scrape.IntervalMS) * time.Millisecond,
 	}
 }

@@ -35,6 +35,9 @@ type ServerConfig struct {
 type NetConfig struct {
 	// "auto" 探测网关；"" 用系统；"IP:53" 写死。见文档 13.2.5
 	DNS string `toml:"dns"`
+	// DoH 端点："" / "off" 关闭，"auto" 用内置列表，或逗号分隔的
+	// https://…/dns-query。见文档 13.2.6
+	DoH string `toml:"doh"`
 	// "socks5://127.0.0.1:7890" 或 "http://..."
 	Proxy string `toml:"proxy"`
 }
@@ -118,7 +121,7 @@ func DefaultConfig() *Config {
 			ReadHeaderSec:  10,
 			IdleTimeoutSec: 120,
 		},
-		Net: NetConfig{DNS: "auto"},
+		Net: NetConfig{DNS: "auto", DoH: "auto"},
 		Library: LibraryConfig{
 			Root:     filepath.Join(home, "Media"),
 			VideoExt: []string{".mkv", ".mp4", ".avi", ".ts", ".m4v", ".mov", ".wmv"},
@@ -226,6 +229,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Net.DNS == "" {
 		c.Net.DNS = d.Net.DNS
+	}
+	if c.Net.DoH == "" {
+		c.Net.DoH = d.Net.DoH
 	}
 	if c.Library.Root == "" {
 		c.Library.Root = d.Library.Root

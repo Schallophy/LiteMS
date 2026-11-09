@@ -259,6 +259,7 @@ func NewRunner(cfg *Config, db *DB, sc Scraper, dry, force bool, onlyID string, 
 		imgHC: &http.Client{
 			Timeout: 60 * time.Second,
 			Transport: &http.Transport{
+				DialContext:         dialForHTTP,
 				Proxy:               http.ProxyFromEnvironment,
 				MaxIdleConns:        8,
 				MaxIdleConnsPerHost: 4,
@@ -607,7 +608,7 @@ func (r *Runner) ensureSeason(ctx context.Context, st *showState, season int) er
 	return nil
 }
 
-// searchMovie 搜索并匹配电影，必要时用别名救回。
+// searchMovie 搜索并匹配电影，必要时用别名救回、逐词剥掉尾部再搜。
 func (r *Runner) searchMovie(ctx context.Context, it *Item) (*Meta, error) {
 	q := Query{Title: it.Title, Year: it.Year, Kind: KindMovie}
 	cands, err := r.sc.Search(ctx, q)
@@ -616,7 +617,7 @@ func (r *Runner) searchMovie(ctx context.Context, it *Item) (*Meta, error) {
 	}
 	m := matchCandidates(cands, q, r.cfg.Scrape.TitleSimMin)
 	if !m.OK {
-		// 救回路径：对前三个候选查别名，港台译名常常只出现在这里
+		// 救回路径一：对前三个候选查别名，港台译名常常只出现在这里
 		for _, c := range topN(cands, 3) {
 			alts, err := r.altTitles(ctx, c.Key)
 			if err != nil || len(alts) == 0 {
@@ -628,6 +629,38 @@ func (r *Runner) searchMovie(ctx context.Context, it *Item) (*Meta, error) {
 				return r.sc.Detail(ctx, c.Key, KindMovie)
 			}
 		}
+
+		// 救回路径二：标题被文件名里的发布标记污染（HC / Chinese / 发布组名）
+		// 时，数据源对整个长串直接搜不到。从尾部逐词剥掉重搜——发布标记
+		// 几乎总是缀在尾部，剥到剩 3 个词为止，最后再试一次不带年份
+		// （年份来自文件名，可能标错；此时靠匹配门槛的年份差惩罚兜住）。
+		words := strings.Fields(it.Title)
+		for n := 0; n < 4 && len(words) > 3; n++ {
+			words = words[:len(words)-1]
+			short := strings.Join(words, " ")
+			q2 := Query{Title: short, Year: it.Year, Kind: KindMovie}
+			c2, err := r.sc.Search(ctx, q2)
+			if err != nil {
+				return nil, err
+			}
+			if m2 := matchCandidates(c2, q2, r.cfg.Scrape.TitleSimMin); m2.OK {
+				logf("  剥词救回：%q → %q", it.Title, short)
+				return r.sc.Detail(ctx, m2.Cand.Key, KindMovie)
+			}
+			// 年份是唯一没试过的自由度：短标题去掉年份再搜一次
+			if n == 3 || len(words) == 3 {
+				q3 := Query{Title: short, Kind: KindMovie}
+				c3, err := r.sc.Search(ctx, q3)
+				if err != nil {
+					return nil, err
+				}
+				if m3 := matchCandidates(c3, q3, r.cfg.Scrape.TitleSimMin); m3.OK {
+					logf("  剥词救回（去年份）：%q → %q", it.Title, short)
+					return r.sc.Detail(ctx, m3.Cand.Key, KindMovie)
+				}
+			}
+		}
+
 		r.miss(it, fmt.Sprintf("未找到匹配（候选 %d 个，最高相似度 %.2f）", len(cands), m.Sim))
 		return nil, errMiss
 	}
