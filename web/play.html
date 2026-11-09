@@ -245,9 +245,15 @@ let audioOn = false;
 const gateEl = document.getElementById('audiogate');
 function gateShow(on){ if (gateEl) gateEl.hidden = !on; }
 
-function startPreAudio(){
+function startPreAudio(resumeVideo){
   if (!audioEl || !art || !art.video) return;
   const v = art.video;
+  // 点「开启声音」这颗按钮时，画面要是停着也一起放起来——不然会变成
+  // 声音在走、画面不动。页面上的其它手势不碰播放状态，免得误触把人暂停的片放起来。
+  if (resumeVideo && v.paused) {
+    const p = v.play();
+    if (p && p.catch) p.catch(()=>{});
+  }
   // 已经在播且对得上，就别每次点击都重设时间
   if (!audioEl.paused && Math.abs(audioEl.currentTime - v.currentTime) < 0.3) return;
   // readyState 为 0 时赋 currentTime 会被忽略，交给 loadedmetadata 再补
@@ -281,7 +287,7 @@ function setupPreAudio(){
   ['volumechange', 'ratechange'].forEach(ev => v.addEventListener(ev, syncVol));
   syncVol();
 
-  v.addEventListener('play', startPreAudio);
+  v.addEventListener('play', () => startPreAudio());
   v.addEventListener('pause', () => audioEl.pause());
   v.addEventListener('seeking', () => {
     if (!audioOn) return;
@@ -310,7 +316,7 @@ function setupPreAudio(){
   document.addEventListener('pointerdown', gesture, true);
   document.addEventListener('keydown', gesture, true);
   document.addEventListener('touchstart', gesture, {capture:true, passive:true});
-  if (gateEl) gateEl.addEventListener('click', ev => { ev.stopPropagation(); startPreAudio(); });
+  if (gateEl) gateEl.addEventListener('click', ev => { ev.stopPropagation(); startPreAudio(true); });
 
   // 桌面端已授权自动播放的话，这一次就直接成了
   startPreAudio();
