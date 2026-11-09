@@ -78,8 +78,10 @@ a{color:inherit;text-decoration:none}
 .back svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;
   stroke-linecap:round;stroke-linejoin:round}
 
+/* 只设纵向内边距：横向留给 .shell 的 padding，否则简写会把左右清 0，
+   海报贴边而返回按钮缩进 44px，顶栏与内容错位 */
 .inner{position:relative;z-index:2;display:flex;align-items:flex-start;
-  gap:clamp(24px,3.5vw,56px);padding:76px 0 48px}
+  gap:clamp(24px,3.5vw,56px);padding-top:76px;padding-bottom:48px}
 .poster{
   position:relative;width:256px;flex:0 0 256px;aspect-ratio:2/3;
   border-radius:var(--radius);overflow:hidden;background:#14161c;
