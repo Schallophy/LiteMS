@@ -7,6 +7,7 @@
 <title>设置 · {{.Title}}</title>
 <style>
 :root{
+  color-scheme:dark; /* 原生控件（select 弹层、checkbox、滚动条）按深色渲染 */
   --bg:#08090c;
   --surface:#12141a;
   --surface-2:#1a1e26;
@@ -98,6 +99,8 @@ input:focus,select:focus,textarea:focus{
   border-color:rgba(227,183,116,.45);background:rgba(255,255,255,.07);
   box-shadow:0 0 0 3px rgba(227,183,116,.10);
 }
+/* 弹层里的选项：color-scheme 覆盖大多数浏览器，这里兜底 Firefox */
+select option{background:var(--surface-2);color:var(--text)}
 select{appearance:none;-webkit-appearance:none;cursor:pointer;
   background-image:linear-gradient(45deg,transparent 50%,var(--text-3) 50%),
                    linear-gradient(135deg,var(--text-3) 50%,transparent 50%);
