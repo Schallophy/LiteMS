@@ -336,6 +336,13 @@ func cmdServe(args []string) {
 		cfg.Watch.Enabled = false
 	}
 
+	// serve 也要接管 DNS：设置页的「测试连接」是在这个进程里发请求的，
+	// 而 Go 的静态解析器在 Termux 上读不到 /etc/resolv.conf，
+	// 不接管就会退回 [::1]:53，报 connection refused（文档 13.2）。
+	if dnsDesc := SetupNet(cfg); dnsDesc != "" {
+		logf("DNS %s", dnsDesc)
+	}
+
 	db, err := OpenDB(cfg.Database.Path)
 	if err != nil {
 		errf("打开数据库失败：%v", err)
