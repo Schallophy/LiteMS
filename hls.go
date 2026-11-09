@@ -100,6 +100,12 @@ func (h *HLSServer) Start(item, src string, start float64) (*HLSSession, error) 
 	if start < 0 {
 		start = 0
 	}
+	// 起播点先对准关键帧：视频是 -c:v copy，只能从关键帧剪，实际起点会比请求
+	// 的时刻早 1–2 秒。字幕是整片绝对时间轴，进度也是 base + currentTime，
+	// 都得按真实起点算，否则字幕会整体偏那么多（实测 0.767 秒）。
+	if start > 0 {
+		start = keyframeAtOrBefore(src, start)
+	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -344,6 +350,44 @@ func reverseBits32(v uint32) uint32 {
 		v >>= 1
 	}
 	return r
+}
+
+// keyframeAtOrBefore 返回 start 之前（含）最近一个视频关键帧的时间。
+// 实时转码从关键帧起流，调用方拿它当「真实起点」用：字幕偏移、进度显示都靠它。
+// 只读 start 前 8 秒的包，实测约 140ms；探不到就退回原值（宁可差一点也不卡住）。
+func keyframeAtOrBefore(src string, start float64) float64 {
+	if start <= 0 {
+		return 0
+	}
+	from := start - 8
+	if from < 0 {
+		from = 0
+	}
+	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
+		// 注意 Sprintf 里 %% 才能输出字面量 %
+		"-read_intervals", fmt.Sprintf("%.3f%%%.3f", from, start),
+		"-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", src).Output()
+	if err != nil {
+		return start
+	}
+	best := -1.0
+	for _, line := range strings.Split(string(out), "\n") {
+		parts := strings.Split(strings.TrimSpace(line), ",")
+		if len(parts) < 2 || !strings.Contains(parts[1], "K") {
+			continue
+		}
+		t, err := strconv.ParseFloat(parts[0], 64)
+		if err != nil || t > start+0.05 {
+			continue
+		}
+		if t > best {
+			best = t
+		}
+	}
+	if best < 0 {
+		return start
+	}
+	return best
 }
 
 // probeSize 取视频宽高（master 里的 RESOLUTION 用）。
