@@ -49,6 +49,15 @@ type LibraryConfig struct {
 	// 打开后仍然只跟随文件链接，目录链接一律不进——
 	// 这样「下载目录留在原处做种、库这边放链接」的布局才能被索引到。
 	FollowFileSymlinks bool `toml:"follow_file_symlinks"`
+	// DownloadDir 是下载工具（qBittorrent 等）的保存目录。
+	// 设置后 serve 会自动把这里出现的内容镜像进库：在库根下建
+	// <下载目录名>/ 子目录放符号链接（或 copy 模式下的副本），
+	// 下载目录本身一个字节都不会被写入，做种不受影响。
+	// 为空表示不启用；这是取代外部钩子脚本的正式方案。
+	DownloadDir string `toml:"download_dir"`
+	// DownloadMode 决定镜像方式：symlink（默认，零拷贝）或 copy（完整副本，
+	// 下载目录随时会被卸载或清空时用，代价是双倍空间；副本不会自动清理）。
+	DownloadMode string `toml:"download_mode"`
 }
 
 type DatabaseConfig struct {
@@ -186,7 +195,21 @@ func LoadConfig(path string) (*Config, bool, error) {
 	}
 	cfg.applyDefaults()
 	cfg.expandPaths()
+	if err := cfg.validate(); err != nil {
+		return nil, false, err
+	}
 	return cfg, true, nil
+}
+
+// validate 是解析后的合法性检查。放这里而不是 expandPaths：
+// 错误需要返回给调用方，而 expandPaths 在「文件不存在走默认值」的路径上也会被调用。
+func (c *Config) validate() error {
+	switch c.Library.DownloadMode {
+	case "", "symlink", "copy":
+	default:
+		return fmt.Errorf("[library].download_mode 只能是 symlink 或 copy，收到 %q", c.Library.DownloadMode)
+	}
+	return nil
 }
 
 // applyDefaults 补齐 TOML 中缺省的零值字段。
@@ -277,6 +300,12 @@ func (s ScrapeConfig) PostersEmpty() bool {
 // expandPaths 展开 ~ 并转绝对路径。
 func (c *Config) expandPaths() {
 	c.Library.Root = ExpandPath(c.Library.Root)
+	if c.Library.DownloadDir != "" {
+		c.Library.DownloadDir = ExpandPath(c.Library.DownloadDir)
+		if c.Library.DownloadMode == "" {
+			c.Library.DownloadMode = "symlink"
+		}
+	}
 	for i := range c.Library.ExtraRoots {
 		c.Library.ExtraRoots[i] = ExpandPath(c.Library.ExtraRoots[i])
 	}

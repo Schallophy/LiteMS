@@ -183,6 +183,23 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
         <input type="checkbox" name="lib_symlinks" {{if .LibraryLinks}}checked{{end}}>
         <span>跟随指向文件的符号链接（下载做种 + 库里放链接时需要）</span>
       </label>
+      <label>
+        <span class="lbl">下载目录（可选）</span>
+        <input type="text" name="dl_dir" value="{{.DownloadDir}}" spellcheck="false"
+               placeholder="~/Downloads，留空不启用">
+      </label>
+      <label>
+        <span class="lbl">镜像方式</span>
+        <select name="dl_mode">
+          <option value="symlink" {{if ne .DownloadMode "copy"}}selected{{end}}>符号链接（零拷贝，推荐）</option>
+          <option value="copy" {{if eq .DownloadMode "copy"}}selected{{end}}>完整副本（双倍空间，下载目录随时会被清空时用）</option>
+        </select>
+      </label>
+      <p class="hint">
+        填了下载目录后，serve 每分钟检查一次：出现新内容就镜像进库（落在媒体根的
+        <code>Downloads/</code> 子目录）、自动扫描并刮削，下载工具侧<b>无需任何配置</b>。
+        下载目录不能与媒体根互相包含；符号链接模式下删除种子会自动清掉对应链接。
+      </p>
       <p class="hint">
         媒体根请放在 <code>$HOME</code> 下的 ext4，不要放 <code>/storage/emulated/0</code>（FUSE 会拖慢扫描并让数据库上锁失败）。
         修改媒体根需要<b>重启服务</b>才会生效；重启时会自动重新扫描并把缺图的条目补刮一遍。

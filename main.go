@@ -418,6 +418,11 @@ func cmdServe(args []string) {
 	scrapeCtx, scrapeCancel := context.WithCancel(context.Background())
 	defer scrapeCancel()
 	go func() {
+		// 启动流程必须串行：镜像产出链接 → 扫描消费链接 → 补刮消费扫描写入的条目。
+		// 改过媒体根、下载目录里有新内容，都不用等 watch 的第一个周期。
+		if cfg.Library.DownloadDir != "" {
+			syncAndIndex(cfg, db)
+		}
 		if st, err := NewScanner(cfg, db, false, false, false, "").Run(); err != nil {
 			warnf("启动扫描失败：%v", err)
 		} else if st.Found > 0 {
@@ -425,6 +430,7 @@ func cmdServe(args []string) {
 		}
 		autoScrape(scrapeCtx, cfg, db)
 	}()
+	go startDownloadSyncLoop(scrapeCtx, cfg, db)
 
 	if n, _ := db.CountItems(); n == 0 {
 		warnf("索引为空，请先执行 `litems scan`")

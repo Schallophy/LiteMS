@@ -128,47 +128,32 @@ litems launch --player mpv
 典型需求：qbt 下片并做种，litems 负责索引与播放。这两件事能同时成立，但**不能让 litems 往下载目录写文件**——
 它会在视频旁边生成 `.nfo`、`poster.jpg`、`fanart.jpg`，而那个目录正被 qbt 用于做种。
 
-目录这样摆：
+**推荐做法：设置下载目录，让 serve 自动镜像**。设置页「媒体库」里填上下载目录
+（或配置文件 `[library].download_dir = "~/Downloads"`），然后重启服务。之后：
+
+- serve 每分钟检查下载目录，出现新内容就在媒体根的 `Downloads/` 子目录建立符号链接，
+  自动扫描并刮削——**下载工具侧零配置**，不需要钩子脚本
+- 下载目录一个字节都不会被写入；文件只有一份，不占双倍空间
+- 未完成文件（`.!qB`、`.part`、隐藏目录）自动跳过，下完的那轮自然入库
+- 在 qbt 里删了种子，对应的链接与只剩元数据的空目录会在一分钟内自动清掉
+- 想要完整副本而不是链接（下载目录随时会被卸载/清空时）：`download_mode = "copy"`，
+  代价是双倍空间，副本不会自动清理
+
+布局示例（下载目录 `~/Downloads`，媒体根 `~/Media`）：
 
 ```
-~/Downloads/<种子>/...          qbt 独占，做种用；litems 一个字节都不写
-~/Media/下载/<种子>/...   ->     上面那些文件，符号链接
-~/Media/下载/<种子>/*.nfo       litems 写在这里（链接的旁边，不是原文件旁边）
+~/Downloads/<种子>/...            qbt 独占，做种用；litems 一个字节都不写
+~/Media/Downloads/<种子>/...  ->   上面那些文件，符号链接
+~/Media/Downloads/<种子>/*.nfo     litems 写在这里（链接旁边，不是原文件旁边）
 ```
 
-配置只要一行：
+**两个前提**：
 
-```toml
-[library]
-follow_file_symlinks = true   # 只跟随「指向普通文件」的链接；目录链接依旧不进，不会成环
-```
+- 媒体根要开 `follow_file_symlinks = true`（设置页勾选），否则链接不会被索引
+- 下载目录不能与媒体根互相包含，设置页会直接拒绝这种写法
 
-然后把下载完成钩子挂到 qbt 上：
-
-```bash
-mkdir -p ~/.local/bin
-cp hooks/qbt-done.sh ~/.local/bin/ && chmod +x ~/.local/bin/qbt-done.sh
-```
-
-qBittorrent → 设置 → 下载 → 勾选「下载完成时运行外部程序」，命令填：
-
-```
-/data/data/com.termux/files/home/.local/bin/qbt-done.sh %F %N
-```
-
-钩子做三件事：在库里建符号链接 → `litems scan` → 配了凭据就 `scrape`。日志在 `~/litems-qbt-hook.log`。
-
-**下载目录可以是任意位置**：钩子拿的是 qbt 传进来的内容路径（`%F`），不是固定的 `~/Downloads`——
-在 qbt 里按分类设保存路径、手动指定目录都自动跟随。唯一的要求是**下载目录不能设在库根里面**，
-否则又回到「往做种目录写侧车文件」的问题。单文件种子若文件名与种子名不一致，链接会按种子名归档成
-`下载/<种子名>/<文件名>`，避免两个种子的同名文件互相覆盖。
-
-**三个前提与后果**：
-
-- 硬链接不可用。这台设备上 `link()` 被 SELinux 拦掉，同一目录里 `ln` 都是 `Permission denied`，
-  所以只能用符号链接；文件仍然只有一份，不占双倍空间。
-- 删掉库里的链接**不影响做种**；删掉 `~/Downloads` 里的原文件，库里的条目就变成断链。
-- qbt 的保存目录必须留在库外。若把保存目录设成 `~/Media/...`，litems 就会往正在做种的目录里写侧车文件。
+**硬链接不可用**：这台设备上 `link()` 被 Android SELinux 拦掉，同一目录里 `ln` 都是
+`Permission denied`，所以零拷贝方案只有符号链接；它跨文件系统、指向哪里都行。
 
 ## 开发
 

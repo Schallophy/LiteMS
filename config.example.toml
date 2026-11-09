@@ -34,6 +34,12 @@ sub_ext   = [".srt", ".ass", ".ssa", ".vtt"]
 # 典型用途：qBittorrent 在 ~/Downloads 做种，库里放链接指向它，
 # 这样下载目录不会被写入 .nfo / 海报，做种不受影响。
 # follow_file_symlinks = true
+# 下载目录（可选）：qBittorrent 等工具的保存目录。设置后 serve 每分钟检查一次，
+# 出现新内容就镜像进库（符号链接落在媒体根的 Downloads/ 子目录），自动扫描并刮削。
+# 下载工具侧零配置，做种不受影响。留空不启用。
+# download_dir = "~/Downloads"
+# 镜像方式：symlink（默认，零拷贝）或 copy（完整副本，下载目录随时会被清空时用）
+# download_mode = "symlink"
 
 [database]
 # 必须在 ext4（$HOME 下）。落在共享存储会拒绝启动。

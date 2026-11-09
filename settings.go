@@ -17,7 +17,7 @@ import (
 var scrapeSettingKeys = []string{"provider", "language", "tmdb_token", "tmdb_key", "omdb_key"}
 
 // librarySettingKeys 是设置页允许写入 [library] 的字段白名单。
-var librarySettingKeys = []string{"root", "extra_roots", "follow_file_symlinks"}
+var librarySettingKeys = []string{"root", "extra_roots", "follow_file_symlinks", "download_dir", "download_mode"}
 
 // tomlString 把 Go 字符串序列化成 TOML 字符串字面量。
 // 写回函数现在写的是「原始 TOML 右值」，字符串必须由调用方自行加引号。
@@ -105,9 +105,11 @@ type settingsView struct {
 	ConfigPath   string
 	ConfigExists bool
 	AuthOn       bool
-	LibraryRoot  string
-	LibraryExtra string
-	LibraryLinks bool
+	LibraryRoot    string
+	LibraryExtra   string
+	LibraryLinks   bool
+	DownloadDir    string
+	DownloadMode   string
 	Message      string
 	Error        string
 	Probe        string
@@ -130,9 +132,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		OMDBMasked:  maskSecret(cur.OMDBKey),
 		ConfigPath:  cfgPath,
 		AuthOn:      s.cfg.Server.AuthUser != "",
-		LibraryRoot: s.cfg.Library.Root,
+		LibraryRoot:  s.cfg.Library.Root,
 		LibraryExtra: strings.Join(s.cfg.Library.ExtraRoots, "\n"),
 		LibraryLinks: s.cfg.Library.FollowFileSymlinks,
+		DownloadDir:  s.cfg.Library.DownloadDir,
+		DownloadMode: s.cfg.Library.DownloadMode,
 	}
 	if _, err := os.Stat(cfgPath); err == nil {
 		v.ConfigExists = true
@@ -203,13 +207,41 @@ func (s *Server) applySettings(w http.ResponseWriter, r *http.Request, v *settin
 	}
 	libExtra := parsePathLines(r.PostFormValue("lib_extra"))
 	libSymlinks := r.PostFormValue("lib_symlinks") == "on"
+	dlDir := strings.TrimSpace(r.PostFormValue("dl_dir"))
+	if dlDir != "" {
+		if !strings.HasPrefix(dlDir, "/") && !strings.HasPrefix(dlDir, "~") {
+			v.Error = "下载目录必须是绝对路径（/…）或以 ~ 开头，收到 " + dlDir
+			return true
+		}
+		if strings.Contains(dlDir, "..") {
+			v.Error = "下载目录里不允许出现 .."
+			return true
+		}
+		// 下载目录放进库根 = 绕开镜像机制，直接往做种目录写侧车文件
+		if underPath(libRoot, dlDir) || underPath(dlDir, libRoot) {
+			v.Error = "下载目录不能与媒体根互相包含（否则 scrape 会往做种目录写文件）"
+			return true
+		}
+	}
+	dlMode := r.PostFormValue("dl_mode")
+	if dlMode == "" {
+		dlMode = "symlink"
+	}
+	if dlMode != "symlink" && dlMode != "copy" {
+		v.Error = "镜像方式只能是 symlink 或 copy"
+		return true
+	}
 	next.Library.Root = libRoot
 	next.Library.ExtraRoots = libExtra
 	next.Library.FollowFileSymlinks = libSymlinks
+	next.Library.DownloadDir = dlDir
+	next.Library.DownloadMode = dlMode
 
 	v.LibraryRoot = libRoot
 	v.LibraryExtra = strings.Join(libExtra, "\n")
 	v.LibraryLinks = libSymlinks
+	v.DownloadDir = dlDir
+	v.DownloadMode = dlMode
 
 	// 无论测试还是保存，回显都用提交后的值
 	v.Provider = next.Scrape.Provider
@@ -239,6 +271,8 @@ func (s *Server) applySettings(w http.ResponseWriter, r *http.Request, v *settin
 		"root":                 tomlString(next.Library.Root),
 		"extra_roots":          tomlArray(next.Library.ExtraRoots),
 		"follow_file_symlinks": fmt.Sprintf("%t", next.Library.FollowFileSymlinks),
+		"download_dir":         tomlString(next.Library.DownloadDir),
+		"download_mode":        tomlString(next.Library.DownloadMode),
 	}
 	if err := writeSectionKeys(cfgPath, "library", librarySettingKeys, libVals); err != nil {
 		v.Error = "写入配置文件失败：" + err.Error()
@@ -248,7 +282,7 @@ func (s *Server) applySettings(w http.ResponseWriter, r *http.Request, v *settin
 	s.setCreds(credsFromConfig(&next))
 	v.ConfigExists = true
 	v.Message = "已保存到 " + cfgPath + "。下一次 litems scrape 会使用新凭据。" +
-		"媒体根的修改在重启服务后生效（重启时会自动重新扫描并补刮）。"
+		"媒体根与下载目录的修改在重启服务后生效（重启时会自动镜像、重新扫描并补刮）。"
 	return true
 }
 

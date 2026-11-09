@@ -168,6 +168,8 @@ provider = "tmdb"
 		"root":                 tomlString("~/Media"),
 		"extra_roots":          tomlArray([]string{"/mnt/a", "/mnt/b"}),
 		"follow_file_symlinks": "true",
+		"download_dir":         tomlString("~/Downloads"),
+		"download_mode":        tomlString("symlink"),
 	}
 	if err := writeSectionKeys(path, "library", librarySettingKeys, vals); err != nil {
 		t.Fatalf("写入失败: %v", err)
@@ -190,6 +192,12 @@ provider = "tmdb"
 	}
 	if !cfg.Library.FollowFileSymlinks {
 		t.Errorf("follow_file_symlinks 应为 true")
+	}
+	if cfg.Library.DownloadDir != ExpandPath("~/Downloads") {
+		t.Errorf("download_dir = %q", cfg.Library.DownloadDir)
+	}
+	if cfg.Library.DownloadMode != "symlink" {
+		t.Errorf("download_mode = %q", cfg.Library.DownloadMode)
 	}
 	if cfg.Scrape.Provider != "tmdb" {
 		t.Errorf("scrape 段被破坏: %q", cfg.Scrape.Provider)
