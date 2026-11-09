@@ -141,11 +141,14 @@ h1{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;line-height:1.16;
 .resume{max-width:240px;margin-top:24px}
 .resume span{display:block;margin-bottom:9px;font-size:11.5px;letter-spacing:.06em;
   color:var(--text-3)}
-.resume .bar{height:4px;border-radius:99px;overflow:hidden;
+.bar{height:4px;border-radius:99px;overflow:hidden;
   background:rgba(255,255,255,.12)}
-.resume .bar i{display:block;height:100%;border-radius:99px;
+.bar i{display:block;height:100%;border-radius:99px;
   background:linear-gradient(90deg,var(--gold-2),var(--gold));
-  box-shadow:0 0 10px rgba(227,183,116,.65)}
+  box-shadow:0 0 10px rgba(227,183,116,.65);transition:width .8s}
+/* 音轨转换进度：与续播条同一视觉语言 */
+.tc{max-width:320px;margin-top:16px;font-size:13px;color:var(--text-2)}
+.tc .bar{margin-top:9px}
 
 .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
 .btn{
@@ -261,9 +264,16 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
           {{if .Item.PositionMS}}继续播放{{else}}播放{{end}}
         </button>
         <a class="btn" id="webplay" href="/play/{{.Item.ID}}">网页播放</a>
+        {{if .AudioHint}}<button class="btn" id="tcbtn">转换音轨</button>{{end}}
         <button class="btn" id="copy">复制命令</button>
         <a class="btn" href="/stream/{{.Item.ID}}" target="_blank" rel="noopener">直接打开</a>
       </div>
+      {{if .AudioHint}}
+      <div class="tc" id="tcbox" hidden>
+        <span id="tcmsg"></span>
+        <div class="bar"><i id="tcbar" style="width:0%"></i></div>
+      </div>
+      {{end}}
     </div>
   </div>
 </div>
@@ -374,6 +384,62 @@ document.getElementById('copy').addEventListener('click', async ()=>{
     toast('复制失败：' + e.message);
   }
 });
+
+/* ---------- 音轨转换（详情页发起，转好网页播放自动用转码版） ---------- */
+const tcbtn = document.getElementById('tcbtn');
+const tcbox = document.getElementById('tcbox');
+const tcmsg = document.getElementById('tcmsg');
+const tcbar = document.getElementById('tcbar');
+let tcTimer = null;
+
+function tcRender(j){
+  if (!tcbtn) return;
+  switch(j.state){
+    case 'running':
+      tcbtn.disabled = true; tcbtn.textContent = '转换中…';
+      tcbox.hidden = false;
+      tcbar.style.width = (j.progress > 0 ? Math.round(j.progress*100) : 0) + '%';
+      tcmsg.textContent = j.progress > 0
+        ? '正在转换音轨（视频不重编码）' + Math.round(j.progress*100) + '%'
+        : '正在转换音轨（视频不重编码）…';
+      if (!tcTimer) tcTimer = setInterval(tcPoll, 2000);
+      break;
+    case 'done':
+      tcbtn.disabled = true; tcbtn.textContent = '音轨已转换';
+      tcbox.hidden = false; tcbar.style.width = '100%';
+      tcmsg.textContent = '转换完成——「网页播放」现在可以出声了';
+      clearInterval(tcTimer); tcTimer = null;
+      break;
+    case 'error':
+      tcbtn.disabled = false; tcbtn.textContent = '重试转换';
+      tcbox.hidden = false; tcbar.style.width = '0%';
+      tcmsg.textContent = '转换失败：' + (j.error || '未知错误');
+      clearInterval(tcTimer); tcTimer = null;
+      break;
+    default:
+      tcbtn.disabled = false; tcbtn.textContent = '转换音轨';
+      tcbox.hidden = true;
+      clearInterval(tcTimer); tcTimer = null;
+  }
+}
+async function tcPoll(){
+  try { const r = await fetch('/api/transcode/' + ITEM); tcRender(await r.json()); }
+  catch(e) { /* 网络抖动下一轮再试 */ }
+}
+if (tcbtn) {
+  tcPoll();
+  tcbtn.addEventListener('click', async ()=>{
+    try{
+      const r = await fetch('/api/transcode/' + ITEM, {method:'POST'});
+      if (r.status === 409) {
+        const j = await r.json().catch(()=>({}));
+        toast(j.error || '已有转码任务在进行');
+        return;
+      }
+      tcRender(await r.json());
+    }catch(e){ toast('请求失败：' + e.message); }
+  });
+}
 </script>
 </body>
 </html>

@@ -89,12 +89,14 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
   {{if eq .AudioHint "bad"}}
   <div class="notice warn" id="hint">
     这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码——浏览器内核不带这种解码器，
-    表现就是<b>画面正常但没有声音</b>。请回详情页用「播放」交给本地 mpv，或「复制命令」手动播放。
+    表现就是<b>画面正常但没有声音</b>。可以回详情页点<b>「转换音轨」</b>（转一次即可，
+    之后网页播放直接出声），或用「播放」交给本地 mpv。
   </div>
   {{else if eq .AudioHint "maybe"}}
   <div class="notice warn" id="hint">
-    音轨标注为 <b>AC3 / EAC3</b>：Edge 等自带专有解码器的浏览器可以出声，
-    Chrome/Firefox 大概率解不了。若画面正常但没有声音，就是这个原因，请改用 mpv。
+    音轨为 <b>AC3 / EAC3</b>，包括 Edge 在内的浏览器在 MKV 里都解不了。
+    回详情页点<b>「转换音轨」</b>（转一次即可，之后网页播放直接出声），
+    或用「播放」交给本地 mpv。
   </div>
   {{else}}
   <div class="notice" id="hint" hidden></div>
@@ -129,7 +131,8 @@ function saveProgress(){
 
 const opts = {
   container: '#player',
-  url: '/stream/' + ITEM,
+  // web=1：有转码缓存（AAC 音轨）时服务端自动返回转码版
+  url: '/stream/' + ITEM + '?web=1',
   autoplay: true,
   setting: true,
   playbackRate: true,

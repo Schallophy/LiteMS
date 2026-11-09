@@ -38,6 +38,8 @@ type Server struct {
 	// 设置页可改的凭据快照。单独存一份并加锁，避免直接写 cfg 与其它请求竞争。
 	credsMu sync.RWMutex
 	creds   scrapeCreds
+
+	tc *Transcoder
 }
 
 // tplFuncs 是模板里用到的格式化助手。
@@ -94,6 +96,12 @@ func RunServer(cfg *Config, db *DB) error {
 		settingsToken: newSettingsToken(),
 		creds:         credsFromConfig(cfg),
 	}
+	// 转码缓存放数据库同目录：$HOME 私有存储，不进媒体库、不会被扫描捡走
+	tc, err := NewTranscoder(filepath.Join(filepath.Dir(cfg.Database.Path), "transcode"))
+	if err != nil {
+		return err
+	}
+	s.tc = tc
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
@@ -104,6 +112,7 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/api/progress", s.handleProgress)
 	mux.HandleFunc("/api/progress/", s.handleProgressGet)
 	mux.HandleFunc("/api/cmd/", s.handleCmd)
+	mux.HandleFunc("/api/transcode/", s.handleTranscode)
 	// 第三方前端库：build 时打进二进制，局域网离线可用
 	vendor, err := fs.Sub(webFS, "web/vendor")
 	if err != nil {
@@ -425,6 +434,7 @@ func (s *Server) handleProgressGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStream 直接 ServeFile：Range / ETag / Content-Type 全部由标准库处理。
+// ?web=1 给网页播放器用：有转码缓存（AAC 音轨版）就优先返回它，浏览器才解得了。
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(r.URL.Path, "/stream/")
 	if !ok {
@@ -436,12 +446,44 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
+	if r.URL.Query().Get("web") == "1" && s.tc.Has(id) {
+		http.ServeFile(w, r, s.tc.CachePath(id))
+		return
+	}
 	full := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
 	if _, err := os.Stat(full); err != nil {
 		writeErr(w, http.StatusNotFound, "文件已不存在")
 		return
 	}
 	http.ServeFile(w, r, full)
+}
+
+// handleTranscode 查询（GET）/ 启动（POST）音轨转码任务。
+func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(r.URL.Path, "/api/transcode/")
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "id 必须是 16 位十六进制")
+		return
+	}
+	it, err := s.db.GetItem(id)
+	if err != nil || it == nil {
+		writeErr(w, http.StatusNotFound, "条目不存在")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, s.tc.Status(id))
+	case http.MethodPost:
+		src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+		job, err := s.tc.Start(id, src)
+		if err != nil {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "只支持 GET/POST")
+	}
 }
 
 // handleSub 返回外挂字幕，支持 ?lang=chs。
@@ -623,6 +665,7 @@ func (s *Server) handleItemPage(w http.ResponseWriter, r *http.Request) {
 		Title: s.cfg.UI.Title, Theme: s.cfg.UI.Theme, Item: &d,
 		Detail:      detailFor(s.roots, *it),
 		HelperToken: s.cfg.Launch.Token, HelperPort: helperPort(s.cfg.Launch.Listen),
+		AudioHint: audioHint(it.RelPath, it.Container),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tpl.ExecuteTemplate(w, "item.html", data); err != nil {
@@ -649,6 +692,10 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 		Theme:     s.cfg.UI.Theme,
 		Item:      &d,
 		AudioHint: audioHint(it.RelPath, it.Container),
+	}
+	// 转码缓存已就绪：?web=1 会自动命中它，无声提示就不用了
+	if s.tc.Has(id) {
+		data.AudioHint = ""
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tpl.ExecuteTemplate(w, "play.html", data); err != nil {

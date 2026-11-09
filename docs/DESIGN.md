@@ -7,7 +7,7 @@ title: DESIGN
 > 一个跑在 Termux 上的轻量媒体库服务器：负责刮削、索引、文件服务；
 > 播放交给 PC 上的本地播放器。
 >
-> 文档版本：v2.7　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
+> 文档版本：v2.8　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
 
 ---
 
@@ -895,6 +895,8 @@ OMDb Response=False → 视为 miss，不重试
 | `GET`  | `/api/continue`      | 继续观看            |
 | `GET`  | `/api/recent`        | 最近添加            |
 | `GET`  | `/api/cmd/{id}`      | 返回一行可复制的播放命令（helper 降级通道） |
+| `GET`  | `/api/transcode/{id}` | 音轨转码状态（none/running/done/error） |
+| `POST` | `/api/transcode/{id}` | 启动音轨转码任务           |
 | `GET`  | `/api/progress/{id}` | 读取进度            |
 | `POST` | `/api/progress`      | 上报进度            |
 | `GET`  | `/poster/{id}`       | 海报图片（支持 `?w=`）  |
@@ -1204,6 +1206,29 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 
 **静音兜底**：从详情页点过来是一次导航，新页面的有声自动播放可能被浏览器策略拦截
 （表现为停在暂停）。起播 1.2s 后仍 paused 则静音重试一次，并提示用户点音量图标恢复。
+
+### 10.9 音轨转码（v2.8）
+
+浏览器内核只带 AAC/MP3/FLAC/Opus 解码器，EAC3/DTS/TrueHD 一律解不了——画面正常、
+无声、零报错（实测 EAC3 在 MKV 里连 Edge 的 Dolby 解码器都不生效，MKV 走 Chromium
+内置 demuxer，音轨在这一层就被丢了）。**客户端转码不可行**（WebCodecs 的解码器集合
+与 `<video>` 相同；ffmpeg.wasm 体积与性能都不现实），要出声只能服务端转。
+
+- 依赖：`pkg install ffmpeg`（Termux）；未安装时启动接口报错引导
+- 命令：`ffmpeg -i src -map 0:v:0 -map 0:a:0? -map 0:s? -c:v copy -c:a aac -b:a 320k
+  -c:s copy -progress pipe:1 -f matroska <cache>/<id>.mkv.part`
+  视频原样复制（画质无损、CPU 几乎为零），实际耗时全部在音频 AAC 编码，
+  2 小时片约 15 分钟（手机端实测）
+- 缓存：`<database 目录>/transcode/<id>.mkv`——$HOME 私有存储，不进媒体库、
+  不会被扫描捡走。完成时 rename 原子落位；启动时清残留 .part；缓存 mtime 对齐源文件
+- 播放：`/stream/{id}?web=1` 有缓存优先返回转码版（完整文件，Range/拖进度正常），
+  播放页固定走它；转码完成后播放页的无声提示自动消失
+- 状态：只存内存 + 以缓存文件存在为准（服务重启后 done 依然成立）；
+  同一时刻只跑一个任务；源文件更新过（mtime 更新）则重转
+- UI：**详情页**「转换音轨」按钮（audioHint 命中 bad/maybe 时显示）+ 进度条
+  （`/api/transcode/{id}` 轮询，2s 间隔）；播放页不放按钮和进度
+- 诊断工具：`mkvprobe/` 纯 Go EBML 解析，打印容器内真实音轨 CodecID/声道/语言
+  （文件名标签可能缺失或不准，如本例文件名无 EAC3 但目录名有）
 
 ---
 
