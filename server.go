@@ -259,22 +259,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // ItemDTO 是给前端的条目视图（文档 9.3）。
 type ItemDTO struct {
-	ID            string     `json:"id"`
-	Title         string     `json:"title"`
-	OriginalTitle string     `json:"original_title,omitempty"`
-	Year          int        `json:"year,omitempty"`
-	Kind          string     `json:"kind"`
-	Season        int        `json:"season,omitempty"`
-	Episode       int        `json:"episode,omitempty"`
-	RuntimeMin    int        `json:"runtime_min,omitempty"`
-	Rating        float64    `json:"rating,omitempty"`
-	Overview      string     `json:"overview,omitempty"`
-	Poster        string     `json:"poster,omitempty"`
-	Fanart        string     `json:"fanart,omitempty"`
-	Subs          []SubDTO   `json:"subs,omitempty"`
-	Finished      bool       `json:"finished"`
-	PositionMS    int64      `json:"position_ms,omitempty"`
-	DurationMS    int64      `json:"duration_ms,omitempty"`
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	OriginalTitle string   `json:"original_title,omitempty"`
+	Year          int      `json:"year,omitempty"`
+	Kind          string   `json:"kind"`
+	Season        int      `json:"season,omitempty"`
+	Episode       int      `json:"episode,omitempty"`
+	RuntimeMin    int      `json:"runtime_min,omitempty"`
+	Rating        float64  `json:"rating,omitempty"`
+	Overview      string   `json:"overview,omitempty"`
+	Poster        string   `json:"poster,omitempty"`
+	Fanart        string   `json:"fanart,omitempty"`
+	Subs          []SubDTO `json:"subs,omitempty"`
+	Finished      bool     `json:"finished"`
+	PositionMS    int64    `json:"position_ms,omitempty"`
+	DurationMS    int64    `json:"duration_ms,omitempty"`
 }
 
 // artworkExists 校验图片文件真的在盘上（>512 字节，与刮削时的判定一致）。
@@ -588,7 +588,8 @@ func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.tc.Status(id))
 	case http.MethodPost:
 		src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
-		job, err := s.tc.Start(id, src)
+		force := r.URL.Query().Get("force") == "1"
+		job, err := s.tc.Start(id, src, force)
 		if err != nil {
 			writeErr(w, http.StatusConflict, err.Error())
 			return

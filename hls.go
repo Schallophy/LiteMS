@@ -32,8 +32,8 @@ import (
 // 会话 URL 里带 token，旧会话的分段不会串到新时间轴上。
 
 const (
-	hlsSegmentTime  = 4 // 每段秒数
-	hlsReadRate     = 1 // 限速到实时：比这更快就会跑在播放进度前面，窗口滑过去后观众还在原地
+	hlsSegmentTime  = 4  // 每段秒数
+	hlsReadRate     = 1  // 限速到实时：比这更快就会跑在播放进度前面，窗口滑过去后观众还在原地
 	hlsInitialBurst = 16 // 开头先超速读这么多秒，把起播缓冲一次性备好
 	hlsKeepSegs     = 45 // 保留最近多少段（约 3 分钟窗口，供回拖）
 	hlsIdleStop     = 90 * time.Second
@@ -144,12 +144,12 @@ func (h *HLSServer) Start(item, src string, start float64) (*HLSSession, error) 
 		args = append(args, "-tag:v", "hvc1")
 	}
 	if hasAudio {
-		args = append(args, "-c:a", "aac", "-b:a", audioBitrate(src),
-			// 必须显式给声道数。源是 5.1(side) 这类布局时，ffmpeg 默认会往
+		args = append(args, "-c:a", "aac", "-b:a", audioBitrate(),
+			// 必须显式给声道数。一是 5.1(side) 这类布局下 ffmpeg 默认会往
 			// AudioSpecificConfig 里写 channelConfig=0（要求解码器读 PCE），
-			// Chromium 的 MSE 解析不了，append 直接报 parsing failed。
-			// 明确 -ac 后写的是标准 channelConfig，MSE 才收。
-			"-ac", strconv.Itoa(audioChannels(src)))
+			// Chromium 的 MSE 解析不了，append 直接报 parsing failed；
+			// 二是浏览器播放一律下混立体声（理由见 audioPlaybackChannels）。
+			"-ac", strconv.Itoa(audioPlaybackChannels))
 	}
 	args = append(args,
 		"-f", "hls",
@@ -355,20 +355,6 @@ func probeSize(src string) (int, int) {
 	w, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
 	h, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
 	return w, h
-}
-
-// audioChannels 取输出声道数：源声道数，夹到 AAC 能标准表达的范围。
-// 8 声道（7.1）在 AAC 里没有标准 channelConfig，硬塞会让 ffmpeg 退回 PCE，
-// 所以统一降到 6；探不到就按立体声。
-func audioChannels(src string) int {
-	switch n := probeChannels(src); {
-	case n <= 0:
-		return 2
-	case n > 6:
-		return 6
-	default:
-		return n
-	}
 }
 
 func newToken() string {

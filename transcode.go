@@ -82,7 +82,8 @@ func (t *Transcoder) Status(id string) tcJob {
 
 // Start 启动转码。同一 id：running/done 直接返回现状；error 允许重试；
 // 缓存比源文件旧（源被替换/更新）也重转。同一时刻只允许一个任务（手机 CPU）。
-func (t *Transcoder) Start(id, src string) (tcJob, error) {
+// force=true 时丢掉已有缓存重转（音轨参数改过之后要靠它把旧产物换掉）。
+func (t *Transcoder) Start(id, src string, force bool) (tcJob, error) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return tcJob{}, errors.New("ffmpeg 未安装——Termux 上执行 pkg install ffmpeg")
 	}
@@ -92,6 +93,13 @@ func (t *Transcoder) Start(id, src string) (tcJob, error) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if force {
+		if j, ok := t.jobs[id]; ok && j.State == "running" {
+			return *j, nil // 正在转就别打断，等它自己结束
+		}
+		os.Remove(t.CachePath(id))
+		delete(t.jobs, id)
+	}
 	if j, ok := t.jobs[id]; ok {
 		switch j.State {
 		case "running":
@@ -149,10 +157,10 @@ func (t *Transcoder) run(ctx context.Context, id, src string, srcMod time.Time, 
 		"-i", src,
 		"-vn",
 		"-map", "0:a:0?",
-		"-c:a", "aac", "-b:a", audioBitrate(src),
+		"-c:a", "aac", "-b:a", audioBitrate(),
 		// -ac 必须显式给：5.1(side) 这类布局 ffmpeg 默认写 channelConfig=0（要读 PCE），
 		// Chromium 的 mp4 解析器不认，<audio> 会直接放不出来。理由同 hls.go。
-		"-ac", strconv.Itoa(audioChannels(src)),
+		"-ac", strconv.Itoa(audioPlaybackChannels),
 		"-progress", "pipe:1", "-nostats",
 		"-f", "mp4", part,
 	}
@@ -278,19 +286,17 @@ func probeVideoCodec(src string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// audioBitrate 按声道数给 AAC 码率：64kbps/声道（Jellyfin 的口径），
-// 夹在 128k–640k；探测不到声道就退回 256k。5.1 → 384k，与主流媒体服务器一致。
-func audioBitrate(src string) string {
-	ch := probeChannels(src)
-	if ch <= 0 {
-		return "256k"
-	}
-	kbps := ch * 64
-	if kbps < 128 {
-		kbps = 128
-	}
-	if kbps > 640 {
-		kbps = 640
-	}
-	return strconv.Itoa(kbps) + "k"
+// audioPlaybackChannels 是网页播放路径（预转码 / 实时转码）的输出声道数。
+//
+// 固定立体声，不是为省带宽，而是兼容性：网页播放要么走 <audio>、要么走 MSE，
+// 多声道 AAC 能不能出声取决于机型的 AudioTrack 通道掩码——不少设备解码成功
+// 却一点声音都不出，也不报错，症状和「音轨编码不支持」一模一样。下混到 2
+// 声道是每个浏览器内核都稳定支持的路径。
+//
+// 要 5.1 原声走「mpv 播放」：它直接吃原文件，不经过这里。
+const audioPlaybackChannels = 2
+
+// audioBitrate 给 AAC 输出码率：立体声 192k，与主流媒体服务器同档。
+func audioBitrate() string {
+	return "192k"
 }

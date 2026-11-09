@@ -432,9 +432,11 @@ const tcbox = document.getElementById('tcbox');
 const tcmsg = document.getElementById('tcmsg');
 const tcbar = document.getElementById('tcbar');
 let tcTimer = null;
+let tcState = 'none';   // 上一次查询到的状态，决定点击是「转换」还是「重转」
 
 function tcRender(j){
   if (!tcbtn) return;
+  tcState = j.state;
   switch(j.state){
     case 'running':
       tcbtn.disabled = true; tcbtn.textContent = '转换中…';
@@ -446,8 +448,8 @@ function tcRender(j){
       if (!tcTimer) tcTimer = setInterval(tcPoll, 2000);
       break;
     case 'done':
-      // 不再展示「转换完成」文案，按钮状态本身就是结果
-      tcbtn.disabled = true; tcbtn.textContent = '音轨已转换';
+      // 留一个重转入口：音轨参数改过之后（比如声道数）要靠它把旧产物换掉
+      tcbtn.disabled = false; tcbtn.textContent = '音轨已转换 · 重转';
       tcbox.hidden = true;
       clearInterval(tcTimer); tcTimer = null;
       break;
@@ -471,7 +473,9 @@ if (tcbtn) {
   tcPoll();
   tcbtn.addEventListener('click', async ()=>{
     try{
-      const r = await fetch('/api/transcode/' + ITEM, {method:'POST'});
+      const force = tcState === 'done';
+      if (force && !confirm('重新转换会清掉现有音轨缓存，转换期间网页播放先走实时转码。继续？')) return;
+      const r = await fetch('/api/transcode/' + ITEM + (force ? '?force=1' : ''), {method:'POST'});
       if (r.status === 409) {
         const j = await r.json().catch(()=>({}));
         toast(j.error || '已有转码任务在进行');

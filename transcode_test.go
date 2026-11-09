@@ -11,9 +11,9 @@ import (
 
 func TestParseProgress(t *testing.T) {
 	cases := []struct {
-		line   string
-		dur    float64
-		want   float64
+		line string
+		dur  float64
+		want float64
 	}{
 		{"out_time_us=5000000", 10, 0.5},
 		{"out_time_ms=5000000", 10, 0.5}, // ffmpeg 的 out_time_ms 实际是微秒
@@ -51,7 +51,7 @@ func TestTranscodeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := tc.Start("abc123", src)
+	job, err := tc.Start("abc123", src, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestTranscodeEndToEnd(t *testing.T) {
 	}
 
 	// 完成后再 Start：命中缓存直接返回 done
-	job, err = tc.Start("abc123", src)
+	job, err = tc.Start("abc123", src, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestTranscodeNoFFmpeg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tc.Start("abc123", filepath.Join(dir, "x.mkv")); err == nil {
+	if _, err := tc.Start("abc123", filepath.Join(dir, "x.mkv"), false); err == nil {
 		t.Fatal("无 ffmpeg 应该报错")
 	}
 }

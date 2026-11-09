@@ -75,6 +75,22 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
 .notice.warn{border-color:rgba(227,183,116,.4)}
 .notice .more{color:var(--text-3)}
 
+/* 开声按钮：预转码模式的声音走独立 <audio>，浏览器一定拦它的自动播放。
+   画面那边因为原音轨解不了被当成无声内容放行，于是「画面在跑、没有声音」。
+   这颗按钮和任意一次点击/按键都能把手势补给 audio.play()。 */
+.audiogate{
+  position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:12;
+  display:inline-flex;align-items:center;gap:9px;cursor:pointer;
+  padding:13px 24px;border:0;border-radius:999px;
+  font:inherit;font-size:14px;font-weight:600;color:#1a1206;
+  background:var(--gold);box-shadow:0 12px 34px rgba(0,0,0,.5);
+  transition:transform .18s var(--ease),box-shadow .18s var(--ease);
+}
+.audiogate:hover{transform:translate(-50%,-50%) scale(1.03)}
+.audiogate[hidden]{display:none}
+.audiogate svg{width:17px;height:17px;stroke:currentColor;fill:none;
+  stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
 @media(max-width:560px){
   main{padding-top:64px}
 }
@@ -95,6 +111,10 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
 
 <main>
   <div id="player"></div>
+  <button class="audiogate" id="audiogate" type="button" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 8.8a5 5 0 0 1 0 6.4"/><path d="M18.6 6a9 9 0 0 1 0 12"/></svg>
+    点一下开启声音
+  </button>
   {{if eq .AudioHint "bad"}}
   <div class="notice warn" id="hint">
     这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码，浏览器解不了（画面正常但没声音）。
@@ -213,29 +233,64 @@ function setSubVisible(on){
 }
 
 /* ---------- 预转码模式：原视频（静音）+ AAC 音轨 ---------- */
+// 声音来自独立 <audio>，而独立 <audio> 的自动播放一定会被浏览器的自动播放
+// 策略拦下：视频那侧的原音轨（EAC3/DTS 之类）本来就没法解，浏览器把它当"无声
+// 内容"放行，于是画面自己在跑，audio.play() 却静默 reject —— 症状就是
+// 「画面正常、一点声音都没有」，控制台也不报错。
+//
+// 所以要等一次用户手势才可能出声。三条路都把声音拉起来：点播放器（play 事件）、
+// 页面上任意一次点击/按键（capture 阶段补手势）、以及那颗"点一下开启声音"。
+let audioOn = false;
+
+const gateEl = document.getElementById('audiogate');
+function gateShow(on){ if (gateEl) gateEl.hidden = !on; }
+
+function startPreAudio(){
+  if (!audioEl || !art || !art.video) return;
+  const v = art.video;
+  // 已经在播且对得上，就别每次点击都重设时间
+  if (!audioEl.paused && Math.abs(audioEl.currentTime - v.currentTime) < 0.3) return;
+  // readyState 为 0 时赋 currentTime 会被忽略，交给 loadedmetadata 再补
+  if (audioEl.readyState > 0 && Math.abs(audioEl.currentTime - v.currentTime) > 0.3){
+    try { audioEl.currentTime = v.currentTime; } catch(e){}
+  }
+  audioEl.play().then(() => {
+    audioOn = true;
+    gateShow(false);
+  }).catch(err => {
+    if (err && err.name === 'NotAllowedError'){
+      gateShow(true);            // 还没拿到手势，等用户点一下
+    } else {
+      showHint('声音启动失败：' + ((err && err.message) || err));
+    }
+  });
+}
+
 function setupPreAudio(){
   audioEl = new Audio('/audio/' + ITEM);
   audioEl.preload = 'auto';
   const v = art.video;
 
-  v.addEventListener('play', () => {
-    audioEl.currentTime = v.currentTime;
-    audioEl.play().catch(()=>{});
-  });
-  v.addEventListener('pause', () => audioEl.pause());
-  v.addEventListener('seeking', () => { audioEl.currentTime = v.currentTime; });
-  v.addEventListener('ratechange', () => { audioEl.playbackRate = v.playbackRate; });
-
-  // 音量/静音/倍速跟随播放器控件（ArtPlayer 操作的是 video 元素）
-  setInterval(() => {
+  // 音量/静音/倍速跟随播放器控件。用事件而不是定时轮询：轮询会把用户刚调过的
+  // 状态又盖回去，也白白唤醒。
+  const syncVol = () => {
     audioEl.volume = v.volume;
     audioEl.muted = v.muted;
-    if (audioEl.playbackRate !== v.playbackRate) audioEl.playbackRate = v.playbackRate;
-  }, 250);
+    if (audioOn) audioEl.playbackRate = v.playbackRate;
+  };
+  ['volumechange', 'ratechange'].forEach(ev => v.addEventListener(ev, syncVol));
+  syncVol();
+
+  v.addEventListener('play', startPreAudio);
+  v.addEventListener('pause', () => audioEl.pause());
+  v.addEventListener('seeking', () => {
+    if (!audioOn) return;
+    try { audioEl.currentTime = v.currentTime; } catch(e){}
+  });
 
   // 漂移校正：>250ms 硬对齐；50–250ms 用 ±3% 速率慢慢收，避免频繁跳变
   v.addEventListener('timeupdate', () => {
-    if (audioEl.paused) return;
+    if (!audioOn || audioEl.paused) return;
     const d = audioEl.currentTime - v.currentTime;
     const rate = v.playbackRate || 1;
     if (Math.abs(d) > 0.25) audioEl.currentTime = v.currentTime;
@@ -243,10 +298,22 @@ function setupPreAudio(){
     else audioEl.playbackRate = rate;
   });
 
-  // 万一原文件音轨其实能被解（说明本不需要转码），静音视频避免双声
-  setTimeout(() => {
-    if (v && !v.paused && v.webkitAudioDecodedByteCount > 0) v.muted = true;
-  }, 2500);
+  audioEl.addEventListener('loadedmetadata', () => {
+    const now = art && art.video;
+    if (!now) return;
+    try { audioEl.currentTime = now.currentTime; } catch(e){}
+    if (audioOn || !now.paused) startPreAudio();
+  });
+
+  // 任意一次点击/按键都把「用户手势」补上
+  const gesture = () => { if (!audioOn) startPreAudio(); };
+  document.addEventListener('pointerdown', gesture, true);
+  document.addEventListener('keydown', gesture, true);
+  document.addEventListener('touchstart', gesture, {capture:true, passive:true});
+  if (gateEl) gateEl.addEventListener('click', ev => { ev.stopPropagation(); startPreAudio(); });
+
+  // 桌面端已授权自动播放的话，这一次就直接成了
+  startPreAudio();
 }
 
 /* ---------- 实时转码模式：HLS 分段边转边发 ---------- */

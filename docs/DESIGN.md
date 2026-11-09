@@ -7,7 +7,7 @@ title: DESIGN
 > 一个跑在 Termux 上的轻量媒体库服务器：负责刮削、索引、文件服务；
 > 播放交给 PC 上的本地播放器。
 >
-> 文档版本：v2.15　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
+> 文档版本：v2.16　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
 
 ---
 
@@ -1266,13 +1266,13 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 
 | | 预转码（pre） | 实时转码（live） |
 |---|---|---|
-| 产出 | 只存一条 AAC 音轨 `.m4a`（约 400MB/2h） | HLS 分段，滑动窗口约 3 分钟（几十 MB） |
-| 磁盘 | 一次性占 1/6 部片 | 边看边删，看完即空 |
+| 产出 | 只存一条 AAC 音轨 `.m4a`（约 200MB/2h） | HLS 分段，滑动窗口约 3 分钟（几十 MB） |
+| 磁盘 | 一次性占 1/10 部片 | 边看边删，看完即空 |
 | 播放 | 原文件视频 + `<audio>` 音轨双流同步 | hls.js + MSE，音视频同一时间轴 |
 | CPU | 转码时一次性（约 9 分钟/2h） | 播放期间约 6% 单核 |
 | 拖进度 | 原生 Range，最稳 | 超出窗口就重启 ffmpeg（约 1–2 秒） |
 
-**预转码（sidecar）**：`ffmpeg -i src -map 0:a:0? -vn -c:a aac -b:a <按声道> -f mp4`，
+**预转码（sidecar）**：`ffmpeg -i src -map 0:a:0? -vn -c:a aac -b:a 192k -ac 2 -f mp4`，
 产物 `<database 目录>/transcode/<id>.m4a`；`/audio/{id}` 提供它（Range 支持），
 播放页 `<video>` 只播画面、`<audio>` 出声，漂移 >250ms 硬对齐、50–250ms 用 ±3%
 速率收敛，音量/静音/倍速跟随。视频流零拷贝，所以画质与网络都是原样。
@@ -1290,9 +1290,18 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
   自己删文件就变成播放列表指向 404
 - 音视频必须分成两条 rendition（`-var_stream_map`）：Chromium 的 MSE 不接受把带音轨的
   muxed init 塞进单个 SourceBuffer，init 一 append 就报 parsing failed
-- `-ac` **必须显式给**：源是 5.1(side) 这类布局时 ffmpeg 默认往 AudioSpecificConfig 写
-  `channelConfig=0`（要求解码器读 PCE），Chromium 解析不了，音频 init append 直接失败。
-  给 `-ac` 后写标准 channelConfig 才收。8 声道（7.1）AAC 无标准配置，统一降到 6
+- `-ac` **必须显式给，且固定 2（立体声）**。第一层原因：源是 5.1(side) 这类布局时
+  ffmpeg 默认往 AudioSpecificConfig 写 `channelConfig=0`（要求解码器读 PCE），
+  Chromium 解析不了，音频 init append 直接失败。第二层原因：多声道 AAC 能不能出声
+  取决于机型的 AudioTrack 通道掩码，不少设备解码成功却完全静音、且不报错——症状与
+  「音轨编码不支持」一模一样，无从排查。下混立体声是每个内核都稳的路径。
+  要 5.1 原声就用「mpv 播放」，它直接吃原文件、不经过转码
+- 浏览器播放统一 192kbps 立体声（Jellyfin 同档）
+- **预转码模式的 `<audio>` 自动播放一定被拦**：视频那侧的原音轨（EAC3/DTS）本来
+  解不了，浏览器把它当「无声内容」放行，于是画面自己在跑；而独立 `<audio>` 元素
+  有声，`play()` 必然以 NotAllowedError 被拒，`.catch(()=>{})` 一吞就变成
+  「画面正常、一点声音都没有」。必须等一次用户手势：点播放器（`play` 事件）、
+  页面上任意 `pointerdown`/`keydown`（capture 阶段补手势）、或那颗「点一下开启声音」
 - `-tag:v hvc1`：Chromium 的 MSE 只认 hvc1 这个 sample entry，ffmpeg 默认写 hev1，
   会直接 MEDIA_ERR_SRC_NOT_SUPPORTED
 - master.m3u8 自己生成（ffmpeg 的不带 CODECS，hls.js 不知道给 MSE 什么 mime）；
@@ -1303,9 +1312,9 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
   所以去掉 `time` 控件，右上角另显示全片进度（`base + currentTime` / 总时长）
 
 - 依赖：`pkg install ffmpeg`（Termux）；未安装时接口报错引导
-- 码率：按声道数 64kbps/声道（Jellyfin 口径），夹 128k–640k；5.1 → 384k
 - 状态：只存内存 + 以文件存在为准；同一时刻只跑一个预转码任务；源更新过则重转
-- UI：**详情页**「转换音轨」按钮 + 进度条（只在 audioHint 命中时显示），播放页不见按钮
+- UI：**详情页**「转换音轨」按钮 + 进度条（只在 audioHint 命中时显示），播放页不见按钮；
+  已转换后按钮变成「音轨已转换 · 重转」，`POST ?force=1` 丢缓存重转（音轨参数改过时用）
 - 诊断工具：`mkvprobe/` 纯 Go EBML 解析，打印容器内真实音轨 CodecID/声道/语言
 
 ---
