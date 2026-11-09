@@ -926,9 +926,10 @@ GET /api/items?q=星际&sort=recent&page=1&limit=60&kind=movie&year=2014
 
 `sort=recent` 按 `mtime_unix DESC`（发现时间），非 `scraped_at`。`sort=rating` 时 `rating IS NULL` 的条目排在最后。
 
-**折叠搜索（v2.10）**：`items.search_key` 保存「标题|原名|文件路径」去掉空格/标点、统一小写
-后的键（`SearchKey`，复用 `foldForCompare`），查询时对 key 与 q 双向折叠，所以
-`lala` / `LALALAND` / `La La Land` / `la-la land` 都能命中同一部片；原样 LIKE 仍保留兜底。
+**折叠搜索（v2.10）**：`items.search_key` 保存「标题|原名|文件路径|拼音全拼|拼音首字母」
+去掉空格/标点、统一小写后的键（`SearchKey`，复用 `foldForCompare`；拼音用
+`mozillazg/go-pinyin`，单读音），查询时对 key 与 q 双向折叠，所以
+`lala` / `LALALAND` / `La La Land` / `la-la land` / `ailezhicheng` / `alzc` 都能命中。
 **文件名必须进键**：国产片的英文国际名（如《捕风追影》= The Shadow's Edge）不在 TMDB
 `original_title` 里（那里也是中文），只存在于发布文件名，不带上就搜不到。
 老库通过 `migrateSearchKey` 做 `ALTER TABLE ADD COLUMN` 并按 `search_key_ver` 全量重算——

@@ -31,8 +31,9 @@ CREATE TABLE IF NOT EXISTS items (
     kind           TEXT NOT NULL,
     title          TEXT NOT NULL DEFAULT '',
     original_title TEXT NOT NULL DEFAULT '',
-    -- 折叠搜索键：去空格/标点、统一小写后的「标题|原名」，让 "lalaland" 能命中
-    -- "La La Land"。老库由 migrateSearchKey 补列回填，不触发整库重建。
+    -- 折叠搜索键：去空格/标点、统一小写后的「标题|原名|文件名|拼音全拼|首字母」，
+    -- 让 "lalaland"、"shadow"、"alzc" 都能命中对应条目。
+    -- 老库由 migrateSearchKey 补列回填，不触发整库重建。
     search_key     TEXT NOT NULL DEFAULT '',
     year           INTEGER,
     tmdb_id        INTEGER,
@@ -193,41 +194,40 @@ func peekSchemaVersion(path string) (int, bool) {
 
 func (d *DB) Close() error { return d.sql.Close() }
 
-// SearchKey 生成折叠搜索键：去空格/标点、统一小写后的「标题|原名|文件路径」。
+// SearchKey 生成折叠搜索键：去空格/标点、统一小写后的
+// 「标题|原名|文件路径|拼音全拼|拼音首字母」。
 // 有了它 "lala" / "lalaland" / "La La Land" 都能命中同一部片；文件名也要进键，
 // 因为国产片的英文国际名（如 The Shadow's Edge）不在 TMDB original_title 里，
 // 只存在于发布文件名中——不带上它，搜 "shadow" 就找不到《捕风追影》。
+// 拼音段让 "ailezhicheng" / "alzc" 能命中《爱乐之城》。
 func SearchKey(title, original, relPath string) string {
-	parts := []string{foldForCompare(title)}
+	parts := make([]string, 0, 8)
+	seen := map[string]bool{}
 	add := func(s string) {
-		if s == "" {
+		if s == "" || seen[s] {
 			return
 		}
-		for _, p := range parts {
-			if p == s {
-				return
-			}
-		}
+		seen[s] = true
 		parts = append(parts, s)
 	}
+	add(foldForCompare(title))
 	add(foldForCompare(original))
 	add(foldForCompare(relPath))
-	out := ""
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		if out != "" {
-			out += "|"
-		}
-		out += p
+	// 拼音只取标题与原名：文件名基本是英文，转拼音没有信息量还撑大键
+	full, initials := pinyinParts(title)
+	add(full)
+	add(initials)
+	if original != title {
+		full, initials := pinyinParts(original)
+		add(full)
+		add(initials)
 	}
-	return out
+	return strings.Join(parts, "|")
 }
 
 // searchKeyVersion 是搜索键格式版本：键内容（字段集合）变过就靠它触发全量重算，
-// 不能只看空值——旧格式的键非空，但缺了新增字段。
-const searchKeyVersion = "2"
+// 不能只看空值——旧格式的键非空，但缺了新增字段。v3：加入拼音全拼与首字母。
+const searchKeyVersion = "3"
 
 // migrateSearchKey 给老库补 search_key 列并按当前格式全量回填。
 // 走 ALTER 而不是升 SchemaVersion：升版本会整库删除，观看进度也一起没了，
