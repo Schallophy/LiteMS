@@ -531,6 +531,7 @@ type pageData struct {
 	Total       int
 	Items       []ItemDTO
 	Item        *ItemDTO
+	Detail      *DetailInfo
 	RootPath    string
 	HelperToken string
 	HelperPort  string
@@ -591,6 +592,7 @@ func (s *Server) handleItemPage(w http.ResponseWriter, r *http.Request) {
 	d := s.toDTO(*it)
 	data := pageData{
 		Title: s.cfg.UI.Title, Theme: s.cfg.UI.Theme, Item: &d,
+		Detail:      detailFor(s.roots, *it),
 		HelperToken: s.cfg.Launch.Token, HelperPort: helperPort(s.cfg.Launch.Listen),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

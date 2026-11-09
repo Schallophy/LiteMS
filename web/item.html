@@ -94,6 +94,7 @@ a{color:inherit;text-decoration:none}
 h1{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;line-height:1.16;
   letter-spacing:-.012em;text-wrap:balance}
 .alt{margin:9px 0 0;font-size:14px;color:var(--text-2);letter-spacing:.01em}
+.tagline{margin:7px 0 0;font-size:13.5px;line-height:1.6;color:var(--text-3);max-width:52ch}
 
 .meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:16px;
   font-size:13px;color:var(--text-2)}
@@ -111,6 +112,32 @@ h1{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;line-height:1.16;
 .tag{padding:3px 9px;border-radius:6px;font-size:11px;font-weight:500;
   letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);
   border:1px solid var(--line-2);background:rgba(255,255,255,.03)}
+
+/* NFO 补充信息：左标签右内容的两列网格 */
+.info{display:grid;grid-template-columns:88px 1fr;gap:14px 18px;max-width:68ch;
+  font-size:14px;line-height:1.7}
+.info dt{margin:0;font-size:12px;color:var(--text-3);letter-spacing:.08em;padding-top:2px}
+.info dd{margin:0;color:var(--text)}
+.info a{color:var(--gold);text-decoration:none;border-bottom:1px solid rgba(227,183,116,.3)}
+.info a:hover{color:#f2cf9b;border-bottom-color:rgba(227,183,116,.6)}
+.people{display:flex;flex-wrap:wrap;gap:8px}
+.person{display:inline-flex;align-items:baseline;gap:6px;padding:5px 11px;border-radius:8px;
+  border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:13px;color:var(--text)}
+.person i{font-style:normal;font-size:11.5px;color:var(--text-3)}
+/* 剧照：hero 里的背景被暗色遮罩压着，这里放一张清晰的 */
+.still{margin:0;border-radius:12px;overflow:hidden;border:1px solid var(--line);
+  background:var(--surface)}
+.still img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+/* 链接组 */
+.extlinks{display:flex;gap:10px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:7px;
+  font-size:12px;color:var(--text-2);border:1px solid var(--line-2);
+  background:rgba(255,255,255,.03);text-decoration:none;transition:color .18s,border-color .18s}
+.chip:hover{color:var(--text);border-color:rgba(227,183,116,.45)}
+@media(max-width:560px){
+  .info{grid-template-columns:1fr;gap:4px 0}
+  .info dt{padding-top:8px}
+}
 
 /* 续播：文字在上、进度条在下，读起来才是「进度」而不是一条分隔线 */
 .resume{max-width:240px;margin-top:24px}
@@ -205,13 +232,16 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
       <div class="eyebrow">{{if eq .Item.Kind "movie"}}影片{{else}}剧集{{end}}{{with .Item.Year}} · {{.}}{{end}}</div>
       <h1>{{.Item.Title}}</h1>
       {{with .Item.OriginalTitle}}<p class="alt">{{.}}</p>{{end}}
+      {{with .Detail}}{{with .Tagline}}<p class="tagline">{{.}}</p>{{end}}{{end}}
 
       <div class="meta">
         {{with .Item.Rating}}<span class="score"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>{{printf "%.1f" .}}</span>{{end}}
         {{with .Item.RuntimeMin}}<span>{{.}} 分钟</span>{{end}}
         {{if eq .Item.Kind "episode"}}<span>第 {{.Item.Season}} 季 · 第 {{.Item.Episode}} 集</span>{{end}}
+        {{with .Detail}}{{with .Votes}}<span>{{$.Detail.RatingSrc}} {{.}} 人评过</span>{{end}}{{end}}
         {{if .Item.Finished}}<span class="done">已看完</span>{{end}}
       </div>
+      {{with .Detail}}{{if .Genres}}<div class="tags">{{range .Genres}}<span class="tag">{{.}}</span>{{end}}</div>{{end}}{{end}}
 
       {{if .Item.Subs}}
       <div class="tags">
@@ -249,6 +279,42 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
     <section>
       <h2>剧情简介</h2>
       <p class="plot" style="color:var(--text-3)">还没有简介。运行 <code>litems scrape</code> 刮削后会自动补上。</p>
+    </section>
+    {{end}}
+
+    {{if .Detail}}
+    {{if or .Detail.Directors .Detail.Writers .Detail.Countries .Detail.AirDate .Detail.HasTmdb .Detail.HasImdb}}
+    <section>
+      <h2>详细信息</h2>
+      <dl class="info">
+        {{with .Detail.Directors}}<dt>导演</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
+        {{with .Detail.Writers}}<dt>编剧</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
+        {{with .Detail.Countries}}<dt>国家/地区</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
+        {{with .Detail.AirDate}}<dt>播出日期</dt><dd>{{.}}</dd>{{end}}
+        {{if or .Detail.HasTmdb .Detail.HasImdb}}<dt>外部链接</dt><dd><span class="extlinks">
+          {{if .Detail.HasTmdb}}<a class="chip" target="_blank" rel="noopener noreferrer"
+             href="https://www.themoviedb.org/{{if eq .Item.Kind "movie"}}movie{{else}}tv{{end}}/{{.Detail.TmdbID}}">TMDB ↗</a>{{end}}
+          {{if .Detail.HasImdb}}<a class="chip" target="_blank" rel="noopener noreferrer"
+             href="https://www.imdb.com/title/{{.Detail.ImdbID}}/">IMDb ↗</a>{{end}}
+        </span></dd>{{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .Detail.Cast}}
+    <section>
+      <h2>主演</h2>
+      <div class="people">
+        {{range .Detail.Cast}}<span class="person">{{.Name}}{{with .Role}}<i>饰 {{.}}</i>{{end}}</span>{{end}}
+      </div>
+    </section>
+    {{end}}
+    {{end}}
+
+    {{if .Item.Fanart}}
+    <section>
+      <h2>剧照</h2>
+      <figure class="still"><img src="{{.Item.Fanart}}" alt="{{.Item.Title}} 剧照" loading="lazy" decoding="async"></figure>
     </section>
     {{end}}
   </div>

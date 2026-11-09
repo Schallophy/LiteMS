@@ -257,3 +257,32 @@ func imageBaseName(dir, stem string, videoCount int) string {
 	}
 	return stem + "-"
 }
+
+// nfoDetailXML 是详情页展示用的宽松读取结构：movie / tvshow / episodedetails
+// 三种根元素都按这一份解（没有 XMLName，字段按子元素名匹配）。
+// 详情页的原则是「NFO 才是真相」：用户手工改过 NFO，页面立即跟着变。
+type nfoDetailXML struct {
+	Tagline   string        `xml:"tagline"`
+	Genres    []string      `xml:"genre"`
+	Countries []string      `xml:"country"`
+	Directors []string      `xml:"director"`
+	Credits   []string      `xml:"credits"`
+	Actors    []nfoActor    `xml:"actor"`
+	AirDate   string        `xml:"aired"`
+	Ratings   *nfoRatings   `xml:"ratings"`
+	UniqueIDs []nfoUniqueID `xml:"uniqueid"`
+}
+
+// readNFODetail 读取并解析 NFO 的展示字段；不存在或解析失败返回 nil。
+func readNFODetail(path string) *nfoDetailXML {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var d nfoDetailXML
+	if err := xml.Unmarshal(b, &d); err != nil {
+		warnf("NFO 详情解析失败，忽略：%s（%v）", path, err)
+		return nil
+	}
+	return &d
+}
