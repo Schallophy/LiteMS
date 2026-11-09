@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"io/fs"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,6 +104,12 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/api/progress", s.handleProgress)
 	mux.HandleFunc("/api/progress/", s.handleProgressGet)
 	mux.HandleFunc("/api/cmd/", s.handleCmd)
+	// 第三方前端库：build 时打进二进制，局域网离线可用
+	vendor, err := fs.Sub(webFS, "web/vendor")
+	if err != nil {
+		return err // 该函数只返回 error（RunServer 内部装配 mux）
+	}
+	mux.Handle("/vendor/", http.StripPrefix("/vendor/", http.FileServer(http.FS(vendor))))
 	mux.HandleFunc("/stream/", s.handleStream)
 	mux.HandleFunc("/sub/", s.handleSub)
 	mux.HandleFunc("/poster/", s.handleImage(true))
@@ -481,6 +488,25 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	}
 	if mt := mime.TypeByExtension(ext); mt != "" && ct == "text/plain; charset=utf-8" {
 		ct = mt
+	}
+	// fmt=vtt：给网页播放器用。HTML5 <video> 只认 WebVTT，而字幕文件的
+	// 格式（srt/ass）与编码（GBK/Big5）都五花八门，统一在这里转换。
+	// 不带 fmt 保持原始文件——mpv 的 --sub-file 走这条路，它自己会猜编码。
+	if r.URL.Query().Get("fmt") == "vtt" {
+		raw, err := os.ReadFile(full)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "读取字幕失败："+err.Error())
+			return
+		}
+		vtt, err := toVTT(raw, ext, pick.Lang)
+		if err != nil {
+			writeErr(w, http.StatusUnsupportedMediaType, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(vtt)
+		return
 	}
 	w.Header().Set("Content-Type", ct)
 	http.ServeFile(w, r, full)
