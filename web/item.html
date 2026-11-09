@@ -339,13 +339,35 @@ document.getElementById('play').addEventListener('click', async ()=>{
     toast('没连上本地 helper，请先运行 litems launch，或用「复制命令」');
   }
 });
+// 复制三级兜底：
+// 1. navigator.clipboard 只在安全上下文（HTTPS / localhost）存在，局域网 http://IP 访问时是 undefined；
+// 2. 退回 execCommand('copy')，真实用户点击有激活态，绝大多数浏览器可用；
+// 3. 再失败就弹出 prompt，命令文本可全选，手动 Ctrl+C——永远有出路。
+async function copyText(text){
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return 'copied';
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch(e) { ok = false; }
+  ta.remove();
+  if (ok) return 'copied';
+  window.prompt('自动复制被浏览器拒绝，请全选下面的命令手动复制：', text);
+  return 'prompted';
+}
 document.getElementById('copy').addEventListener('click', async ()=>{
   try{
     const r = await fetch('/api/cmd/' + ITEM);
     const j = await r.json();
     if(!j.command) throw new Error(j.error || 'no command');
-    await navigator.clipboard.writeText(j.command);
-    toast('命令已复制，粘贴到终端即可播放');
+    const how = await copyText(j.command);
+    toast(how === 'copied' ? '命令已复制，粘贴到终端即可播放'
+                           : '命令已弹出，请手动复制');
   }catch(e){
     toast('复制失败：' + e.message);
   }
