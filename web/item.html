@@ -259,14 +259,12 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
       {{end}}
 
       <div class="actions">
-        <button class="btn primary" id="play">
+        <a class="btn primary" href="/play/{{.Item.ID}}">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
           {{if .Item.PositionMS}}继续播放{{else}}播放{{end}}
-        </button>
-        <a class="btn" id="webplay" href="/play/{{.Item.ID}}">网页播放</a>
+        </a>
+        <button class="btn" id="play">mpv 播放</button>
         {{if .AudioHint}}<button class="btn" id="tcbtn">转换音轨</button>{{end}}
-        <button class="btn" id="copy">复制命令</button>
-        <a class="btn" href="/stream/{{.Item.ID}}" target="_blank" rel="noopener">直接打开</a>
       </div>
       {{if .AudioHint}}
       <div class="tc" id="tcbox" hidden>
@@ -345,43 +343,9 @@ document.getElementById('play').addEventListener('click', async ()=>{
       body: JSON.stringify({id: ITEM, token: TOKEN, start: 0})
     });
     if(res.status === 204){ toast('已交给本地播放器'); return; }
-    toast('播放器返回 ' + res.status + '，可改用「复制命令」');
+    toast('播放器返回 ' + res.status);
   }catch(e){
-    toast('没连上本地 helper，请先运行 litems launch，或用「复制命令」');
-  }
-});
-// 复制三级兜底：
-// 1. navigator.clipboard 只在安全上下文（HTTPS / localhost）存在，局域网 http://IP 访问时是 undefined；
-// 2. 退回 execCommand('copy')，真实用户点击有激活态，绝大多数浏览器可用；
-// 3. 再失败就弹出 prompt，命令文本可全选，手动 Ctrl+C——永远有出路。
-async function copyText(text){
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text);
-    return 'copied';
-  }
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0';
-  document.body.appendChild(ta);
-  ta.focus(); ta.select();
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch(e) { ok = false; }
-  ta.remove();
-  if (ok) return 'copied';
-  window.prompt('自动复制被浏览器拒绝，请全选下面的命令手动复制：', text);
-  return 'prompted';
-}
-
-document.getElementById('copy').addEventListener('click', async ()=>{
-  try{
-    const r = await fetch('/api/cmd/' + ITEM);
-    const j = await r.json();
-    if(!j.command) throw new Error(j.error || 'no command');
-    const how = await copyText(j.command);
-    toast(how === 'copied' ? '命令已复制，粘贴到终端即可播放'
-                           : '命令已弹出，请手动复制');
-  }catch(e){
-    toast('复制失败：' + e.message);
+    toast('没连上本地 helper，请先运行 litems launch');
   }
 });
 

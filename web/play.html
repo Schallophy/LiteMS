@@ -90,13 +90,13 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
   <div class="notice warn" id="hint">
     这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码——浏览器内核不带这种解码器，
     表现就是<b>画面正常但没有声音</b>。可以回详情页点<b>「转换音轨」</b>（转一次即可，
-    之后网页播放直接出声），或用「播放」交给本地 mpv。
+    之后网页播放直接出声），或用「mpv 播放」交给本地播放器。
   </div>
   {{else if eq .AudioHint "maybe"}}
   <div class="notice warn" id="hint">
     音轨为 <b>AC3 / EAC3</b>，包括 Edge 在内的浏览器在 MKV 里都解不了。
     回详情页点<b>「转换音轨」</b>（转一次即可，之后网页播放直接出声），
-    或用「播放」交给本地 mpv。
+    或用「mpv 播放」交给本地播放器。
   </div>
   {{else}}
   <div class="notice" id="hint" hidden></div>
@@ -197,7 +197,7 @@ window.addEventListener('pagehide', () => {
 
 // 解码失败：文件整个打不开时才走这里；音轨解不了不会触发（见下方说明）
 art.on('video:error', () => {
-  showHint('浏览器解码不了这个文件。请回详情页用「播放」交给本地 mpv，或「复制命令」手动播放——它们不挑编码。');
+  showHint('浏览器解码不了这个文件。请回详情页用「mpv 播放」交给本地播放器——它不挑编码。');
 });
 
 // 顶栏：播放时鼠标（或触摸）不动 2.6s 后淡出，动了再出现
