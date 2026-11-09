@@ -207,6 +207,26 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   background:rgba(255,255,255,.07);border:1px solid var(--line);color:var(--text-2)}
 
+/* ── 字幕管理 ───────────────────────────── */
+.sublist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-width:680px}
+.subrow{display:flex;align-items:center;gap:10px;padding:9px 13px;border-radius:9px;
+  border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:13px}
+.subrow .slang{color:var(--text)}
+.subrow .ssrc{font-size:11px;letter-spacing:.08em;color:var(--text-3);
+  border:1px solid var(--line-2);border-radius:5px;padding:1px 7px}
+.subrow .scodec{font-size:12px;color:var(--text-3)}
+.subrow .sdel{margin-left:auto;padding:4px 12px;border-radius:7px;font:inherit;font-size:12px;
+  color:var(--text-2);background:transparent;border:1px solid var(--line-2);cursor:pointer;
+  transition:color .18s,border-color .18s,background .18s}
+.subrow .sdel:hover{color:#ffb4a8;border-color:rgba(255,120,100,.45);background:rgba(255,120,100,.08)}
+.subup{display:inline-flex;align-items:center;gap:9px;margin-top:16px;padding:10px 18px;
+  border-radius:9px;border:1px dashed var(--line-2);font-size:13px;color:var(--text-2);
+  cursor:pointer;transition:border-color .2s,color .2s,background .2s}
+.subup svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.subup:hover,.subup.drag{border-color:rgba(227,183,116,.55);color:var(--text);background:rgba(227,183,116,.07)}
+.subup.busy{pointer-events:none;opacity:.6}
+
 .toast{
   position:fixed;left:50%;bottom:28px;transform:translate(-50%,10px);
   padding:11px 20px;border-radius:999px;font-size:13px;max-width:82vw;
@@ -277,7 +297,6 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
       <!-- 类型与字幕语言合并进同一行槽位 -->
       <div class="tags">
         {{with .Detail}}{{range .Genres}}<span class="tag">{{.}}</span>{{end}}{{end}}
-        {{range .Item.Subs}}<span class="tag sub">{{.Lang}}</span>{{end}}
       </div>
 
       {{if .Item.PositionMS}}
@@ -353,6 +372,29 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
     </section>
     {{end}}
     {{end}}
+
+    <section>
+      <h2>字幕</h2>
+      {{if .Subs}}
+      <ul class="sublist">
+        {{range .Subs}}
+        <li class="subrow">
+          <span class="slang">{{.Label}}</span>
+          <span class="ssrc">{{if eq .Src "embed"}}内嵌{{else if eq .Src "imported"}}导入{{else}}外挂{{end}}</span>
+          {{with .Codec}}<span class="scodec">{{.}}</span>{{end}}
+          {{if eq .Src "imported"}}<button class="sdel" data-file="{{.File}}" title="删除这份字幕">删除</button>{{end}}
+        </li>
+        {{end}}
+      </ul>
+      {{else}}
+      <p class="plot" style="color:var(--text-3)">还没有字幕。可以导入 .srt / .ass / .ssa / .vtt 文件。</p>
+      {{end}}
+      <label class="subup" id="subUp">
+        <input type="file" id="subFile" accept=".srt,.ass,.ssa,.vtt" multiple hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>
+        导入字幕（也可把文件拖到这里）
+      </label>
+    </section>
 
   </div>
 </main>
@@ -439,6 +481,58 @@ if (tcbtn) {
     }catch(e){ toast('请求失败：' + e.message); }
   });
 }
+
+/* ---------- 字幕导入 / 删除 ---------- */
+const subUp = document.getElementById('subUp');
+const subFile = document.getElementById('subFile');
+let subBusy = false;
+
+async function uploadSubs(files){
+  if (subBusy) return;
+  const list = Array.from(files).filter(f => /\.(srt|ass|ssa|vtt)$/i.test(f.name));
+  if (!list.length) { toast('只支持 .srt / .ass / .ssa / .vtt'); return; }
+  subBusy = true;
+  subUp.classList.add('busy');
+  let ok = 0;
+  for (const f of list){
+    const fd = new FormData();
+    fd.append('file', f);
+    try{
+      const r = await fetch('/api/sub/' + ITEM, {method:'POST', body: fd});
+      if (r.ok) ok++;
+      else {
+        const j = await r.json().catch(()=>({}));
+        toast(f.name + ' 导入失败：' + (j.error || r.status));
+      }
+    }catch(e){ toast(f.name + ' 导入失败：' + e.message); }
+  }
+  subBusy = false;
+  subUp.classList.remove('busy');
+  if (ok) location.reload();
+}
+
+if (subFile){
+  subFile.addEventListener('change', () => { uploadSubs(subFile.files); subFile.value = ''; });
+  ['dragenter','dragover'].forEach(ev => subUp.addEventListener(ev, e => {
+    e.preventDefault(); subUp.classList.add('drag');
+  }));
+  ['dragleave','drop'].forEach(ev => subUp.addEventListener(ev, e => {
+    e.preventDefault(); subUp.classList.remove('drag');
+  }));
+  subUp.addEventListener('drop', e => { if (e.dataTransfer?.files?.length) uploadSubs(e.dataTransfer.files); });
+}
+
+document.querySelectorAll('.sdel').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const name = btn.dataset.file;
+    if (!name || !confirm('删除字幕「' + name + '」？')) return;
+    try{
+      const r = await fetch('/api/sub/' + ITEM + '?file=' + encodeURIComponent(name), {method:'DELETE'});
+      if (r.ok) location.reload();
+      else toast('删除失败：' + r.status);
+    }catch(e){ toast('删除失败：' + e.message); }
+  });
+});
 </script>
 </body>
 </html>

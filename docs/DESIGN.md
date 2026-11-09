@@ -902,7 +902,9 @@ OMDb Response=False → 视为 miss，不重试
 | `GET`  | `/poster/{id}`       | 海报图片（支持 `?w=`）  |
 | `GET`  | `/fanart/{id}`       | 背景图片            |
 | `GET`  | `/stream/{id}`       | 视频流（支持 Range）   |
-| `GET`  | `/sub/{id}`          | 外挂字幕（支持 `?lang=`） |
+| `GET`  | `/sub/{id}`          | 字幕（`?sub=N` 外挂 / `?imp=` 导入 / `?embed=N` 内嵌，`fmt=vtt` 转 WebVTT） |
+| `POST` | `/api/sub/{id}`      | 导入字幕（multipart `file`，可选 `lang`） |
+| `DELETE` | `/api/sub/{id}`    | 删除导入字幕（`?file=`） |
 | `GET`  | `/settings`          | 设置页（HTML，写刮削凭据） |
 | `POST` | `/settings`          | 保存 / 测试凭据（需 CSRF 令牌） |
 | `GET`  | `/healthz`           | 健康检查            |
@@ -1219,6 +1221,20 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 
 **静音兜底**：从详情页点过来是一次导航，新页面的有声自动播放可能被浏览器策略拦截
 （表现为停在暂停）。起播 1.2s 后仍 paused 则静音重试一次，并提示用户点音量图标恢复。
+
+### 10.10 字幕三源（v2.11）
+
+| 来源 | 位置 | 网页播放 | 说明 |
+|---|---|---|---|
+| 外挂 | 视频旁（扫描发现，`sub_paths`） | `/sub/{id}?sub=N&fmt=vtt` | 原 `.srt/.ass/.ssa/.vtt`，GBK/Big5 按语言解码 |
+| 导入 | `.litems/subs/<id>/` | `/sub/{id}?imp=NAME&fmt=vtt` | 详情页上传，8MB 上限，文件名自动补语言标记，同名加 `-2` |
+| 内嵌 | 容器字幕轨 | `/sub/{id}?embed=N&fmt=vtt` | ffprobe 探测（按源 mtime+size 缓存），ffmpeg 抽成 VTT 缓存 |
+
+- 图像字幕（PGS/VobSub）无法转文本：列表里标注「图像字幕，仅 mpv」，不提供 URL
+- 内嵌抽取缓存为 `embed-<idx>.vtt`，源文件 mtime 更新后失效重抽；缓存目录不进媒体库
+- mpv：自动加载内嵌轨；`--sub-file` 只带第一条可用外挂/导入（URL 形式，走 `/sub`）
+- 前端：详情页「字幕」区块列出三源并可导入/删除导入项；播放页字幕设置面板用
+  unified DTO 的 label 直接展示（含语言 + 来源语义）
 
 ### 10.9 音轨转码（v2.8）
 

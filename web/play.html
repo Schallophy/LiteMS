@@ -106,7 +106,9 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
 <script src="/vendor/artplayer.js"></script>
 <script>
 const ITEM = "{{.Item.ID}}";
-const SUBS = [{{range $i, $s := .Item.Subs}}{{if $i}},{{end}}{lang:"{{$s.Lang}}"}{{end}}];
+const SUBS = [
+{{range .Subs}}{{if .URL}}{lang:"{{.Lang}}",label:"{{.Label}}",url:"{{.URL}}"},{{end}}{{end}}
+];
 let art = null, lastSave = 0;
 
 const langLabel = l => ({chs:'简体中文', cht:'繁體中文', eng:'English',
@@ -162,17 +164,15 @@ setTimeout(() => {
 
 // 外挂字幕：默认用扫描排序的第一条（[scrape].sub_langs 的偏好顺序）
 if (SUBS.length) {
-  art.subtitle = {url: '/sub/' + ITEM + '?lang=' + SUBS[0].lang + '&fmt=vtt',
-                  type: 'vtt', encoding: 'utf-8'};
+  art.subtitle = {url: SUBS[0].url + '&fmt=vtt', type: 'vtt', encoding: 'utf-8'};
   if (SUBS.length > 1) {
     art.setting.add({
       html: '字幕',
-      width: 200,
-      tooltip: langLabel(SUBS[0].lang),
-      selector: SUBS.map((s, i) => ({html: langLabel(s.lang), lang: s.lang, default: i === 0})),
+      width: 220,
+      tooltip: SUBS[0].label,
+      selector: SUBS.map((s, i) => ({html: s.label, url: s.url, default: i === 0})),
       onSelect(item){
-        art.subtitle = {url: '/sub/' + ITEM + '?lang=' + item.lang + '&fmt=vtt',
-                        type: 'vtt', encoding: 'utf-8'};
+        art.subtitle = {url: item.url + '&fmt=vtt', type: 'vtt', encoding: 'utf-8'};
         return item.html;
       },
     });

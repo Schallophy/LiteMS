@@ -113,6 +113,7 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/api/progress/", s.handleProgressGet)
 	mux.HandleFunc("/api/cmd/", s.handleCmd)
 	mux.HandleFunc("/api/transcode/", s.handleTranscode)
+	mux.HandleFunc("/api/sub/", s.handleSubUpload)
 	// 第三方前端库：build 时打进二进制，局域网离线可用
 	vendor, err := fs.Sub(webFS, "web/vendor")
 	if err != nil {
@@ -260,7 +261,7 @@ type ItemDTO struct {
 	Overview      string     `json:"overview,omitempty"`
 	Poster        string     `json:"poster,omitempty"`
 	Fanart        string     `json:"fanart,omitempty"`
-	Subs          []SubEntry `json:"subs,omitempty"`
+	Subs          []SubDTO   `json:"subs,omitempty"`
 	Finished      bool       `json:"finished"`
 	PositionMS    int64      `json:"position_ms,omitempty"`
 	DurationMS    int64      `json:"duration_ms,omitempty"`
@@ -280,7 +281,6 @@ func (s *Server) toDTO(it Item) ItemDTO {
 		ID: it.ID, Title: it.Title, OriginalTitle: it.OriginalTitle,
 		Year: it.Year, Kind: string(it.Kind), Season: it.Season, Episode: it.Episode,
 		RuntimeMin: it.RuntimeMin, Rating: it.Rating, Overview: it.Overview,
-		Subs: it.SubPaths,
 	}
 	// 图片 URL 带版本号：/poster 的缓存头是 max-age=604800，URL 不变的话
 	// 重刮之后浏览器还会拿旧图（哪怕服务端已经换了文件），刷新和重启都救不回来。
@@ -354,7 +354,9 @@ func (s *Server) handleItemJSON(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.toDTO(*it))
+	d := s.toDTO(*it)
+	d.Subs = s.subsFor(*it)
+	writeJSON(w, http.StatusOK, d)
 }
 
 func (s *Server) handleContinue(w http.ResponseWriter, r *http.Request) {
@@ -486,7 +488,14 @@ func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSub 返回外挂字幕，支持 ?lang=chs。
+// handleSub 统一字幕出口：
+//
+//	/sub/{id}?sub=N      外挂字幕（按扫描顺序，N 从 0 起）
+//	/sub/{id}?lang=chs   外挂字幕（按语言，兼容旧链接）
+//	/sub/{id}?imp=NAME   用户导入的字幕（.litems/subs/<id>/）
+//	/sub/{id}?embed=N    容器内嵌字幕轨（ffmpeg 抽成 VTT 并缓存）
+//
+// 带 fmt=vtt 时把 srt/ass 转成 WebVTT 给网页播放器；不带上原始文件给 mpv。
 func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(r.URL.Path, "/sub/")
 	if !ok {
@@ -498,13 +507,56 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
+	q := r.URL.Query()
+
+	// 导入字幕
+	if imp := q.Get("imp"); imp != "" {
+		name := filepath.Base(imp)
+		if strings.HasPrefix(name, "embed-") || !subExts[strings.ToLower(filepath.Ext(name))] {
+			writeErr(w, http.StatusNotFound, "字幕不存在")
+			return
+		}
+		full := filepath.Join(s.subsDir(*it), name)
+		if _, err := os.Stat(full); err != nil {
+			writeErr(w, http.StatusNotFound, "字幕不存在")
+			return
+		}
+		s.serveSubFile(w, r, full, SubtitleLang(name))
+		return
+	}
+
+	// 内嵌字幕轨
+	if emb := q.Get("embed"); emb != "" {
+		idx, err := strconv.Atoi(emb)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "embed 必须是数字")
+			return
+		}
+		path, err := s.extractEmbedSub(*it, idx)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		http.ServeFile(w, r, path)
+		return
+	}
+
+	// 外挂字幕：?sub=N 优先，其次 ?lang=
 	if len(it.SubPaths) == 0 {
 		writeErr(w, http.StatusNotFound, "该条目没有外挂字幕")
 		return
 	}
-	want := NormalizeLang(r.URL.Query().Get("lang"))
 	pick := it.SubPaths[0]
-	if want != "" {
+	if n := q.Get("sub"); n != "" {
+		i, err := strconv.Atoi(n)
+		if err != nil || i < 0 || i >= len(it.SubPaths) {
+			writeErr(w, http.StatusNotFound, "字幕序号越界")
+			return
+		}
+		pick = it.SubPaths[i]
+	} else if want := NormalizeLang(q.Get("lang")); want != "" {
 		found := false
 		for _, sp := range it.SubPaths {
 			if NormalizeLang(sp.Lang) == want {
@@ -517,8 +569,13 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	dir := filepath.Dir(filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath)))
+	dir := filepath.Dir(s.itemPath(*it))
 	full := filepath.Join(dir, filepath.FromSlash(pick.Path))
+	s.serveSubFile(w, r, full, pick.Lang)
+}
+
+// serveSubFile 输出单个字幕文件：fmt=vtt 转 WebVTT，否则原样（mpv 用）。
+func (s *Server) serveSubFile(w http.ResponseWriter, r *http.Request, full, lang string) {
 	ext := strings.ToLower(filepath.Ext(full))
 	ct := "text/plain; charset=utf-8"
 	switch ext {
@@ -541,7 +598,7 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "读取字幕失败："+err.Error())
 			return
 		}
-		vtt, err := toVTT(raw, ext, pick.Lang)
+		vtt, err := toVTT(raw, ext, NormalizeLang(lang))
 		if err != nil {
 			writeErr(w, http.StatusUnsupportedMediaType, err.Error())
 			return
@@ -606,6 +663,8 @@ type pageData struct {
 	HelperPort  string
 	// AudioHint 播放页用：从文件名识别的音频标签提示等级（bad/maybe/""）
 	AudioHint string
+	// Subs 是合并后的字幕清单（外挂/导入/内嵌），详情页与播放页共用
+	Subs []SubDTO
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -666,6 +725,7 @@ func (s *Server) handleItemPage(w http.ResponseWriter, r *http.Request) {
 		Detail:      detailFor(s.roots, *it),
 		HelperToken: s.cfg.Launch.Token, HelperPort: helperPort(s.cfg.Launch.Listen),
 		AudioHint: audioHint(it.RelPath, it.Container),
+		Subs:      s.subsFor(*it),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tpl.ExecuteTemplate(w, "item.html", data); err != nil {
@@ -692,6 +752,7 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 		Theme:     s.cfg.UI.Theme,
 		Item:      &d,
 		AudioHint: audioHint(it.RelPath, it.Container),
+		Subs:      s.subsFor(*it),
 	}
 	// 转码缓存已就绪：?web=1 会自动命中它，无声提示就不用了
 	if s.tc.Has(id) {
@@ -744,8 +805,12 @@ func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
 		player = s.cfg.Launch.Players[0].Command
 	}
 	cmd := fmt.Sprintf(`%s "%s/stream/%s"`, player, base, id)
-	if len(it.SubPaths) > 0 {
-		cmd += fmt.Sprintf(` --sub-file="%s/sub/%s?lang=%s"`, base, id, it.SubPaths[0].Lang)
+	// 挑第一条网页/外部播放器能用的字幕（内嵌轨 mpv 自己会加载，不必显式指定）
+	for _, sd := range s.subsFor(*it) {
+		if sd.URL != "" && sd.Src != "embed" {
+			cmd += fmt.Sprintf(` --sub-file="%s%s"`, base, sd.URL)
+			break
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"command":     cmd,
