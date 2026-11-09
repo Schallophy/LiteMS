@@ -127,6 +127,11 @@ func (h *HLSServer) Start(item, src string, start float64) (*HLSSession, error) 
 	args := []string{
 		"-y", "-nostdin",
 		"-ss", strconv.FormatFloat(start, 'f', 3, 64),
+		// -ss 配 -noaccurate_seek：默认的精确 seek 会解码并丢弃到目标时间点，
+		// 但视频是 -c:v copy，丢不了包，只能从更早的关键帧开始；音频能精确丢，
+		// 于是两条流内容起点错开（实测 0.75 秒），时间戳又都归零 —— 表现为
+		// 声音稳定滞后画面。关掉精确 seek 后两者都从同一个关键帧起步。
+		"-noaccurate_seek",
 		// -readrate 是输入选项，必须在 -i 之前：按实时速度读，跟观众的播放进度同步；
 		// 开头那 hlsInitialBurst 秒先全速读完，否则起播得干等十几秒。
 		"-readrate", strconv.Itoa(hlsReadRate),

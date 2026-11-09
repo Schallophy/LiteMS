@@ -1283,6 +1283,12 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 -c:v copy -tag:v hvc1 -c:a aac -b:a <按声道> -ac <声道> -f hls -hls_time 4
 -hls_segment_type fmp4 -hls_list_size 45 -hls_flags delete_segments -var_stream_map ...`
 
+- `-ss` 必须配 `-noaccurate_seek`，否则**音画固定错位约 0.75 秒**（声音滞后画面）。
+  默认的精确 seek 会解码并丢弃到目标时间点，但视频走 `-c:v copy` 丢不了包，只能
+  从更早的关键帧开始；音频能精确丢。两条流内容起点就此错开，而输出时间戳都归零，
+  于是整段播放都是同一个偏移。实测首包 PTS：修复前 视频 0.017 / 音频 0.762，
+  修复后 0.017 / 0.0137–0.0267（差异来自 AAC 编码器 priming，毫秒级，不可感知）。
+  代价是起播点会退到最近的关键帧（通常提前 1–2 秒），进度基准仍用请求的秒数
 - `-readrate 1`：**必须**是实时速度。比这更快，ffmpeg 会跑到观众前面，滑动窗口一过
   他当前位置的分段就没了；`-readrate_initial_burst 16` 让开头 16 秒全速读完，起播不用干等
 - 滑动窗口只能靠 `-hls_list_size` + `-hls_flags delete_segments`：**不能带
