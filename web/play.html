@@ -193,6 +193,16 @@ if (resume > 30000) {
 const subURL = u => u + '&fmt=vtt';
 const subArgs = name => ({name, type: 'vtt', encoding: 'utf-8'});
 
+// 字幕字号：拖动条调节（12–44px），选择存 localStorage，跨条目、跨会话沿用。
+// 内核默认 20px 来自 --art-subtitle-font-size，这里用行内 font-size 覆盖。
+const SUB_SIZE_KEY = 'litems.subtitle.size';
+const subSize = (() => {
+  const v = parseInt(localStorage.getItem(SUB_SIZE_KEY) || '', 10);
+  return Number.isFinite(v) ? Math.min(44, Math.max(12, v)) : 20;
+})();
+const applySubSize = px => art.subtitle.style({'font-size': px + 'px'});
+applySubSize(subSize);
+
 if (SUBS.length) {
   art.subtitle.switch(subURL(SUBS[0].url), subArgs(SUBS[0].label)).catch(()=>{});
 
@@ -222,6 +232,20 @@ if (SUBS.length) {
       },
     });
   }
+
+  // 字幕大小：onChange 绑的是 input 事件，拖动过程中实时生效
+  art.setting.add({
+    html: '字幕大小',
+    name: 'subtitle-size',
+    tooltip: subSize + 'px',
+    range: [subSize, 12, 44, 1],
+    onChange(item){
+      const px = Math.round(item.range[0]);
+      applySubSize(px);
+      localStorage.setItem(SUB_SIZE_KEY, px);
+      return px + 'px';
+    },
+  });
 
   // 字幕偏移：范围 -10s ~ +10s，步进 0.1s。内核自带的同名项固定排在内置区，
   // 只能落在「字幕」上面，这里自己加一项，三项才按「开关 → 语言 → 偏移」排下来。
