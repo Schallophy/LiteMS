@@ -126,10 +126,6 @@ h1{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;line-height:1.16;
 .person{display:inline-flex;align-items:baseline;gap:6px;padding:5px 11px;border-radius:8px;
   border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:13px;color:var(--text)}
 .person i{font-style:normal;font-size:11.5px;color:var(--text-3)}
-/* 剧照：hero 里的背景被暗色遮罩压着，这里放一张清晰的 */
-.still{margin:0;border-radius:12px;overflow:hidden;border:1px solid var(--line);
-  background:var(--surface)}
-.still img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
 /* 链接组 */
 .extlinks{display:flex;gap:10px;flex-wrap:wrap}
 .chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:7px;
@@ -313,12 +309,6 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
     {{end}}
     {{end}}
 
-    {{if .Item.Fanart}}
-    <section>
-      <h2>剧照</h2>
-      <figure class="still"><img src="{{.Item.Fanart}}" alt="{{.Item.Title}} 剧照" loading="lazy" decoding="async"></figure>
-    </section>
-    {{end}}
   </div>
 </main>
 
