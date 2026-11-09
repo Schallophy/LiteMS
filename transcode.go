@@ -15,12 +15,12 @@ import (
 	"time"
 )
 
-// 音轨转码：把浏览器解不了的音轨（EAC3/DTS/TrueHD…）转成 AAC，视频流原样
-// 复制不重编码。手机 CPU 只需要扛音频编码，一部 2 小时的片几分钟就能转完。
+// 音轨转码（预转码模式）：只把浏览器解不了的音轨（EAC3/DTS/TrueHD…）转成 AAC，
+// 输出一条独立的 .m4a，视频仍用原文件——浏览器本来就能解画面，缺的只是音频解码器。
 //
-// 结果缓存为 <cacheDir>/<id>.mkv，/stream/{id}?web=1 优先返回它——所以网页
-// 播放器零改动地获得「转码后可拖进度条的完整文件」。缓存放数据库同目录下
-// （$HOME 私有存储，不碰媒体库/下载目录，不会被扫描器当条目捡走）。
+// 为什么不连视频一起转：那会多占一份和原片等大的磁盘（4.2GB），而这里只要
+// 一条音轨的体积（5.1 @ 384k，2 小时约 400MB）。播放时由页面把原视频（静音）
+// 与这条音轨同步起来。
 //
 // 状态只存内存：转码是可重复的长任务，进程重启后未完成的任务视为从未开始
 // （.part 残留文件在启动时清掉）；已完成的以缓存文件存在为准。
@@ -39,6 +39,7 @@ type Transcoder struct {
 }
 
 // NewTranscoder 建缓存目录并清掉上次中断留下的 .part 文件。
+// 顺带清掉旧版本留下的整片转码缓存（<id>.mkv，每部 4GB）——现在只存音轨。
 func NewTranscoder(cacheDir string) (*Transcoder, error) {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建转码缓存目录失败: %w", err)
@@ -47,14 +48,20 @@ func NewTranscoder(cacheDir string) (*Transcoder, error) {
 	for _, m := range matches {
 		os.Remove(m)
 	}
+	if old, _ := filepath.Glob(filepath.Join(cacheDir, "*.mkv")); len(old) > 0 {
+		for _, m := range old {
+			os.Remove(m)
+		}
+		logf("已清理 %d 个旧版整片转码缓存（现在只缓存音轨）", len(old))
+	}
 	return &Transcoder{jobs: map[string]*tcJob{}, cacheDir: cacheDir}, nil
 }
 
 func (t *Transcoder) CachePath(id string) string {
-	return filepath.Join(t.cacheDir, id+".mkv")
+	return filepath.Join(t.cacheDir, id+".m4a")
 }
 
-// Has 返回缓存文件是否存在（serve ?web=1 与状态查询都以它为准）。
+// Has 返回音轨缓存是否存在（播放页据此决定用「预转码」还是「实时转码」）。
 func (t *Transcoder) Has(id string) bool {
 	fi, err := os.Stat(t.CachePath(id))
 	return err == nil && fi.Size() > 0
@@ -140,12 +147,11 @@ func (t *Transcoder) run(ctx context.Context, id, src string, srcMod time.Time, 
 	args := []string{
 		"-y", "-nostdin",
 		"-i", src,
-		"-map", "0:v:0", "-map", "0:a:0?", "-map", "0:s?",
-		"-c:v", "copy", // 视频原样复制，画质无损、CPU 几乎为零
-		"-c:a", "aac", "-b:a", "320k",
-		"-c:s", "copy",
+		"-vn",
+		"-map", "0:a:0?",
+		"-c:a", "aac", "-b:a", audioBitrate(src),
 		"-progress", "pipe:1", "-nostats",
-		"-f", "matroska", part,
+		"-f", "mp4", part,
 	}
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var errBuf bytes.Buffer
@@ -243,4 +249,45 @@ func parseProgress(line string, durSec float64) float64 {
 		}
 	}
 	return -1
+}
+
+// probeChannels 取第一条音轨的声道数，拿不到返回 0。
+func probeChannels(src string) int {
+	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0",
+		"-show_entries", "stream=channels", "-of", "csv=p=0", src).Output()
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// probeVideoCodec 取第一条视频流的编码名（hevc/h264/av1…），拿不到返回空串。
+func probeVideoCodec(src string) string {
+	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
+		"-show_entries", "stream=codec_name", "-of", "csv=p=0", src).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// audioBitrate 按声道数给 AAC 码率：64kbps/声道（Jellyfin 的口径），
+// 夹在 128k–640k；探测不到声道就退回 256k。5.1 → 384k，与主流媒体服务器一致。
+func audioBitrate(src string) string {
+	ch := probeChannels(src)
+	if ch <= 0 {
+		return "256k"
+	}
+	kbps := ch * 64
+	if kbps < 128 {
+		kbps = 128
+	}
+	if kbps > 640 {
+		kbps = 640
+	}
+	return strconv.Itoa(kbps) + "k"
 }

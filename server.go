@@ -39,7 +39,8 @@ type Server struct {
 	credsMu sync.RWMutex
 	creds   scrapeCreds
 
-	tc *Transcoder
+	tc  *Transcoder
+	hls *HLSServer
 }
 
 // tplFuncs 是模板里用到的格式化助手。
@@ -102,6 +103,12 @@ func RunServer(cfg *Config, db *DB) error {
 		return err
 	}
 	s.tc = tc
+	// 实时转码的分段放同一个父目录下，进程退出即清空
+	hls, err := NewHLSServer(filepath.Join(filepath.Dir(cfg.Database.Path), "hls"))
+	if err != nil {
+		return err
+	}
+	s.hls = hls
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
@@ -113,6 +120,7 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/api/progress/", s.handleProgressGet)
 	mux.HandleFunc("/api/cmd/", s.handleCmd)
 	mux.HandleFunc("/api/transcode/", s.handleTranscode)
+	mux.HandleFunc("/api/live/", s.handleLive)
 	mux.HandleFunc("/api/sub/", s.handleSubUpload)
 	// 第三方前端库：build 时打进二进制，局域网离线可用
 	vendor, err := fs.Sub(webFS, "web/vendor")
@@ -121,6 +129,8 @@ func RunServer(cfg *Config, db *DB) error {
 	}
 	mux.Handle("/vendor/", http.StripPrefix("/vendor/", http.FileServer(http.FS(vendor))))
 	mux.HandleFunc("/stream/", s.handleStream)
+	mux.HandleFunc("/audio/", s.handleAudio)
+	mux.HandleFunc("/hls/", s.handleHLS)
 	mux.HandleFunc("/sub/", s.handleSub)
 	mux.HandleFunc("/poster/", s.handleImage(true))
 	mux.HandleFunc("/fanart/", s.handleImage(false))
@@ -436,7 +446,8 @@ func (s *Server) handleProgressGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStream 直接 ServeFile：Range / ETag / Content-Type 全部由标准库处理。
-// ?web=1 给网页播放器用：有转码缓存（AAC 音轨版）就优先返回它，浏览器才解得了。
+// 始终是媒体库里的原文件——音轨转码只产出独立的 .m4a（见 /audio/{id}），
+// 不再复制整片视频。
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(r.URL.Path, "/stream/")
 	if !ok {
@@ -448,14 +459,114 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
-	if r.URL.Query().Get("web") == "1" && s.tc.Has(id) {
-		http.ServeFile(w, r, s.tc.CachePath(id))
-		return
-	}
 	full := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
 	if _, err := os.Stat(full); err != nil {
 		writeErr(w, http.StatusNotFound, "文件已不存在")
 		return
+	}
+	http.ServeFile(w, r, full)
+}
+
+// handleAudio 提供预转码出来的 AAC 音轨（.m4a）。网页播放时由 <audio> 加载，
+// 与原视频（静音）对齐播放；Range 支持由 ServeFile 负责。
+func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(r.URL.Path, "/audio/")
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "id 必须是 16 位十六进制")
+		return
+	}
+	if !s.tc.Has(id) {
+		writeErr(w, http.StatusNotFound, "还没有音轨缓存")
+		return
+	}
+	w.Header().Set("Content-Type", "audio/mp4")
+	http.ServeFile(w, r, s.tc.CachePath(id))
+}
+
+// handleLive 开/复用实时转码会话，返回 HLS 播放地址。
+//
+//	/api/live/{id}?start=秒
+//
+// 同一时间点重复请求复用现有会话；拖动进度会因 start 变化而重启 ffmpeg。
+func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(r.URL.Path, "/api/live/")
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "id 必须是 16 位十六进制")
+		return
+	}
+	it, err := s.db.GetItem(id)
+	if err != nil || it == nil {
+		writeErr(w, http.StatusNotFound, "条目不存在")
+		return
+	}
+	start, _ := strconv.ParseFloat(r.URL.Query().Get("start"), 64)
+	src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+
+	// ?ctl=pause|resume：观众暂停/继续时同步掐停 ffmpeg，别让实时窗口滑过播放位置
+	if ctl := r.URL.Query().Get("ctl"); ctl != "" {
+		if tok := r.URL.Query().Get("token"); tok != "" {
+			s.hls.Pause(id, tok, ctl == "pause")
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	sess, err := s.hls.Start(id, src, start)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	// 等第一段出来再返回，避免播放器拿着空播放列表反复重试
+	waitFile(filepath.Join(sess.Dir, "video", "index.m3u8"), 8*time.Second)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token": sess.Token,
+		"start": sess.Start,
+		"url":   "/hls/" + id + "/" + sess.Token + "/master.m3u8",
+	})
+}
+
+// handleHLS 提供实时转码的播放列表与分段：/hls/{id}/{token}/{file}
+// 每送出一段就顺手删掉很早以前的分段，磁盘占用保持在几十 MB。
+func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request) {
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/hls/"), "/", 3)
+	if len(parts) != 3 {
+		writeErr(w, http.StatusBadRequest, "路径应为 /hls/{id}/{token}/{file}")
+		return
+	}
+	itemID, token, name := parts[0], parts[1], parts[2]
+	sess := s.hls.Lookup(itemID, token)
+	if sess == nil {
+		writeErr(w, http.StatusNotFound, "转码会话不存在或已过期")
+		return
+	}
+	// master 是现场生成的（带 CODECS），不是磁盘上的文件
+	if name == "master.m3u8" {
+		waitFile(filepath.Join(sess.Dir, "video", "index.m3u8"), 8*time.Second)
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(sess.Master()))
+		return
+	}
+	full, ok := safeHLSPath(sess.Dir, name)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "非法文件名")
+		return
+	}
+	if !waitFile(full, 8*time.Second) {
+		writeErr(w, http.StatusNotFound, "分段尚未生成")
+		return
+	}
+
+	switch {
+	case strings.HasSuffix(name, ".m3u8"):
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Cache-Control", "no-store")
+	case strings.HasSuffix(name, ".mp4"):
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Cache-Control", "no-store")
+	default:
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Cache-Control", "no-store")
 	}
 	http.ServeFile(w, r, full)
 }
@@ -663,6 +774,10 @@ type pageData struct {
 	HelperPort  string
 	// AudioHint 播放页用：从文件名识别的音频标签提示等级（bad/maybe/""）
 	AudioHint string
+	// AudioReady 预转码音轨已就绪（/audio/{id} 可用）
+	AudioReady bool
+	// LiveReady 实时转码可用（ffmpeg 已安装）
+	LiveReady bool
 	// Subs 是合并后的字幕清单（外挂/导入/内嵌），详情页与播放页共用
 	Subs []SubDTO
 }
@@ -748,11 +863,13 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 	}
 	d := s.toDTO(*it)
 	data := pageData{
-		Title:     s.cfg.UI.Title,
-		Theme:     s.cfg.UI.Theme,
-		Item:      &d,
-		AudioHint: audioHint(it.RelPath, it.Container),
-		Subs:      s.subsFor(*it),
+		Title:      s.cfg.UI.Title,
+		Theme:      s.cfg.UI.Theme,
+		Item:       &d,
+		AudioHint:  audioHint(it.RelPath, it.Container),
+		AudioReady: s.tc.Has(id),
+		LiveReady:  ffmpegReady(),
+		Subs:       s.subsFor(*it),
 	}
 	// 转码缓存已就绪：?web=1 会自动命中它，无声提示就不用了
 	if s.tc.Has(id) {

@@ -51,13 +51,21 @@ a{color:inherit;text-decoration:none}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .bar .title small{font-weight:400;color:var(--text-3);margin-left:8px}
+/* 实时转码模式：播放器自己的时间轴只覆盖本次会话窗口，全片进度看这一行 */
+.livepos{
+  margin-left:auto;font-size:12.5px;color:var(--text-2);letter-spacing:.02em;
+  padding:6px 12px;border-radius:999px;background:rgba(14,15,19,.6);
+  border:1px solid rgba(255,255,255,.12);white-space:nowrap;
+}
+.livepos[hidden]{display:none}
+.livepos b{color:var(--gold);font-weight:600}
 
 /* 播放器：桌面占满可视区宽度上限，小屏贴边 */
 main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
 #player{aspect-ratio:16/9;width:100%;border-radius:12px;overflow:hidden;
   border:1px solid var(--line);background:#000}
 
-/* 提示条：音轨警告 / 静音起播提示，出现在播放器下方 */
+/* 提示条：音轨警告，出现在播放器下方 */
 .notice{
   margin:14px 0 0;padding:11px 16px;border-radius:10px;
   font-size:13.5px;line-height:1.8;color:var(--text-2);
@@ -82,21 +90,20 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
     返回
   </a>
   <div class="title">{{.Item.Title}}{{if .Item.Year}}<small>{{.Item.Year}}</small>{{end}}</div>
+  <div class="livepos" id="livepos" hidden></div>
 </header>
 
 <main>
   <div id="player"></div>
   {{if eq .AudioHint "bad"}}
   <div class="notice warn" id="hint">
-    这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码——浏览器内核不带这种解码器，
-    表现就是<b>画面正常但没有声音</b>。可以回详情页点<b>「转换音轨」</b>（转一次即可，
-    之后网页播放直接出声），或用「mpv 播放」交给本地播放器。
+    这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码，浏览器解不了（画面正常但没声音）。
+    页面会自动用转码模式播放；也可以回详情页「mpv 播放」交给本地播放器。
   </div>
   {{else if eq .AudioHint "maybe"}}
   <div class="notice warn" id="hint">
-    音轨为 <b>AC3 / EAC3</b>，包括 Edge 在内的浏览器在 MKV 里都解不了。
-    回详情页点<b>「转换音轨」</b>（转一次即可，之后网页播放直接出声），
-    或用「mpv 播放」交给本地播放器。
+    音轨为 <b>AC3 / EAC3</b>，浏览器在 MKV 里解不了（画面正常但没声音）。
+    页面会自动用转码模式播放；也可以回详情页「mpv 播放」交给本地播放器。
   </div>
   {{else}}
   <div class="notice" id="hint" hidden></div>
@@ -109,10 +116,19 @@ const ITEM = "{{.Item.ID}}";
 const SUBS = [
 {{range .Subs}}{{if .URL}}{lang:"{{.Lang}}",label:"{{.Label}}",url:"{{.URL}}"},{{end}}{{end}}
 ];
-let art = null, lastSave = 0;
+// 两种转码模式就绪情况：预转码=音轨已提前转好；实时=ffmpeg 可用
+const PRE_READY  = {{if .AudioReady}}true{{else}}false{{end}};
+const LIVE_READY = {{if .LiveReady}}true{{else}}false{{end}};
+const RESUME_MS  = parseInt("{{.Item.PositionMS}}", 10) || 0;
+const DURATION_MS= parseInt("{{.Item.DurationMS}}", 10) || 0;
 
-const langLabel = l => ({chs:'简体中文', cht:'繁體中文', eng:'English',
-  jpn:'日本語', kor:'한국어'}[l] || l);
+let art = null;
+let mode = 'native';      // native / pre / live
+let base = 0;             // 实时模式下本次会话的起播秒数（时间轴基准）
+let subBase = 0;          // 字幕基准偏移：实时模式下 = -base
+let audioEl = null;       // 预转码模式的声音来源
+let lastSave = 0;
+let restarting = false;
 
 const hintEl = document.getElementById('hint');
 function showHint(html){
@@ -121,44 +137,62 @@ function showHint(html){
   hintEl.innerHTML = html;
 }
 
+/* ---------- 时间轴 ---------- */
+const clock = s => {
+  s = Math.max(0, Math.floor(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  const mm = String(m).padStart(2, '0'), ss = String(x).padStart(2, '0');
+  return h ? h + ':' + mm + ':' + ss : mm + ':' + ss;
+};
+// 实时模式的时间轴从会话起播点算起，对外（进度上报）要加回 base
+const curPos = () => (mode === 'live' ? base : 0) + (art && art.video ? art.video.currentTime : 0);
+const curDur = () => DURATION_MS ? DURATION_MS / 1000
+                                : (art && art.video ? art.video.duration : 0);
+
 function saveProgress(){
-  if (!art || !art.video || !art.video.duration) return;
+  if (!art || !art.video || !curDur()) return;
   fetch('/api/progress', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       item_id: ITEM,
-      position_ms: Math.round(art.video.currentTime * 1000),
-      duration_ms: Math.round(art.video.duration * 1000),
+      position_ms: Math.round(curPos() * 1000),
+      duration_ms: Math.round(curDur() * 1000),
     })}).catch(()=>{});
 }
 
-const opts = {
-  container: '#player',
-  // web=1：有转码缓存（AAC 音轨）时服务端自动返回转码版
-  url: '/stream/' + ITEM + '?web=1',
-  autoplay: true,
-  setting: true,
-  playbackRate: true,
-  aspectRatio: true,
-  fullscreen: true,
-  pip: true,
-  hotkey: true,
-};
-{{if .Item.Poster}}opts.poster = "{{.Item.Poster}}";{{end}}
-art = new Artplayer(opts);
+/* ---------- 播放方式 ---------- */
+const MODE_KEY = 'litems.playmode';
+const MODE_LABEL = {auto:'自动', pre:'预转码', live:'实时转码'};
+function pickMode(){
+  const pref = localStorage.getItem(MODE_KEY) || 'auto';
+  if (pref === 'pre' && PRE_READY) return 'pre';
+  if (pref === 'live' && LIVE_READY) return 'live';
+  if (PRE_READY) return 'pre';
+  if (LIVE_READY) return 'live';
+  return 'native';
+}
 
-// 字幕状态：切换字幕源时 ArtPlayer 会重建 <track>，偏移与开关都得自己记住再套回去。
+function loadHLS(){
+  if (window.Hls) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = '/vendor/hls.js';
+    s.onload = res;
+    s.onerror = () => rej(new Error('hls.js 加载失败'));
+    document.head.appendChild(s);
+  });
+}
+
+/* ---------- 字幕 ---------- */
+// 切换字幕源时 ArtPlayer 会重建 <track>，偏移与开关都得自己记住再套回去。
 let subOffset = 0;
 let subOn = true;
-art.on('subtitleLoad', () => {
-  if (subOffset) applyOffset(subOffset);
-  if (!subOn) setSubVisible(false);
-});
 
 // 偏移实现同内核：把 cue 的原始时间打点后整体平移，换语言重载时重新打点。
+// subBase 用来把「绝对字幕时间」对上「会话相对时间」——实时模式换起播点时用。
 function applyOffset(sec){
   const cues = art.subtitle.cues;
   if (!cues.length) return;
-  const dur = Number.isFinite(art.duration) ? art.duration : 1e9;
+  const dur = mode === 'live' ? 1e9 : (Number.isFinite(art.duration) ? art.duration : 1e9);
   for (const c of cues){
     if (c.originalStartTime == null){
       c.originalStartTime = c.startTime;
@@ -178,126 +212,318 @@ function setSubVisible(on){
   if (on) setTimeout(() => art.subtitle.update(), 60);
 }
 
-const resume = parseInt("{{.Item.PositionMS}}", 10);
-if (resume > 30000) {
-  art.on('ready', () => { art.currentTime = resume / 1000; });
-}
+/* ---------- 预转码模式：原视频（静音）+ AAC 音轨 ---------- */
+function setupPreAudio(){
+  audioEl = new Audio('/audio/' + ITEM);
+  audioEl.preload = 'auto';
+  const v = art.video;
 
-// 自动播放被拦就停在暂停态，等用户点播放（用户手势，一定带声音）。
-// 不做「静音重试 + 提示去开音量」那套：既会被用户主动暂停误触发，也把
-// 有声播放变成静音播放，反而要人多找一次音量图标。
+  v.addEventListener('play', () => {
+    audioEl.currentTime = v.currentTime;
+    audioEl.play().catch(()=>{});
+  });
+  v.addEventListener('pause', () => audioEl.pause());
+  v.addEventListener('seeking', () => { audioEl.currentTime = v.currentTime; });
+  v.addEventListener('ratechange', () => { audioEl.playbackRate = v.playbackRate; });
 
-// 字幕：默认用扫描排序的第一条（[scrape].sub_langs 的偏好顺序）。
-// 必须走 art.subtitle.switch()——v5.4 里 art.subtitle 是 Subtitle 实例，
-// 直接赋值会把它整个替换成普通对象：字幕不加载、偏移项也跟着报错。
-const subURL = u => u + '&fmt=vtt';
-const subArgs = name => ({name, type: 'vtt', encoding: 'utf-8'});
+  // 音量/静音/倍速跟随播放器控件（ArtPlayer 操作的是 video 元素）
+  setInterval(() => {
+    audioEl.volume = v.volume;
+    audioEl.muted = v.muted;
+    if (audioEl.playbackRate !== v.playbackRate) audioEl.playbackRate = v.playbackRate;
+  }, 250);
 
-// 字幕字号：拖动条调节（12–44px），选择存 localStorage，跨条目、跨会话沿用。
-// 内核默认 20px 来自 --art-subtitle-font-size，这里用行内 font-size 覆盖。
-const SUB_SIZE_KEY = 'litems.subtitle.size';
-const subSize = (() => {
-  const v = parseInt(localStorage.getItem(SUB_SIZE_KEY) || '', 10);
-  return Number.isFinite(v) ? Math.min(44, Math.max(12, v)) : 20;
-})();
-const applySubSize = px => art.subtitle.style({'font-size': px + 'px'});
-applySubSize(subSize);
-
-if (SUBS.length) {
-  art.subtitle.switch(subURL(SUBS[0].url), subArgs(SUBS[0].label)).catch(()=>{});
-
-  // 字幕开关（内核没有内置项）
-  art.setting.add({
-    html: '字幕',
-    name: 'subtitle-toggle',
-    switch: true,
-    onSwitch(item){
-      subOn = !item.switch;
-      item.switch = subOn;
-      setSubVisible(subOn);
-      return subOn;
-    },
+  // 漂移校正：>250ms 硬对齐；50–250ms 用 ±3% 速率慢慢收，避免频繁跳变
+  v.addEventListener('timeupdate', () => {
+    if (audioEl.paused) return;
+    const d = audioEl.currentTime - v.currentTime;
+    const rate = v.playbackRate || 1;
+    if (Math.abs(d) > 0.25) audioEl.currentTime = v.currentTime;
+    else if (Math.abs(d) > 0.06) audioEl.playbackRate = rate * (d > 0 ? 0.97 : 1.03);
+    else audioEl.playbackRate = rate;
   });
 
-  // 语言选择：内嵌/导入/外挂统一在这里切换
-  if (SUBS.length > 1) {
+  // 万一原文件音轨其实能被解（说明本不需要转码），静音视频避免双声
+  setTimeout(() => {
+    if (v && !v.paused && v.webkitAudioDecodedByteCount > 0) v.muted = true;
+  }, 2500);
+}
+
+/* ---------- 实时转码模式：HLS 分段边转边发 ---------- */
+// 服务端按实时速度产出分段、只保留最近几分钟窗口。所以：
+// 1) 起播必须落在会话起点（否则会从「直播边缘」开始，白跳过十几秒）；
+// 2) 观众暂停时要让 ffmpeg 一起停，否则窗口会滑过他的位置，回来后全是 404。
+let liveTok = null;
+let liveBeat = null;
+
+function liveCtl(action){
+  if (mode !== 'live' || !liveTok) return;
+  fetch('/api/live/' + ITEM + '?ctl=' + action + '&token=' + liveTok,
+        {method:'POST'}).catch(()=>{});
+}
+function beatOn(){
+  beatOff();
+  liveBeat = setInterval(() => liveCtl('pause'), 20000);  // 暂停期间续命，别被会话回收
+}
+function beatOff(){
+  if (liveBeat){ clearInterval(liveBeat); liveBeat = null; }
+}
+
+function attachHls(video, url, a){
+  const hls = new Hls({maxBufferLength: 30, backBufferLength: 180});
+  hls.loadSource(url);
+  hls.attachMedia(video);
+  hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    try { video.currentTime = 0; } catch(e){}
+  });
+  art.hls = hls;
+  a.on('destroy', () => { try { hls.destroy(); } catch(e){} });
+}
+
+// 拖到还没转出来的位置（或已删掉的旧分段）时，从目标位置重新起流。
+// 实时模式的时间轴以「本次起播点」为 0，重启后 base 跟着变。
+async function restartLive(atSec){
+  if (restarting) return;
+  restarting = true;
+  try {
+    const j = await fetch('/api/live/' + ITEM + '?start=' + Math.max(0, Math.floor(atSec)))
+      .then(r => r.json());
+    if (!j.url) throw new Error(j.error || '起流失败');
+    base = j.start;
+    liveTok = j.token;
+    subBase = -base;
+    applyOffset(subBase + subOffset);
+
+    if (art.hls) { try { art.hls.destroy(); } catch(e){} art.hls = null; }
+    const v = art.video;
+    v.pause();
+    v.removeAttribute('src');
+    v.load();
+
+    const hls = new Hls({maxBufferLength: 30, backBufferLength: 180});
+    hls.loadSource(j.url);
+    hls.attachMedia(v);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      try { v.currentTime = 0; v.play().catch(()=>{}); } catch(e){}
+    });
+    art.hls = hls;
+  } catch (e) {
+    showHint('重新起流失败：' + e.message);
+  } finally {
+    setTimeout(() => { restarting = false; }, 800);
+  }
+}
+
+/* ---------- 启动 ---------- */
+async function boot(){
+  mode = pickMode();
+
+  const opts = {
+    container: '#player',
+    autoplay: true,
+    setting: true,
+    playbackRate: true,
+    aspectRatio: true,
+    fullscreen: true,
+    pip: true,
+    hotkey: true,
+  };
+  {{if .Item.Poster}}opts.poster = "{{.Item.Poster}}";{{end}}
+
+  if (mode === 'live'){
+    try {
+      await loadHLS();
+      const start = RESUME_MS > 30000 ? Math.floor(RESUME_MS / 1000) : 0;
+      const j = await fetch('/api/live/' + ITEM + '?start=' + start).then(r => r.json());
+      if (!j.url) throw new Error(j.error || '起流失败');
+      base = j.start;
+      liveTok = j.token;
+      subBase = -base;
+      opts.url = j.url;
+      opts.type = 'm3u8';
+      opts.customType = {m3u8: (video, url, a) => attachHls(video, url, a)};
+    } catch (e) {
+      // 实时转码起不来就退回原生播放（画面仍能出，只是可能没声音）
+      mode = 'native';
+      opts.url = '/stream/' + ITEM;
+      showHint('实时转码没能启动：' + e.message);
+    }
+  } else {
+    opts.url = '/stream/' + ITEM;
+  }
+
+  if (mode !== 'native') hintEl.hidden = true;   // 有转码兜住声音，就别再吓人
+
+  art = new Artplayer(opts);
+
+  art.on('subtitleLoad', () => {
+    if (subBase || subOffset) applyOffset(subBase + subOffset);
+    if (!subOn) setSubVisible(false);
+  });
+
+  // 续播：预转码/原生模式直接跳到位置；实时模式的起播点已经在会话里了
+  if (mode !== 'live' && RESUME_MS > 30000){
+    art.on('ready', () => { art.currentTime = RESUME_MS / 1000; });
+  }
+
+  if (mode === 'pre') setupPreAudio();
+
+  if (mode === 'live'){
+    // 拖到缓冲范围之外（还没转出来 / 已被清理）→ 重启会话
+    art.video.addEventListener('seeking', () => {
+      if (restarting || !art.video) return;
+      const v = art.video, b = v.buffered;
+      const end = b.length ? b.end(b.length - 1) : 0;
+      const startB = b.length ? b.start(0) : 0;
+      if (v.currentTime > end - 0.5 || v.currentTime < startB - 1.5){
+        restartLive(base + v.currentTime);
+      }
+    });
+    // ffmpeg 跟着暂停/继续，窗口才不会滑过观众的位置
+    art.video.addEventListener('pause', () => { if (!restarting){ liveCtl('pause'); beatOn(); saveProgress(); } });
+    art.video.addEventListener('playing', () => { liveCtl('resume'); beatOff(); });
+
+    // 播放器自带的时间轴只覆盖本次会话（窗口就几分钟），数字容易让人以为
+    // 这是个一分钟的短片；改成右上角显示全片进度，控件里的时间读数去掉。
+    try { art.controls.remove('time'); } catch(e){}
+    const lp = document.getElementById('livepos');
+    if (lp){
+      lp.hidden = false;
+      const tick = () => {
+        if (!art || !art.video) return;
+        lp.innerHTML = '实时转码 · <b>' + clock(base + (art.video.currentTime || 0)) + '</b>'
+                     + (DURATION_MS ? ' / ' + clock(DURATION_MS / 1000) : '');
+      };
+      tick();
+      setInterval(tick, 1000);
+    }
+  }
+
+  /* 字幕：默认第一条（[scrape].sub_langs 的偏好顺序） */
+  const subURL = u => u + '&fmt=vtt';
+  const subArgs = name => ({name, type: 'vtt', encoding: 'utf-8'});
+
+  // 字号：拖动条调节（12–44px），存 localStorage 跨条目沿用
+  const SUB_SIZE_KEY = 'litems.subtitle.size';
+  const subSize = (() => {
+    const v = parseInt(localStorage.getItem(SUB_SIZE_KEY) || '', 10);
+    return Number.isFinite(v) ? Math.min(44, Math.max(12, v)) : 20;
+  })();
+  const applySubSize = px => art.subtitle.style({'font-size': px + 'px'});
+  applySubSize(subSize);
+
+  if (SUBS.length) {
+    art.subtitle.switch(subURL(SUBS[0].url), subArgs(SUBS[0].label)).catch(()=>{});
+
     art.setting.add({
-      html: '字幕语言',
-      width: 220,
-      tooltip: SUBS[0].label,
-      selector: SUBS.map((s, i) => ({html: s.label, url: s.url, default: i === 0})),
+      html: '字幕',
+      name: 'subtitle-toggle',
+      switch: true,
+      onSwitch(item){
+        subOn = !item.switch;
+        item.switch = subOn;
+        setSubVisible(subOn);
+        return subOn;
+      },
+    });
+
+    if (SUBS.length > 1) {
+      art.setting.add({
+        html: '字幕语言',
+        width: 220,
+        tooltip: SUBS[0].label,
+        selector: SUBS.map((s, i) => ({html: s.label, url: s.url, default: i === 0})),
+        onSelect(item){
+          art.subtitle.switch(subURL(item.url), subArgs(item.html)).catch(()=>{});
+          return item.html;
+        },
+      });
+    }
+
+    art.setting.add({
+      html: '字幕大小',
+      name: 'subtitle-size',
+      tooltip: subSize + 'px',
+      range: [subSize, 12, 44, 1],
+      onChange(item){
+        const px = Math.round(item.range[0]);
+        applySubSize(px);
+        localStorage.setItem(SUB_SIZE_KEY, px);
+        return px + 'px';
+      },
+    });
+
+    art.setting.add({
+      html: '字幕偏移',
+      name: 'subtitle-offset-custom',
+      tooltip: '0s',
+      range: [0, -10, 10, 0.1],
+      onChange(item){
+        subOffset = item.range[0];
+        applyOffset(subBase + subOffset);
+        return subOffset + 's';
+      },
+    });
+  }
+
+  /* 播放方式：两种模式都是一等功能，选完刷新页面生效 */
+  if (PRE_READY || LIVE_READY){
+    const pref = localStorage.getItem(MODE_KEY) || 'auto';
+    const optsList = [];
+    if (PRE_READY) optsList.push({html:'预转码（不耗 CPU）', value:'pre'});
+    if (LIVE_READY) optsList.push({html:'实时转码（不占磁盘）', value:'live'});
+    art.setting.add({
+      html: '播放方式',
+      name: 'play-mode',
+      width: 240,
+      tooltip: MODE_LABEL[pref] || '自动',
+      selector: optsList.map(o => ({...o, default: o.value === mode})),
       onSelect(item){
-        art.subtitle.switch(subURL(item.url), subArgs(item.html)).catch(()=>{});
+        localStorage.setItem(MODE_KEY, item.value);
+        location.reload();
         return item.html;
       },
     });
   }
 
-  // 字幕大小：onChange 绑的是 input 事件，拖动过程中实时生效
-  art.setting.add({
-    html: '字幕大小',
-    name: 'subtitle-size',
-    tooltip: subSize + 'px',
-    range: [subSize, 12, 44, 1],
-    onChange(item){
-      const px = Math.round(item.range[0]);
-      applySubSize(px);
-      localStorage.setItem(SUB_SIZE_KEY, px);
-      return px + 'px';
-    },
+  /* 进度上报：播放中节流 10s，暂停/播完立刻存；离页用 sendBeacon */
+  art.on('video:timeupdate', () => {
+    const now = Date.now();
+    if (now - lastSave > 10000) { lastSave = now; saveProgress(); }
+  });
+  art.on('video:pause', saveProgress);
+  art.on('video:ended', saveProgress);
+  window.addEventListener('pagehide', () => {
+    if (!art || !art.video || !curDur()) return;
+    navigator.sendBeacon('/api/progress', new Blob([JSON.stringify({
+      item_id: ITEM,
+      position_ms: Math.round(curPos() * 1000),
+      duration_ms: Math.round(curDur() * 1000),
+    })], {type: 'application/json'}));
   });
 
-  // 字幕偏移：范围 -10s ~ +10s，步进 0.1s。内核自带的同名项固定排在内置区，
-  // 只能落在「字幕」上面，这里自己加一项，三项才按「开关 → 语言 → 偏移」排下来。
-  art.setting.add({
-    html: '字幕偏移',
-    name: 'subtitle-offset-custom',
-    tooltip: '0s',
-    range: [0, -10, 10, 0.1],
-    onChange(item){
-      subOffset = item.range[0];
-      applyOffset(subOffset);
-      return subOffset + 's';
-    },
+  art.on('video:error', () => {
+    showHint('浏览器解码不了这个文件。请回详情页用「mpv 播放」交给本地播放器——它不挑编码。');
   });
+
+  // 顶栏：播放时鼠标（或触摸）不动 2.6s 后淡出，动了再出现
+  const bar = document.getElementById('bar');
+  let barTimer;
+  window.wakeBar = function(){
+    bar.classList.remove('hide');
+    clearTimeout(barTimer);
+    barTimer = setTimeout(() => {
+      if (art && art.video && !art.video.paused) bar.classList.add('hide');
+    }, 2600);
+  };
+  document.addEventListener('mousemove', wakeBar);
+  document.addEventListener('touchstart', wakeBar, {passive:true});
+  art.on('video:play', wakeBar);
+  art.on('video:pause', wakeBar);
+  wakeBar();
 }
 
-// 进度上报：播放中节流 10s，暂停/播完立刻存；离页用 sendBeacon
-art.on('video:timeupdate', () => {
-  const now = Date.now();
-  if (now - lastSave > 10000) { lastSave = now; saveProgress(); }
-});
-art.on('video:pause', saveProgress);
-art.on('video:ended', saveProgress);
-window.addEventListener('pagehide', () => {
-  if (!art || !art.video || !art.video.duration) return;
-  navigator.sendBeacon('/api/progress', new Blob([JSON.stringify({
-    item_id: ITEM,
-    position_ms: Math.round(art.video.currentTime * 1000),
-    duration_ms: Math.round(art.video.duration * 1000),
-  })], {type: 'application/json'}));
-});
-
-// 解码失败：文件整个打不开时才走这里；音轨解不了不会触发（见下方说明）
-art.on('video:error', () => {
-  showHint('浏览器解码不了这个文件。请回详情页用「mpv 播放」交给本地播放器——它不挑编码。');
-});
-
-// 顶栏：播放时鼠标（或触摸）不动 2.6s 后淡出，动了再出现
-const bar = document.getElementById('bar');
-let barTimer;
-function wakeBar(){
-  bar.classList.remove('hide');
-  clearTimeout(barTimer);
-  barTimer = setTimeout(() => {
-    if (art && !art.video.paused) bar.classList.add('hide');
-  }, 2600);
-}
-document.addEventListener('mousemove', wakeBar);
-document.addEventListener('touchstart', wakeBar, {passive:true});
-art.on('video:play', wakeBar);
-art.on('video:pause', wakeBar);
-wakeBar();
+boot();
 </script>
 </body>
 </html>

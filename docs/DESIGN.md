@@ -7,7 +7,7 @@ title: DESIGN
 > 一个跑在 Termux 上的轻量媒体库服务器：负责刮削、索引、文件服务；
 > 播放交给 PC 上的本地播放器。
 >
-> 文档版本：v2.14　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
+> 文档版本：v2.15　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
 
 ---
 
@@ -1253,28 +1253,60 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 - 换语言会重建 `<track>` 元素，偏移与开关状态存在元素/实例上会丢：自己记 `subOffset`/`subOn`，
   在 `subtitleLoad` 里重新套用
 
-### 10.9 音轨转码（v2.8）
+### 10.9 音轨转码（v2.8 起，v2.15 拆成两种模式）
 
 浏览器内核只带 AAC/MP3/FLAC/Opus 解码器，EAC3/DTS/TrueHD 一律解不了——画面正常、
 无声、零报错（实测 EAC3 在 MKV 里连 Edge 的 Dolby 解码器都不生效，MKV 走 Chromium
 内置 demuxer，音轨在这一层就被丢了）。**客户端转码不可行**（WebCodecs 的解码器集合
 与 `<video>` 相同；ffmpeg.wasm 体积与性能都不现实），要出声只能服务端转。
 
-- 依赖：`pkg install ffmpeg`（Termux）；未安装时启动接口报错引导
-- 命令：`ffmpeg -i src -map 0:v:0 -map 0:a:0? -map 0:s? -c:v copy -c:a aac -b:a 320k
-  -c:s copy -progress pipe:1 -f matroska <cache>/<id>.mkv.part`
-  视频原样复制（画质无损、CPU 几乎为零），实际耗时全部在音频 AAC 编码，
-  2 小时片约 15 分钟（手机端实测）
-- 缓存：`<database 目录>/transcode/<id>.mkv`——$HOME 私有存储，不进媒体库、
-  不会被扫描捡走。完成时 rename 原子落位；启动时清残留 .part；缓存 mtime 对齐源文件
-- 播放：`/stream/{id}?web=1` 有缓存优先返回转码版（完整文件，Range/拖进度正常），
-  播放页固定走它；转码完成后播放页的无声提示自动消失
-- 状态：只存内存 + 以缓存文件存在为准（服务重启后 done 依然成立）；
-  同一时刻只跑一个任务；源文件更新过（mtime 更新）则重转
-- UI：**详情页**「转换音轨」按钮（audioHint 命中 bad/maybe 时显示）+ 进度条
-  （`/api/transcode/{id}` 轮询，2s 间隔）；播放页不放按钮和进度
+原实现是「整片转码缓存一份」（视频流也复制一遍），一部 2 小时片多占 4.2GB。现在拆成
+两种模式，各有各的代价，播放页右上角可切换（`litems.playmode`，默认 auto：
+有预转码音轨就用预转码，否则用实时转码）：
+
+| | 预转码（pre） | 实时转码（live） |
+|---|---|---|
+| 产出 | 只存一条 AAC 音轨 `.m4a`（约 400MB/2h） | HLS 分段，滑动窗口约 3 分钟（几十 MB） |
+| 磁盘 | 一次性占 1/6 部片 | 边看边删，看完即空 |
+| 播放 | 原文件视频 + `<audio>` 音轨双流同步 | hls.js + MSE，音视频同一时间轴 |
+| CPU | 转码时一次性（约 9 分钟/2h） | 播放期间约 6% 单核 |
+| 拖进度 | 原生 Range，最稳 | 超出窗口就重启 ffmpeg（约 1–2 秒） |
+
+**预转码（sidecar）**：`ffmpeg -i src -map 0:a:0? -vn -c:a aac -b:a <按声道> -f mp4`，
+产物 `<database 目录>/transcode/<id>.m4a`；`/audio/{id}` 提供它（Range 支持），
+播放页 `<video>` 只播画面、`<audio>` 出声，漂移 >250ms 硬对齐、50–250ms 用 ±3%
+速率收敛，音量/静音/倍速跟随。视频流零拷贝，所以画质与网络都是原样。
+**绝不能改写原文件**（qbt 在做种，哈希一变就废）。
+
+**实时转码（Direct Stream，Jellyfin 同款思路）**：
+`ffmpeg -ss <start> -readrate 1 -readrate_initial_burst 16 -i src -map 0:v:0 -map 0:a:0
+-c:v copy -tag:v hvc1 -c:a aac -b:a <按声道> -ac <声道> -f hls -hls_time 4
+-hls_segment_type fmp4 -hls_list_size 45 -hls_flags delete_segments -var_stream_map ...`
+
+- `-readrate 1`：**必须**是实时速度。比这更快，ffmpeg 会跑到观众前面，滑动窗口一过
+  他当前位置的分段就没了；`-readrate_initial_burst 16` 让开头 16 秒全速读完，起播不用干等
+- 滑动窗口只能靠 `-hls_list_size` + `-hls_flags delete_segments`：**不能带
+  `-hls_playlist_type event`**，event 会忽略 list_size、把所有分段留在列表里，
+  自己删文件就变成播放列表指向 404
+- 音视频必须分成两条 rendition（`-var_stream_map`）：Chromium 的 MSE 不接受把带音轨的
+  muxed init 塞进单个 SourceBuffer，init 一 append 就报 parsing failed
+- `-ac` **必须显式给**：源是 5.1(side) 这类布局时 ffmpeg 默认往 AudioSpecificConfig 写
+  `channelConfig=0`（要求解码器读 PCE），Chromium 解析不了，音频 init append 直接失败。
+  给 `-ac` 后写标准 channelConfig 才收。8 声道（7.1）AAC 无标准配置，统一降到 6
+- `-tag:v hvc1`：Chromium 的 MSE 只认 hvc1 这个 sample entry，ffmpeg 默认写 hev1，
+  会直接 MEDIA_ERR_SRC_NOT_SUPPORTED
+- master.m3u8 自己生成（ffmpeg 的不带 CODECS，hls.js 不知道给 MSE 什么 mime）；
+  编码串从 init 段的 `hvcC`/`avcC` 解析，保证与码流自洽
+- ffmpeg 进程随播放暂停（`?ctl=pause|resume` 发 SIGSTOP/SIGCONT）：观众按暂停时
+  如果照跑，窗口会滑过去，回来全 404；暂停期间前端每 20 秒心跳续命，避免会话被回收
+- 播放器时间轴只是本次会话窗口，控件里的时间读数容易误读成「一分钟短片」，
+  所以去掉 `time` 控件，右上角另显示全片进度（`base + currentTime` / 总时长）
+
+- 依赖：`pkg install ffmpeg`（Termux）；未安装时接口报错引导
+- 码率：按声道数 64kbps/声道（Jellyfin 口径），夹 128k–640k；5.1 → 384k
+- 状态：只存内存 + 以文件存在为准；同一时刻只跑一个预转码任务；源更新过则重转
+- UI：**详情页**「转换音轨」按钮 + 进度条（只在 audioHint 命中时显示），播放页不见按钮
 - 诊断工具：`mkvprobe/` 纯 Go EBML 解析，打印容器内真实音轨 CodecID/声道/语言
-  （文件名标签可能缺失或不准，如本例文件名无 EAC3 但目录名有）
 
 ---
 
