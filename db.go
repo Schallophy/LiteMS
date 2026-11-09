@@ -214,20 +214,20 @@ func SearchKey(title, original, relPath string) string {
 	add(foldForCompare(original))
 	add(foldForCompare(relPath))
 	// 拼音只取标题与原名：文件名基本是英文，转拼音没有信息量还撑大键
-	full, initials := pinyinParts(title)
-	add(full)
-	add(initials)
+	for _, p := range pinyinVariants(title) {
+		add(p)
+	}
 	if original != title {
-		full, initials := pinyinParts(original)
-		add(full)
-		add(initials)
+		for _, p := range pinyinVariants(original) {
+			add(p)
+		}
 	}
 	return strings.Join(parts, "|")
 }
 
 // searchKeyVersion 是搜索键格式版本：键内容（字段集合）变过就靠它触发全量重算，
-// 不能只看空值——旧格式的键非空，但缺了新增字段。v3：加入拼音全拼与首字母。
-const searchKeyVersion = "3"
+// 不能只看空值——旧格式的键非空，但缺了新增字段。v4：多音字展开全拼/首字母。
+const searchKeyVersion = "4"
 
 // migrateSearchKey 给老库补 search_key 列并按当前格式全量回填。
 // 走 ALTER 而不是升 SchemaVersion：升版本会整库删除，观看进度也一起没了，

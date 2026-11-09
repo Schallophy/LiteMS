@@ -51,10 +51,13 @@ func TestSearchFolded(t *testing.T) {
 		{"zzz", 0},
 		{"捕风", 1},
 		{"不存在", 0},
-		// 拼音：全拼与首字母
+		// 拼音：全拼、首字母、多音字变体
 		{"ailezhicheng", 1},
 		{"ALZC", 1},
 		{"aile", 1},        // 前缀命中
+		{"aiyue", 1},       // 乐 的第二读音 yuè
+		{"aiyuezhicheng", 1},
+		{"ayzc", 1},
 		{"bufengzhuiying", 1},
 		{"bfzy", 1},
 		{"ai le zhi cheng", 1},
@@ -125,20 +128,28 @@ func TestSearchKeyMigration(t *testing.T) {
 
 // SearchKey 的形态：各段去重后以 | 连接（标题、原名、文件名、拼音全拼、首字母）。
 func TestSearchKeyShape(t *testing.T) {
+	// 乐 有 lè/yuè、之 有 zhī/zhū 两读：全拼与首字母按笛卡尔积展开，
+	// 主题读音（ailezhicheng/alzc）与 aiyue 变体都要在键里
 	got := SearchKey("爱乐之城", "La La Land", "La.La.Land.2016.mkv")
-	want := "爱乐之城|lalaland|lalaland2016mkv|ailezhicheng|alzc"
+	want := "爱乐之城|lalaland|lalaland2016mkv|ailezhicheng|ailezhucheng|aiyuezhicheng|aiyuezhucheng|alzc|ayzc"
 	if got != want {
 		t.Errorf("SearchKey = %q, want %q", got, want)
 	}
-	// 标题与原名相同：拼音段也不重复
-	if got := SearchKey("捕风追影", "捕风追影", "shadow.mkv"); got != "捕风追影|shadowmkv|bufengzhuiying|bfzy" {
-		t.Errorf("同名应去重: %q", got)
+	// 追 有 zhuī/duī/tuī 三读：只校验包含，不锁死全量顺序
+	got = SearchKey("捕风追影", "捕风追影", "shadow.mkv")
+	for _, part := range []string{"捕风追影", "shadowmkv", "bufengzhuiying", "bfzy"} {
+		if !strings.Contains(got, part) {
+			t.Errorf("SearchKey 缺少 %q: %q", part, got)
+		}
+	}
+	if strings.Count(got, "捕风追影") != 1 {
+		t.Errorf("标题段应去重: %q", got)
 	}
 	// 纯英文标题不产首字母噪音
 	if got := SearchKey("Some Film", "", ""); got != "somefilm" {
 		t.Errorf("纯英文不应有首字母段: %q", got)
 	}
-	if got := SearchKey("某 片", "", ""); got != "某片|moupian|mp" {
+	if got := SearchKey("某 片", "", ""); got != "某片|meipan|meipian|moupan|moupian|mp" {
 		t.Errorf("SearchKey = %q", got)
 	}
 }
