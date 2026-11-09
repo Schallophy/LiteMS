@@ -291,8 +291,25 @@ func SubtitleLang(name string) string {
 			return c
 		}
 	}
+	// 形如 [zmk.pw]..._track6_[chi].srt / film(chs).srt / film-chs.srt
+	// 发布组很爱把语言塞进方括号或跟在分隔符后面，只按点分段会漏掉。
+	for _, re := range []*regexp.Regexp{reLangBracket, reLangSuffix} {
+		ms := re.FindAllStringSubmatch(stem, -1)
+		for i := len(ms) - 1; i >= 0; i-- {
+			if c := strings.ToLower(ms[i][1]); subLangs[c] {
+				return c
+			}
+		}
+	}
 	return ""
 }
+
+// reLangBracket 匹配 [chi]、(chs) 这类被括号包住的标记；
+// reLangSuffix 匹配 _chi、-eng 这类跟在分隔符后面的标记。
+var (
+	reLangBracket = regexp.MustCompile(`[\[\(]([a-zA-Z]{2,3})[\]\)]`)
+	reLangSuffix  = regexp.MustCompile(`[_\-]([a-zA-Z]{2,3})(?:[_\-.]|$)`)
+)
 
 // NormalizeLang 把常见写法收敛成三字母码，便于按 sub_langs 排序。
 func NormalizeLang(l string) string {

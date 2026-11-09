@@ -86,6 +86,13 @@ func TestSubtitleLang(t *testing.T) {
 		"Show.S01E01.eng.vtt":   "eng",
 		"some.other.file.srt":   "",
 		"movie.srt":             "",
+		// 发布组的方括号写法：之前完全识别不出来，默认字幕因此落到「未标注」
+		"[zmk.pw]The.Shadow's.Edge.2025.1080p.BluRay.x264.TrueHD.7.1.Atmos-ParkHD_track6_[chi].srt": "chi",
+		"movie[eng].srt":       "eng",
+		"movie(chs).srt":       "chs",
+		"movie-eng.srt":        "eng",
+		"movie_kor_forced.srt": "kor",
+		"The.Shadow's.Edge.2025.1080p.BluRay.x264.srt": "",
 	}
 	for in, want := range cases {
 		if got := SubtitleLang(in); got != want {

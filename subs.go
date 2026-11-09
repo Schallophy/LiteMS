@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,6 +93,17 @@ func (s *Server) subsFor(it Item) []SubDTO {
 	}
 	out = append(out, s.importedSubs(it)...)
 	out = append(out, s.embeddedSubs(it)...)
+	// 按 [scrape].sub_langs 的偏好排，同优先级里内嵌优先：内嵌轨和视频在同一个
+	// 容器里、共用一条时间基，天然严丝合缝；外挂和导入的字幕本身就可能带偏移，
+	// 拿它当默认很容易让人以为是播放器对不齐。
+	sort.SliceStable(out, func(i, j int) bool {
+		ri := langRank(out[i].Lang, s.cfg.Scrape.SubLangs)
+		rj := langRank(out[j].Lang, s.cfg.Scrape.SubLangs)
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i].Src == "embedded" && out[j].Src != "embedded"
+	})
 	return out
 }
 
