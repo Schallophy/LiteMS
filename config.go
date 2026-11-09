@@ -44,6 +44,11 @@ type LibraryConfig struct {
 	ExtraRoots []string `toml:"extra_roots"`
 	VideoExt   []string `toml:"video_ext"`
 	SubExt     []string `toml:"sub_ext"`
+	// FollowFileSymlinks 允许把「指向普通文件的符号链接」当作媒体条目。
+	// 默认关闭（文档 6.5）：跟随链接会带来重复计数与成环的风险。
+	// 打开后仍然只跟随文件链接，目录链接一律不进——
+	// 这样「下载目录留在原处做种、库这边放链接」的布局才能被索引到。
+	FollowFileSymlinks bool `toml:"follow_file_symlinks"`
 }
 
 type DatabaseConfig struct {

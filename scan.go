@@ -113,7 +113,15 @@ func (s *Scanner) walkRoot(idx int, root string, existing map[string]Snapshot) e
 			return nil
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
-			return nil // 文档 6.5：不跟随符号链接
+			if !s.cfg.Library.FollowFileSymlinks {
+				return nil // 文档 6.5：默认不跟随符号链接
+			}
+			// 只跟随指向普通文件的链接。目录链接一律跳过：
+			// 跟随目录可能成环，而库里的目录本来就该是实体目录。
+			fi, statErr := os.Stat(path)
+			if statErr != nil || fi.IsDir() || !fi.Mode().IsRegular() {
+				return nil
+			}
 		}
 		ext := strings.ToLower(filepath.Ext(d.Name()))
 		if !IsExtIn(ext, s.cfg.Library.VideoExt) {
@@ -135,7 +143,9 @@ func (s *Scanner) handleVideo(rootIdx int, root, path string, d fs.DirEntry, exi
 	key := fmt.Sprintf("%d:%s", rootIdx, rel)
 	s.seen[key] = true
 
-	info, err := d.Info()
+	// 用 os.Stat 而不是 d.Info()：d.Info() 对符号链接返回链接自身的信息
+	// （大小等于路径长度、mtime 是建链接的时间），增量判定会全部算错。
+	info, err := os.Stat(path)
 	if err != nil {
 		warnf("stat 失败：%s（%v）", path, err)
 		s.stats.Failed++

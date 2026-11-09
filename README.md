@@ -123,6 +123,48 @@ litems launch --player mpv
 
 解析规则：**先抽年份/季集，再清洗发布标记**。顺序反过来会把 `(2014)` 当噪声删掉——这是本项目最容易写错的一处地方。
 
+## 与 qBittorrent 共存（做种不受影响）
+
+典型需求：qbt 下片并做种，litems 负责索引与播放。这两件事能同时成立，但**不能让 litems 往下载目录写文件**——
+它会在视频旁边生成 `.nfo`、`poster.jpg`、`fanart.jpg`，而那个目录正被 qbt 用于做种。
+
+目录这样摆：
+
+```
+~/Downloads/<种子>/...          qbt 独占，做种用；litems 一个字节都不写
+~/Media/下载/<种子>/...   ->     上面那些文件，符号链接
+~/Media/下载/<种子>/*.nfo       litems 写在这里（链接的旁边，不是原文件旁边）
+```
+
+配置只要一行：
+
+```toml
+[library]
+follow_file_symlinks = true   # 只跟随「指向普通文件」的链接；目录链接依旧不进，不会成环
+```
+
+然后把下载完成钩子挂到 qbt 上：
+
+```bash
+mkdir -p ~/.local/bin
+cp hooks/qbt-done.sh ~/.local/bin/ && chmod +x ~/.local/bin/qbt-done.sh
+```
+
+qBittorrent → 设置 → 下载 → 勾选「下载完成时运行外部程序」，命令填：
+
+```
+/data/data/com.termux/files/home/.local/bin/qbt-done.sh %F %N
+```
+
+钩子做三件事：在库里建符号链接 → `litems scan` → 配了凭据就 `scrape`。日志在 `~/litems-qbt-hook.log`。
+
+**三个前提与后果**：
+
+- 硬链接不可用。这台设备上 `link()` 被 SELinux 拦掉，同一目录里 `ln` 都是 `Permission denied`，
+  所以只能用符号链接；文件仍然只有一份，不占双倍空间。
+- 删掉库里的链接**不影响做种**；删掉 `~/Downloads` 里的原文件，库里的条目就变成断链。
+- qbt 的保存目录必须留在库外。若把保存目录设成 `~/Media/...`，litems 就会往正在做种的目录里写侧车文件。
+
 ## 开发
 
 ```bash
