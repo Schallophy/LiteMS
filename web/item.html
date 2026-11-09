@@ -79,7 +79,7 @@ a{color:inherit;text-decoration:none}
   stroke-linecap:round;stroke-linejoin:round}
 
 .inner{position:relative;z-index:2;display:flex;align-items:flex-end;
-  gap:clamp(20px,3vw,40px);padding-bottom:44px}
+  gap:clamp(20px,3vw,40px);padding:76px 0 44px}
 .poster{
   position:relative;width:200px;flex:0 0 200px;aspect-ratio:2/3;
   border-radius:var(--radius);overflow:hidden;background:#14161c;
@@ -369,9 +369,9 @@ function tcRender(j){
       if (!tcTimer) tcTimer = setInterval(tcPoll, 2000);
       break;
     case 'done':
+      // 不再展示「转换完成」文案，按钮状态本身就是结果
       tcbtn.disabled = true; tcbtn.textContent = '音轨已转换';
-      tcbox.hidden = false; tcbar.style.width = '100%';
-      tcmsg.textContent = '转换完成——「网页播放」现在可以出声了';
+      tcbox.hidden = true;
       clearInterval(tcTimer); tcTimer = null;
       break;
     case 'error':
