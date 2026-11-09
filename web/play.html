@@ -211,15 +211,26 @@ function loadHLS(){
 
 /* ---------- 字幕 ---------- */
 // 切换字幕源时 ArtPlayer 会重建 <track>，偏移与开关都得自己记住再套回去。
+// 偏移分两层：autoSubOffset 是服务端估的整体偏移（拿内嵌轨当参考），
+// subOffset 是用户滑块上的微调量，实际生效的是两者之和——这样用户不用
+// 从 0 开始一点点试，只需在自动值上修正差的那一点。
+let autoSubOffset = 0;
 let subOffset = 0;
 let subOn = true;
+let curSubIdx = 0;
+let subOffsets = {};   // 服务端估的默认偏移：字幕 URL -> 秒
+const totalSubOffset = () => autoSubOffset + subOffset;
 
 // 偏移实现同内核：把 cue 的原始时间打点后整体平移，换语言重载时重新打点。
 // subBase 用来把「绝对字幕时间」对上「会话相对时间」——实时模式换起播点时用。
 function applyOffset(sec){
   const cues = art.subtitle.cues;
   if (!cues.length) return;
-  const dur = mode === 'live' ? 1e9 : (Number.isFinite(art.duration) ? art.duration : 1e9);
+  // 时长必须是正的才拿来当上界。视频元数据还没到时 art.duration 是 0，
+  // 而 number 类型上 0 也算 finite —— 用它做上限会把每条 cue 的 start/end
+  // 全 clamp 成 0，表现就是「整条字幕挤在片头同一秒、之后一条都不显示」。
+  const dur = mode === 'live' ? 1e9
+    : (Number.isFinite(art.duration) && art.duration > 0 ? art.duration : 1e9);
   for (const c of cues){
     if (c.originalStartTime == null){
       c.originalStartTime = c.startTime;
@@ -388,7 +399,7 @@ async function restartLive(atSec){
     base = j.start;
     liveTok = j.token;
     subBase = -base;
-    applyOffset(subBase + subOffset);
+    applyOffset(subBase + totalSubOffset());
 
     if (art.hls) { try { art.hls.destroy(); } catch(e){} art.hls = null; }
     const v = art.video;
@@ -453,8 +464,13 @@ async function boot(){
   art = new Artplayer(opts);
 
   art.on('subtitleLoad', () => {
-    if (subBase || subOffset) applyOffset(subBase + subOffset);
+    if (subBase || totalSubOffset()) applyOffset(subBase + totalSubOffset());
     if (!subOn) setSubVisible(false);
+  });
+
+  // 视频元数据到位后重算一次：字幕常常比视频先加载完，那时还没有真实时长。
+  art.on('video:loadedmetadata', () => {
+    if (subBase || totalSubOffset()) applyOffset(subBase + totalSubOffset());
   });
 
   // 续播：预转码/原生模式直接跳到位置；实时模式的起播点已经在会话里了
@@ -511,6 +527,19 @@ async function boot(){
   if (SUBS.length) {
     art.subtitle.switch(subURL(SUBS[0].url), subArgs(SUBS[0].label)).catch(()=>{});
 
+    // 默认偏移由服务端算好（内嵌轨当参考，逐条最近邻取中位数）。这里异步取，
+    // 不拖慢首屏；拿到之后如果没有手动微调，就直接套上。
+    const applyAutoOffset = idx => {
+      const u = SUBS[idx] && SUBS[idx].url;
+      if (!u) return;
+      autoSubOffset = subOffsets[u] || 0;
+      if (!subOffset) applyOffset(subBase + totalSubOffset());
+    };
+    fetch('/api/suboffset/' + ITEM).then(r => r.json()).then(j => {
+      subOffsets = (j && j.offsets) || {};
+      applyAutoOffset(curSubIdx);
+    }).catch(()=>{});
+
     art.setting.add({
       html: '字幕',
       name: 'subtitle-toggle',
@@ -530,6 +559,11 @@ async function boot(){
         tooltip: SUBS[0].label,
         selector: SUBS.map((s, i) => ({html: s.label, url: s.url, default: i === 0})),
         onSelect(item){
+          curSubIdx = SUBS.findIndex(s => s.url === item.url);
+          if (curSubIdx < 0) curSubIdx = 0;
+          // 换语言就换一套偏移：每条字幕相对参考轨的偏差不一样
+          autoSubOffset = subOffsets[item.url] || 0;
+          subOffset = 0;
           art.subtitle.switch(subURL(item.url), subArgs(item.html)).catch(()=>{});
           return item.html;
         },
@@ -556,8 +590,8 @@ async function boot(){
       range: [0, -10, 10, 0.1],
       onChange(item){
         subOffset = item.range[0];
-        applyOffset(subBase + subOffset);
-        return subOffset + 's';
+        applyOffset(subBase + totalSubOffset());
+        return (subOffset > 0 ? '+' : '') + subOffset + 's';
       },
     });
   }

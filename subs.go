@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -27,6 +28,197 @@ type SubDTO struct {
 	URL   string `json:"url,omitempty"`   // 为空表示网页播不了（图像字幕）
 	File  string `json:"file,omitempty"`  // 导入字幕的文件名（删除用）
 	Codec string `json:"codec,omitempty"` // 内嵌轨编码
+
+	// raw 是字幕在磁盘上的路径；只给服务端估算偏移用，不对外。
+	raw string
+}
+
+// ---------- 默认字幕偏移 ----------
+//
+// 手动试偏移很痛苦，这里估一个整体平移量当默认值：
+// 逐条在参考轨里找时间上最近的 cue，把差值取中位数。不同语言字幕的断句
+// 未必一一对应（本片中文 2054 条 / 内嵌英文 2067 条），会有一批错配，
+// 中位数对这类离群值不敏感，剩下的就是真正的整体偏移。
+//
+// 参考轨用内嵌轨：它和视频在同一个容器里、共用一条时间基，是对齐最可靠的。
+
+// vttStarts 取 WebVTT 里每条 cue 的起始秒数。
+func vttStarts(b []byte) []float64 {
+	var out []float64
+	for _, line := range strings.Split(string(b), "\n") {
+		i := strings.Index(line, "-->")
+		if i < 0 {
+			continue
+		}
+		if t, ok := vttTime(strings.TrimSpace(line[:i])); ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// vttTime 解析 WebVTT 时间戳，兼容 HH:MM:SS.mmm 与 MM:SS.mmm。
+func vttTime(s string) (float64, bool) {
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	sec, err := strconv.ParseFloat(parts[len(parts)-1], 64)
+	if err != nil {
+		return 0, false
+	}
+	min, err := strconv.Atoi(parts[len(parts)-2])
+	if err != nil {
+		return 0, false
+	}
+	total := float64(min)*60 + sec
+	if len(parts) == 3 {
+		h, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return 0, false
+		}
+		total += float64(h) * 3600
+	}
+	return total, true
+}
+
+// embedIndex 从 /sub/<id>?embed=N 里取出 N，取不到返回 -1。
+func embedIndex(u string) int {
+	i := strings.Index(u, "embed=")
+	if i < 0 {
+		return -1
+	}
+	rest := u[i+len("embed="):]
+	if j := strings.IndexAny(rest, "&"); j >= 0 {
+		rest = rest[:j]
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// subStarts 读某条字幕的 cue 起始时间；内嵌轨按需抽取成 VTT（有磁盘缓存）。
+func (s *Server) subStarts(it Item, d SubDTO) []float64 {
+	path := d.raw
+	if path == "" && d.Src == "embed" {
+		if idx := embedIndex(d.URL); idx >= 0 {
+			if p, err := s.extractEmbedSub(it, idx); err == nil {
+				path = p
+			}
+		}
+	}
+	if path == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if ext := strings.ToLower(filepath.Ext(path)); ext != ".vtt" {
+		v, err := toVTT(raw, ext, d.Lang)
+		if err != nil {
+			return nil
+		}
+		raw = v
+	}
+	return vttStarts(raw)
+}
+
+// medianOffset 用参考轨估目标轨的整体偏移（秒）。不可靠时返回 0：
+// 条数太少、有效匹配不到一半、或者算出来本来就在 0.1 秒以内。
+func medianOffset(target, ref []float64) float64 {
+	if len(target) < 10 || len(ref) < 10 {
+		return 0
+	}
+	sorted := append([]float64(nil), ref...)
+	sort.Float64s(sorted)
+	diffs := make([]float64, 0, len(target))
+	for _, t := range target {
+		i := sort.SearchFloat64s(sorted, t)
+		best, bestD := 0.0, math.MaxFloat64
+		for _, j := range []int{i - 1, i, i + 1} {
+			if j < 0 || j >= len(sorted) {
+				continue
+			}
+			if d := math.Abs(sorted[j] - t); d < bestD {
+				best, bestD = sorted[j], d
+			}
+		}
+		// 差出 12 秒以上的基本是匹配到别的句子了，直接丢掉
+		if bestD < 12 {
+			diffs = append(diffs, t-best)
+		}
+	}
+	if len(diffs) < len(target)/2 {
+		return 0
+	}
+	sort.Float64s(diffs)
+	m := diffs[len(diffs)/2]
+	if math.Abs(m) < 0.1 {
+		return 0
+	}
+	return math.Round(m*10) / 10
+}
+
+// subOffsetsFor 给条目下每条非参考字幕算一个默认偏移，按 URL 索引。
+// 结果进程内缓存——解字幕文本不贵，但没必要每次播放页都重算。
+func (s *Server) subOffsetsFor(it Item) map[string]float64 {
+	out := map[string]float64{}
+	subs := s.subsFor(it)
+	refIdx := -1
+	for i, d := range subs {
+		if d.Src == "embed" && d.URL != "" {
+			refIdx = i
+			break
+		}
+	}
+	if refIdx < 0 {
+		for i, d := range subs {
+			if d.URL != "" {
+				refIdx = i
+				break
+			}
+		}
+	}
+	if refIdx < 0 {
+		return out
+	}
+	ref := s.subStarts(it, subs[refIdx])
+	if len(ref) == 0 {
+		return out
+	}
+	for i, d := range subs {
+		if i == refIdx || d.URL == "" {
+			continue
+		}
+		key := it.ID + "|" + d.URL
+		if v, ok := s.subOff.Load(key); ok {
+			out[d.URL] = v.(float64)
+			continue
+		}
+		off := medianOffset(s.subStarts(it, d), ref)
+		s.subOff.Store(key, off)
+		out[d.URL] = off
+	}
+	return out
+}
+
+// handleSubOffset 返回每条字幕相对内嵌参考轨估出的默认偏移（秒）。
+// 播放页拿到后先套上，用户再想微调才用滑块，不用从 0 开始试。
+func (s *Server) handleSubOffset(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(r.URL.Path, "/api/suboffset/")
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "id 必须是 16 位十六进制")
+		return
+	}
+	it, err := s.db.GetItem(id)
+	if err != nil || it == nil {
+		writeErr(w, http.StatusNotFound, "条目不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"offsets": s.subOffsetsFor(*it)})
 }
 
 // subExts 允许导入/识别的外挂字幕格式。
@@ -82,6 +274,7 @@ func (s *Server) itemPath(it Item) string {
 // subsFor 合并三种来源，供详情页 / 播放页 / 详情 JSON 使用。
 func (s *Server) subsFor(it Item) []SubDTO {
 	out := make([]SubDTO, 0, 6)
+	itemDir := filepath.Dir(s.itemPath(it))
 	for i, sp := range it.SubPaths {
 		lang := NormalizeLang(sp.Lang)
 		out = append(out, SubDTO{
@@ -89,6 +282,7 @@ func (s *Server) subsFor(it Item) []SubDTO {
 			Label: langLabel(sp.Lang),
 			Src:   "sidecar",
 			URL:   "/sub/" + it.ID + "?sub=" + strconv.Itoa(i),
+			raw:   filepath.Join(itemDir, filepath.FromSlash(sp.Path)),
 		})
 	}
 	out = append(out, s.importedSubs(it)...)
@@ -133,6 +327,7 @@ func (s *Server) importedSubs(it Item) []SubDTO {
 			Src:   "imported",
 			URL:   "/sub/" + it.ID + "?imp=" + name,
 			File:  name,
+			raw:   filepath.Join(s.subsDir(it), name),
 		})
 	}
 	return out

@@ -41,6 +41,9 @@ type Server struct {
 
 	tc  *Transcoder
 	hls *HLSServer
+
+	// 字幕默认偏移缓存：key = 条目ID|字幕URL，value = 秒（float64）
+	subOff sync.Map
 }
 
 // tplFuncs 是模板里用到的格式化助手。
@@ -122,6 +125,7 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/api/transcode/", s.handleTranscode)
 	mux.HandleFunc("/api/live/", s.handleLive)
 	mux.HandleFunc("/api/sub/", s.handleSubUpload)
+	mux.HandleFunc("/api/suboffset/", s.handleSubOffset)
 	// 第三方前端库：build 时打进二进制，局域网离线可用
 	vendor, err := fs.Sub(webFS, "web/vendor")
 	if err != nil {
