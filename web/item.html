@@ -78,7 +78,7 @@ a{color:inherit;text-decoration:none}
 .back svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;
   stroke-linecap:round;stroke-linejoin:round}
 
-.inner{position:relative;z-index:2;display:flex;align-items:flex-end;
+.inner{position:relative;z-index:2;display:flex;align-items:flex-start;
   gap:clamp(24px,3.5vw,56px);padding:76px 0 48px}
 .poster{
   position:relative;width:256px;flex:0 0 256px;aspect-ratio:2/3;
@@ -89,6 +89,21 @@ a{color:inherit;text-decoration:none}
 }
 .poster img{width:100%;height:100%;object-fit:cover;display:block}
 {{template "phCore"}}
+
+/* ── 槽位系统（桌面端）：每行锁高、超长截断，无内容也占位，
+   保证不同条目的每一行都落在同一水平位置，不受内容多少影响 ── */
+@media(min-width:701px){
+  .eyebrow{height:16px;line-height:16px;margin-bottom:12px}
+  h1{height:48px;line-height:48px;font-size:40px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .alt{height:20px;line-height:20px;margin-top:9px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tagline{height:44px;line-height:22px;margin-top:9px;max-width:none;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .meta{height:22px;margin-top:15px;flex-wrap:nowrap;overflow:hidden}
+  .tags{height:28px;margin-top:13px;flex-wrap:nowrap;overflow:hidden}
+  .resume{height:36px;margin-top:15px}
+}
 
 .head{flex:1;min-width:0;padding-bottom:4px}
 .eyebrow{margin-bottom:13px;font-size:11px;font-weight:600;letter-spacing:.18em;
@@ -244,8 +259,9 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
     <div class="head">
       <div class="eyebrow">{{if eq .Item.Kind "movie"}}影片{{else}}剧集{{end}}{{with .Item.Year}} · {{.}}{{end}}</div>
       <h1>{{.Item.Title}}</h1>
-      {{if and .Item.OriginalTitle (ne .Item.OriginalTitle .Item.Title)}}<p class="alt">{{.Item.OriginalTitle}}</p>{{end}}
-      {{with .Detail}}{{with .Tagline}}<p class="tagline">{{.}}</p>{{end}}{{end}}
+      <!-- 槽位行：高度固定（桌面端），无内容也占位，保证所有条目逐行对齐 -->
+      <p class="alt">{{if and .Item.OriginalTitle (ne .Item.OriginalTitle .Item.Title)}}{{.Item.OriginalTitle}}{{end}}</p>
+      <p class="tagline">{{with .Detail}}{{with .Tagline}}{{.}}{{end}}{{end}}</p>
 
       <div class="meta">
         {{with .Item.Rating}}<span class="score"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>{{printf "%.1f" .}}</span>{{end}}
@@ -254,19 +270,19 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
         {{with .Detail}}{{with .Votes}}<span>{{$.Detail.RatingSrc}} {{.}} 人评过</span>{{end}}{{end}}
         {{if .Item.Finished}}<span class="done">已看完</span>{{end}}
       </div>
-      {{with .Detail}}{{if .Genres}}<div class="tags">{{range .Genres}}<span class="tag">{{.}}</span>{{end}}</div>{{end}}{{end}}
-
-      {{if .Item.Subs}}
+      <!-- 类型与字幕语言合并进同一行槽位 -->
       <div class="tags">
-        {{range .Item.Subs}}<span class="tag">{{.Lang}}</span>{{end}}
+        {{with .Detail}}{{range .Genres}}<span class="tag">{{.}}</span>{{end}}{{end}}
+        {{range .Item.Subs}}<span class="tag sub">{{.Lang}}</span>{{end}}
       </div>
-      {{end}}
 
       {{if .Item.PositionMS}}
       <div class="resume">
         <span>已观看 {{duration .Item.PositionMS}} / {{duration .Item.DurationMS}}</span>
         <div class="bar"><i style="width:{{pct .Item.PositionMS .Item.DurationMS}}"></i></div>
       </div>
+      {{else}}
+      <div class="resume"></div>
       {{end}}
 
       <div class="actions">
