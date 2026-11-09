@@ -39,11 +39,12 @@ a{color:inherit;text-decoration:none}
   min-height:440px;overflow:hidden}
 .bg{
   position:absolute;inset:0;
-  background:#0b0d11 center/cover no-repeat;
+  background:#0b0d11 center 22%/cover no-repeat;
   transform:scale(1.02);
 }
-/* 无背景图时用一个冷调渐变兜底，不像纯黑那么空 */
-.bg::before{
+/* 无背景图时的冷调渐变兜底。必须是独立状态类：::before 画在
+   元素自己的 background-image 之上，无条件渲染会把横屏图整个盖住 */
+.bg.fallback::before{
   content:"";position:absolute;inset:0;
   background:
     radial-gradient(1100px 520px at 50% -10%,rgba(120,140,200,.16),transparent 66%),
@@ -52,11 +53,12 @@ a{color:inherit;text-decoration:none}
 /* 没有背景图时，用海报本身做大范围虚化兜底，比纯渐变有内容感 */
 .bg.blurred{filter:blur(52px) saturate(1.4) brightness(.85);
   transform:scale(1.4);opacity:.72}
+/* Jellyfin 式遮罩：背景图清晰可辨，只在文字区局部压暗、底部渐隐进正文 */
 .veil{position:absolute;inset:0;
   background:
-    linear-gradient(180deg,rgba(8,9,12,.62) 0%,rgba(8,9,12,.30) 28%,
-                    rgba(8,9,12,.80) 68%,var(--bg) 100%),
-    radial-gradient(130% 90% at 12% 26%,transparent 18%,rgba(8,9,12,.66) 100%);}
+    linear-gradient(180deg,rgba(8,9,12,.38) 0%,rgba(8,9,12,.16) 30%,
+                    rgba(8,9,12,.66) 74%,var(--bg) 100%),
+    radial-gradient(125% 105% at 10% 30%,rgba(8,9,12,.66) 0%,transparent 62%);}
 /* 极轻的胶片颗粒，给整块暗部一点质感；下缘渐隐，避免与正文区出现一条硬边 */
 .veil::after{
   content:"";position:absolute;inset:0;opacity:.15;mix-blend-mode:overlay;
@@ -94,7 +96,7 @@ a{color:inherit;text-decoration:none}
 h1{margin:0;font-size:clamp(26px,3.4vw,40px);font-weight:600;line-height:1.16;
   letter-spacing:-.012em;text-wrap:balance}
 .alt{margin:9px 0 0;font-size:14px;color:var(--text-2);letter-spacing:.01em}
-.tagline{margin:7px 0 0;font-size:13.5px;line-height:1.6;color:var(--text-3);max-width:52ch}
+.tagline{margin:7px 0 0;font-size:13.5px;line-height:1.6;color:var(--text-2);max-width:52ch}
 
 .meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:16px;
   font-size:13px;color:var(--text-2)}
@@ -211,7 +213,7 @@ code{padding:2px 7px;border-radius:5px;font-size:12.5px;
   {{else if .Item.Poster}}
   <div class="bg blurred" style="background-image:url('{{.Item.Poster}}')"></div>
   {{else}}
-  <div class="bg"></div>
+  <div class="bg fallback"></div>
   {{end}}
   <div class="veil"></div>
   <div class="topbar"><div class="shell">
