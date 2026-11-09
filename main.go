@@ -282,17 +282,11 @@ func cmdScrape(args []string) {
 //
 // 未匹配（miss）与手动锁定（manual）不重试：反复调 API 只会烧配额（文档 8.6），
 // 想纠正走 override.json。
-func autoScrape(ctx context.Context, cfg *Config, db *DB, delay time.Duration) {
+func autoScrape(ctx context.Context, cfg *Config, db *DB) {
 	sc, err := buildScraper(cfg)
 	if err != nil || sc == nil {
 		// 没配凭据是正常状态，安静跳过
 		return
-	}
-
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(delay):
 	}
 
 	roots := cfg.AllRoots()
@@ -419,10 +413,18 @@ func cmdServe(args []string) {
 	}
 	defer db.Close()
 
-	// 后台补刮：HTTP 先起来，5 秒后再开始，不影响页面可用性
+	// 后台任务：HTTP 先起来。启动即做一次增量扫描——改过媒体根、手动加过
+	// 文件都不用等 30 分钟的第一个周期；扫完再补刮，刮削依赖扫描写入的条目。
 	scrapeCtx, scrapeCancel := context.WithCancel(context.Background())
 	defer scrapeCancel()
-	go autoScrape(scrapeCtx, cfg, db, 5*time.Second)
+	go func() {
+		if st, err := NewScanner(cfg, db, false, false, false, "").Run(); err != nil {
+			warnf("启动扫描失败：%v", err)
+		} else if st.Found > 0 {
+			logf("启动扫描：发现 %d，待处理 %d，新增 %d，清理 %d", st.Found, st.Need, st.Added, st.Deleted)
+		}
+		autoScrape(scrapeCtx, cfg, db)
+	}()
 
 	if n, _ := db.CountItems(); n == 0 {
 		warnf("索引为空，请先执行 `litems scan`")

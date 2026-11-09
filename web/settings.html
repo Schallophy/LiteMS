@@ -83,14 +83,18 @@ h1{margin:0 0 6px;font-size:24px;font-weight:600;letter-spacing:-.01em}
 }
 label{display:block;margin-bottom:18px}
 .lbl{display:block;font-size:12.5px;color:var(--text-2);margin-bottom:7px}
-input[type=text],input[type=password],select{
+input[type=text],input[type=password],select,textarea{
   width:100%;padding:10px 13px;border-radius:10px;font:inherit;font-size:13.5px;
   color:var(--text);background:rgba(255,255,255,.045);
   border:1px solid var(--line);outline:none;
   transition:border-color .2s,background .2s,box-shadow .2s;
 }
 input::placeholder{color:var(--text-3);font-size:12.5px}
-input:focus,select:focus{
+label.check{display:flex;align-items:center;gap:9px;margin:13px 0 2px;
+  font-size:13px;color:var(--text-2);cursor:pointer}
+label.check input{width:auto;flex:0 0 auto;accent-color:var(--gold);cursor:pointer}
+textarea{resize:vertical;font-family:inherit;line-height:1.6}
+input:focus,select:focus,textarea:focus{
   border-color:rgba(227,183,116,.45);background:rgba(255,255,255,.07);
   box-shadow:0 0 0 3px rgba(227,183,116,.10);
 }
@@ -161,6 +165,29 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
 
   <form method="post" action="/settings" autocomplete="off">
     <input type="hidden" name="token" value="{{.Token}}">
+
+    
+    <section class="card">
+      <h2>媒体库</h2>
+      <label>
+        <span class="lbl">媒体根目录</span>
+        <input type="text" name="lib_root" value="{{.LibraryRoot}}" spellcheck="false"
+               placeholder="~/Media">
+      </label>
+      <label>
+        <span class="lbl">额外目录（可选，一行一个）</span>
+        <textarea name="lib_extra" rows="3" spellcheck="false"
+                  placeholder="/storage/1A2B-3C4D/Movies">{{.LibraryExtra}}</textarea>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="lib_symlinks" {{if .LibraryLinks}}checked{{end}}>
+        <span>跟随指向文件的符号链接（下载做种 + 库里放链接时需要）</span>
+      </label>
+      <p class="hint">
+        媒体根请放在 <code>$HOME</code> 下的 ext4，不要放 <code>/storage/emulated/0</code>（FUSE 会拖慢扫描并让数据库上锁失败）。
+        修改媒体根需要<b>重启服务</b>才会生效；重启时会自动重新扫描并把缺图的条目补刮一遍。
+      </p>
+    </section>
 
     <section class="card">
       <h2>数据源</h2>

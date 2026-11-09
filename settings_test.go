@@ -150,3 +150,59 @@ func TestMaskSecret(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteLibrarySettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := `# 手工写的注释
+[server]
+listen = ":7788"
+
+[scrape]
+provider = "tmdb"
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := map[string]string{
+		"root":                 tomlString("~/Media"),
+		"extra_roots":          tomlArray([]string{"/mnt/a", "/mnt/b"}),
+		"follow_file_symlinks": "true",
+	}
+	if err := writeSectionKeys(path, "library", librarySettingKeys, vals); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	// 再写一次：段已存在时应原位更新，而不是再追加一段
+	if err := writeSectionKeys(path, "library", librarySettingKeys, vals); err != nil {
+		t.Fatalf("二次写入失败: %v", err)
+	}
+
+	cfg, _, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	// LoadConfig 会把 ~ 展开成绝对路径
+	if want := ExpandPath("~/Media"); cfg.Library.Root != want {
+		t.Errorf("root = %q，应为 %q", cfg.Library.Root, want)
+	}
+	if len(cfg.Library.ExtraRoots) != 2 || cfg.Library.ExtraRoots[0] != "/mnt/a" {
+		t.Errorf("extra_roots = %v", cfg.Library.ExtraRoots)
+	}
+	if !cfg.Library.FollowFileSymlinks {
+		t.Errorf("follow_file_symlinks 应为 true")
+	}
+	if cfg.Scrape.Provider != "tmdb" {
+		t.Errorf("scrape 段被破坏: %q", cfg.Scrape.Provider)
+	}
+	if cfg.Server.Listen != ":7788" {
+		t.Errorf("server 段被破坏: %q", cfg.Server.Listen)
+	}
+
+	text, _ := os.ReadFile(path)
+	if n := strings.Count(string(text), "[library]"); n != 1 {
+		t.Errorf("[library] 段出现 %d 次，应为 1", n)
+	}
+	if !strings.Contains(string(text), "# 手工写的注释") {
+		t.Errorf("文件头注释丢失")
+	}
+}
