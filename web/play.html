@@ -146,6 +146,38 @@ const opts = {
 {{if .Item.Poster}}opts.poster = "{{.Item.Poster}}";{{end}}
 art = new Artplayer(opts);
 
+// 字幕状态：切换字幕源时 ArtPlayer 会重建 <track>，偏移与开关都得自己记住再套回去。
+let subOffset = 0;
+let subOn = true;
+art.on('subtitleLoad', () => {
+  if (subOffset) applyOffset(subOffset);
+  if (!subOn) setSubVisible(false);
+});
+
+// 偏移实现同内核：把 cue 的原始时间打点后整体平移，换语言重载时重新打点。
+function applyOffset(sec){
+  const cues = art.subtitle.cues;
+  if (!cues.length) return;
+  const dur = Number.isFinite(art.duration) ? art.duration : 1e9;
+  for (const c of cues){
+    if (c.originalStartTime == null){
+      c.originalStartTime = c.startTime;
+      c.originalEndTime = c.endTime;
+    }
+    c.startTime = Math.min(Math.max(c.originalStartTime + sec, 0), dur);
+    c.endTime = Math.min(Math.max(c.originalEndTime + sec, 0), dur);
+  }
+  art.subtitle.update();
+}
+
+function setSubVisible(on){
+  const tt = art.subtitle.textTrack;
+  if (tt) tt.mode = on ? 'hidden' : 'disabled';
+  const box = document.querySelector('.art-subtitle');
+  if (!on && box) box.innerHTML = '';
+  if (on) setTimeout(() => art.subtitle.update(), 60);
+}
+
 const resume = parseInt("{{.Item.PositionMS}}", 10);
 if (resume > 30000) {
   art.on('ready', () => { art.currentTime = resume / 1000; });
@@ -162,21 +194,55 @@ setTimeout(() => {
   }
 }, 1200);
 
-// 外挂字幕：默认用扫描排序的第一条（[scrape].sub_langs 的偏好顺序）
+// 字幕：默认用扫描排序的第一条（[scrape].sub_langs 的偏好顺序）。
+// 必须走 art.subtitle.switch()——v5.4 里 art.subtitle 是 Subtitle 实例，
+// 直接赋值会把它整个替换成普通对象：字幕不加载、偏移项也跟着报错。
+const subURL = u => u + '&fmt=vtt';
+const subArgs = name => ({name, type: 'vtt', encoding: 'utf-8'});
+
 if (SUBS.length) {
-  art.subtitle = {url: SUBS[0].url + '&fmt=vtt', type: 'vtt', encoding: 'utf-8'};
+  art.subtitle.switch(subURL(SUBS[0].url), subArgs(SUBS[0].label)).catch(()=>{});
+
+  // 字幕开关（内核没有内置项）
+  art.setting.add({
+    html: '字幕',
+    name: 'subtitle-toggle',
+    switch: true,
+    onSwitch(item){
+      subOn = !item.switch;
+      item.switch = subOn;
+      setSubVisible(subOn);
+      return subOn;
+    },
+  });
+
+  // 语言选择：内嵌/导入/外挂统一在这里切换
   if (SUBS.length > 1) {
     art.setting.add({
-      html: '字幕',
+      html: '字幕语言',
       width: 220,
       tooltip: SUBS[0].label,
       selector: SUBS.map((s, i) => ({html: s.label, url: s.url, default: i === 0})),
       onSelect(item){
-        art.subtitle = {url: item.url + '&fmt=vtt', type: 'vtt', encoding: 'utf-8'};
+        art.subtitle.switch(subURL(item.url), subArgs(item.html)).catch(()=>{});
         return item.html;
       },
     });
   }
+
+  // 字幕偏移：范围 -10s ~ +10s，步进 0.1s。内核自带的同名项固定排在内置区，
+  // 只能落在「字幕」上面，这里自己加一项，三项才按「开关 → 语言 → 偏移」排下来。
+  art.setting.add({
+    html: '字幕偏移',
+    name: 'subtitle-offset-custom',
+    tooltip: '0s',
+    range: [0, -10, 10, 0.1],
+    onChange(item){
+      subOffset = item.range[0];
+      applyOffset(subOffset);
+      return subOffset + 's';
+    },
+  });
 }
 
 // 进度上报：播放中节流 10s，暂停/播完立刻存；离页用 sendBeacon

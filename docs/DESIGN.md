@@ -7,7 +7,7 @@ title: DESIGN
 > 一个跑在 Termux 上的轻量媒体库服务器：负责刮削、索引、文件服务；
 > 播放交给 PC 上的本地播放器。
 >
-> 文档版本：v2.8　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
+> 文档版本：v2.13　　日期：2026-11-09　　状态：M1–M5 代码全部完成；M2 待真实 API key 验收
 
 ---
 
@@ -1235,6 +1235,19 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 - mpv：自动加载内嵌轨；`--sub-file` 只带第一条可用外挂/导入（URL 形式，走 `/sub`）
 - 前端：详情页「字幕」区块列出三源并可导入/删除导入项；播放页字幕设置面板用
   unified DTO 的 label 直接展示（含语言 + 来源语义）
+
+**播放页字幕设置面板（v2.13）**：三项，顺序为「字幕（开关）→ 字幕语言 → 字幕偏移」。
+
+- 开关：内核 v5.4 **没有**内置字幕开关项，自己加：`track.mode = 'hidden' | 'disabled'`
+  并清空 `.art-subtitle`（ArtPlayer 自绘字幕，disabled 时 activeCues 为空即不显示）
+- 偏移：内核的同名内置项固定排在内置区（`["playback-rate","aspect-ratio","subtitle-offset",…]`
+  之后才是自加项，改 `setting.option` 顺序不生效），所以自己实现一项；
+  做法同内核：cue 打点 `originalStartTime/EndTime` 后整体平移，范围 ±10s、步进 0.1s
+- **关键坑**：v5.4 的 `art.subtitle` 是 Subtitle 实例，**必须用 `art.subtitle.switch(url, opt)`**。
+  直接 `art.subtitle = {url,…}` 会把它替换成普通对象——字幕根本不加载（`cues` 为空），
+  `subtitleOffset` setter 解构 `cues.length` 直接抛异常，开关/偏移项全部失效。
+- 换语言会重建 `<track>` 元素，偏移与开关状态存在元素/实例上会丢：自己记 `subOffset`/`subOn`，
+  在 `subtitleLoad` 里重新套用
 
 ### 10.9 音轨转码（v2.8）
 
