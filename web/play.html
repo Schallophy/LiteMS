@@ -1,108 +1,76 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="{{.Theme}}">
+<html lang="zh-CN" class="margin-app" data-theme="{{.Theme}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="{{if eq .Theme "dark"}}#111112{{else}}#f5f4f1{{end}}">
 <title>正在播放 · {{.Item.Title}}</title>
 <style>
-:root{
-  color-scheme:dark;
-  --bg:#08090c;
-  --surface:#12141a;
-  --line:rgba(255,255,255,.07);
-  --line-2:rgba(255,255,255,.14);
-  --text:#f4f5f7;
-  --text-2:#a2a8b3;
-  --text-3:#6d7481;
-  --gold:#e3b774;
-  --ease:cubic-bezier(.22,.61,.36,1);
-}
-*,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body{
-  margin:0;min-height:100vh;background:var(--bg);color:var(--text);
-  font:15px/1.7 "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
-       "Hiragino Sans GB","Microsoft YaHei",sans-serif;
-  -webkit-font-smoothing:antialiased;
-}
-a{color:inherit;text-decoration:none}
+{{template "marginCSS"}}
 
 /* 顶栏：沉浸播放时悬浮在画面上方，鼠标不动几秒后淡出 */
-.bar{
-  position:fixed;inset:0 0 auto;z-index:10;
+.bar{position:fixed;inset:0 0 auto;z-index:10;
   display:flex;align-items:center;gap:16px;
-  padding:14px clamp(16px,3vw,28px);
-  background:linear-gradient(180deg,rgba(8,9,12,.85),rgba(8,9,12,0));
-  transition:opacity .3s var(--ease);
-}
+  padding:14px var(--g) 32px;
+  background:linear-gradient(180deg,var(--canvas) 0%,
+    color-mix(in srgb,var(--canvas) 72%,transparent) 58%,transparent 100%);
+  transition:opacity .3s var(--ease-out)}
 .bar.hide{opacity:0;pointer-events:none}
-.back{
-  display:inline-flex;align-items:center;gap:7px;padding:8px 16px 8px 13px;
-  border-radius:999px;font-size:13px;color:var(--text);
-  background:rgba(14,15,19,.6);border:1px solid rgba(255,255,255,.15);
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-  transition:background .22s,border-color .22s;
-}
-.back:hover{background:rgba(22,24,31,.85);border-color:rgba(255,255,255,.28)}
-.back svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;
-  stroke-linecap:round;stroke-linejoin:round}
-.bar .title{
-  min-width:0;font-size:14px;font-weight:500;color:var(--text);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.bar .title small{font-weight:400;color:var(--text-3);margin-left:8px}
-/* 实时转码模式：播放器自己的时间轴只覆盖本次会话窗口，全片进度看这一行 */
-.livepos{
-  margin-left:auto;font-size:12.5px;color:var(--text-2);letter-spacing:.02em;
-  padding:6px 12px;border-radius:999px;background:rgba(14,15,19,.6);
-  border:1px solid rgba(255,255,255,.12);white-space:nowrap;
-}
+.back{display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 16px 0 13px;
+  border-radius:var(--r-pill);font-size:13px;font-weight:500;color:var(--ink);
+  flex:0 0 auto}
+.back svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round;transition:transform .25s var(--ease-out)}
+.back:hover svg{transform:translateX(-2px)}
+.bar .title{min-width:0;font-size:14px;font-weight:500;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar .title small{margin-left:9px;font:500 11px/1 var(--font-mono);
+  letter-spacing:.1em;color:var(--faint)}
+
+/* 实时转码：播放器自己的时间轴只覆盖本次会话窗口，全片进度看这一颗 */
+.livepos{margin-left:auto;padding:7px 13px;border-radius:var(--r-pill);
+  font:500 11.5px/1 var(--font-mono);letter-spacing:.04em;color:var(--muted);
+  background:var(--chip);white-space:nowrap;font-variant-numeric:tabular-nums}
 .livepos[hidden]{display:none}
-.livepos b{color:var(--gold);font-weight:600}
+.livepos b{color:var(--accent-text);font-weight:600}
 
 /* 实时转码的全片进度条（替换按窗口时长算比例的内置进度条） */
-.livebar{
-  position:relative;flex:1;height:3px;margin:0 12px;border-radius:3px;
-  background:rgba(255,255,255,.28);cursor:pointer;
+.livebar{position:relative;flex:1;height:3px;margin:0 12px;border-radius:3px;
+  background:color-mix(in srgb,var(--ink) 22%,transparent);cursor:pointer;
   touch-action:none;                 /* 手机上拖动不被当成滚动 */
-  transition:height .15s var(--ease);
-}
+  transition:height .15s var(--ease-out)}
 .livebar:hover,.livebar.drag{height:6px}
-.livebar-buf,.livebar-fill{position:absolute;left:0;top:0;bottom:0;border-radius:3px;pointer-events:none}
-.livebar-buf{background:rgba(255,255,255,.35)}
-.livebar-fill{background:var(--gold)}
-.livebar-dot{
-  position:absolute;top:50%;left:0;width:12px;height:12px;border-radius:50%;
-  background:var(--gold);transform:translate(-50%,-50%);
-  box-shadow:0 1px 5px rgba(0,0,0,.45);pointer-events:none;
-}
+.livebar-buf,.livebar-fill{position:absolute;left:0;top:0;bottom:0;
+  border-radius:3px;pointer-events:none}
+.livebar-buf{background:color-mix(in srgb,var(--ink) 32%,transparent)}
+.livebar-fill{background:var(--accent-soft)}
+.livebar-dot{position:absolute;top:50%;left:0;width:11px;height:11px;border-radius:50%;
+  background:var(--accent-soft);transform:translate(-50%,-50%);
+  box-shadow:0 1px 5px rgb(0 0 0/.45);pointer-events:none}
 
-/* 播放器：桌面占满可视区宽度上限，小屏贴边 */
-main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
-#player{aspect-ratio:16/9;width:100%;border-radius:12px;overflow:hidden;
-  border:1px solid var(--line);background:#000}
+main{padding:84px var(--g) 48px}
+.wrap{max-width:1280px;margin:0 auto}
+#player{aspect-ratio:16/9;width:100%;border-radius:var(--r-card);overflow:hidden;
+  background:#000;box-shadow:var(--ring),var(--sh-md)}
 
 /* 提示条：音轨警告，出现在播放器下方 */
-.notice{
-  margin:14px 0 0;padding:11px 16px;border-radius:10px;
-  font-size:13.5px;line-height:1.8;color:var(--text-2);
-  background:var(--surface);border:1px solid var(--line);
-}
-.notice b{color:var(--gold);font-weight:600}
-.notice.warn{border-color:rgba(227,183,116,.4)}
-.notice .more{color:var(--text-3)}
+.notice{margin:16px 0 0;padding:13px 17px;border-radius:var(--r-panel);
+  font-size:13.5px;line-height:1.8;color:var(--muted);
+  background:var(--surface);box-shadow:var(--ring),var(--sh-xs)}
+.notice b{color:var(--accent-text);font-weight:600}
+.notice.warn{box-shadow:var(--ring),var(--sh-xs),
+  inset 2px 0 0 var(--warn)}
+.notice .more{color:var(--faint)}
 
 @media(max-width:560px){
-  main{padding-top:64px}
-}
-@media(prefers-reduced-motion:reduce){
-  *{transition:none!important;animation:none!important}
+  main{padding-top:70px}
+  .bar .title{font-size:13px}
 }
 </style>
 </head>
 <body>
 <header class="bar" id="bar">
-  <a class="back" href="/item/{{.Item.ID}}">
+  <a class="back glass" href="/item/{{.Item.ID}}">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
     返回
   </a>
@@ -111,20 +79,22 @@ main{max-width:1280px;margin:0 auto;padding:76px clamp(12px,3vw,28px) 40px}
 </header>
 
 <main>
-  <div id="player"></div>
-  {{if eq .AudioHint "bad"}}
-  <div class="notice warn" id="hint">
-    这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码，浏览器解不了（画面正常但没声音）。
-    页面会自动用转码模式播放；也可以回详情页「mpv 播放」交给本地播放器。
+  <div class="wrap">
+    <div id="player"></div>
+    {{if eq .AudioHint "bad"}}
+    <div class="notice warn" id="hint">
+      这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码，浏览器解不了（画面正常但没声音）。
+      页面会自动用转码模式播放；也可以回详情页「mpv 播放」交给本地播放器。
+    </div>
+    {{else if eq .AudioHint "maybe"}}
+    <div class="notice warn" id="hint">
+      音轨为 <b>AC3 / EAC3</b>，浏览器在 MKV 里解不了（画面正常但没声音）。
+      页面会自动用转码模式播放；也可以回详情页「mpv 播放」交给本地播放器。
+    </div>
+    {{else}}
+    <div class="notice" id="hint" hidden></div>
+    {{end}}
   </div>
-  {{else if eq .AudioHint "maybe"}}
-  <div class="notice warn" id="hint">
-    音轨为 <b>AC3 / EAC3</b>，浏览器在 MKV 里解不了（画面正常但没声音）。
-    页面会自动用转码模式播放；也可以回详情页「mpv 播放」交给本地播放器。
-  </div>
-  {{else}}
-  <div class="notice" id="hint" hidden></div>
-  {{end}}
 </main>
 
 <script src="/vendor/artplayer.js"></script>
@@ -432,6 +402,8 @@ async function boot(){
     fullscreen: true,
     pip: true,
     hotkey: true,
+    // 控件强调色跟站点一致（播放器永远压在黑底上，用暗色那一档）
+    theme: '#e0a458',
   };
   {{if .Item.Poster}}opts.poster = "{{.Item.Poster}}";{{end}}
 

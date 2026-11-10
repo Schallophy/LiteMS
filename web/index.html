@@ -1,250 +1,62 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="{{.Theme}}">
+<html lang="zh-CN" class="margin-app" data-theme="{{.Theme}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#08090c">
+<meta name="theme-color" content="{{if eq .Theme "dark"}}#111112{{else}}#f5f4f1{{end}}">
 <title>{{.Title}}</title>
 <style>
-:root{
-  color-scheme:dark;
-  --bg:#08090c;
-  --surface:#12141a;
-  --surface-2:#1a1e26;
-  --line:rgba(255,255,255,.07);
-  --line-2:rgba(255,255,255,.14);
-  --text:#f4f5f7;
-  --text-2:#a2a8b3;
-  --text-3:#6d7481;
-  --gold:#e3b774;
-  --gold-2:#c9974a;
-  --radius:14px;
-  --ease:cubic-bezier(.22,.61,.36,1);
-}
-*,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body{
-  margin:0;min-height:100vh;background:var(--bg);color:var(--text);
-  font:15px/1.6 "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
-       "Hiragino Sans GB","Microsoft YaHei",sans-serif;
-  font-feature-settings:"tnum" 1;
-  -webkit-font-smoothing:antialiased;
-}
-/* 顶部极淡的双色辉光，避免纯黑显得死板 */
-body::before{
-  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:
-    radial-gradient(900px 460px at 18% -10%,rgba(227,183,116,.10),transparent 62%),
-    radial-gradient(760px 420px at 84% -6%,rgba(96,140,255,.06),transparent 58%);
-}
-a{color:inherit;text-decoration:none}
-
-/* ── 顶栏 ───────────────────────────────── */
-.top{
-  position:sticky;top:0;z-index:20;
-  display:flex;align-items:center;gap:18px;
-  padding:15px clamp(18px,4vw,44px);
-  background:rgba(8,9,12,.74);
-  backdrop-filter:blur(20px) saturate(1.5);
-  -webkit-backdrop-filter:blur(20px) saturate(1.5);
-  border-bottom:1px solid var(--line);
-}
-.brand{display:flex;align-items:center;gap:10px;min-width:0}
-.mark{
-  position:relative;width:26px;height:26px;flex:0 0 auto;border-radius:8px;
-  background:linear-gradient(145deg,#f4dcb0,var(--gold) 45%,#a9743a);
-  box-shadow:0 0 0 1px rgba(255,255,255,.14),0 8px 18px -8px rgba(227,183,116,.7);
-}
-.mark::after{
-  content:"";position:absolute;left:50%;top:50%;transform:translate(-36%,-50%);
-  border-left:8px solid rgba(8,9,12,.84);
-  border-top:5.5px solid transparent;border-bottom:5.5px solid transparent;
-}
-.name{
-  font-size:15px;font-weight:600;letter-spacing:.01em;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;
-}
-.search{position:relative;display:flex;align-items:center;flex:1;max-width:400px}
-.search svg{
-  position:absolute;left:13px;width:15px;height:15px;
-  stroke:var(--text-3);fill:none;stroke-width:2;stroke-linecap:round;pointer-events:none;
-}
-.search input{
-  width:100%;padding:9px 14px 9px 35px;border-radius:999px;font:inherit;font-size:13.5px;
-  border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);
-  outline:none;transition:border-color .22s,background .22s,box-shadow .22s;
-}
-.search input::placeholder{color:var(--text-3)}
-.search input:focus{
-  border-color:rgba(227,183,116,.45);background:rgba(255,255,255,.06);
-  box-shadow:0 0 0 3px rgba(227,183,116,.10);
-}
-.seg{
-  display:flex;gap:2px;margin-left:auto;padding:3px;
-  border-radius:999px;background:rgba(255,255,255,.04);border:1px solid var(--line);
-}
-.seg a{
-  padding:6px 15px;border-radius:999px;font-size:13px;color:var(--text-2);
-  transition:color .2s,background .2s;
-}
-.seg a:hover{color:var(--text)}
-.seg a.on{background:rgba(255,255,255,.10);color:var(--text)}
-.gear{
-  display:grid;place-items:center;flex:0 0 auto;width:34px;height:34px;
-  border-radius:50%;border:1px solid var(--line);background:rgba(255,255,255,.04);
-  color:var(--text-2);transition:color .2s,background .2s,border-color .2s;
-}
-.gear:hover{color:var(--text);background:rgba(255,255,255,.09);border-color:var(--line-2)}
-.gear svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;
-  stroke-linecap:round}
-
-/* ── 内容 ───────────────────────────────── */
-main{position:relative;z-index:1;padding:clamp(22px,3.2vw,38px) clamp(18px,4vw,44px) 90px}
-.count{
-  margin:0 0 18px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--text-3);
-}
-/* 卡片基准宽度随视口收缩：窄屏不挤成一条，宽屏也不会被拉成巨型海报 */
-.grid{display:grid;gap:32px 22px;
-  grid-template-columns:repeat(auto-fill,minmax(clamp(150px,14vw,200px),1fr))}
-
-.card{display:block;transition:transform .45s var(--ease)}
-.card:hover{transform:translateY(-6px)}
-.art{
-  position:relative;aspect-ratio:2/3;border-radius:var(--radius);overflow:hidden;
-  background:#14161c;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 28px -18px rgba(0,0,0,.9);
-  transition:box-shadow .45s var(--ease);
-}
-.card:hover .art{
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.10),
-             0 26px 52px -18px rgba(0,0,0,.95),
-             0 0 0 1px rgba(255,255,255,.09);
-}
-.art>img{
-  width:100%;height:100%;object-fit:cover;display:block;
-  transition:transform .7s var(--ease);
-}
-.card:hover .art>img{transform:scale(1.055)}
-
-/* 缺图占位：细网格 + 首字，比一块灰底体面 */
-.ph{position:absolute;inset:0}
+{{template "marginCSS"}}
 {{template "phCore"}}
 
-/* 角标与底部压暗 */
-.scrim{position:absolute;inset:0;pointer-events:none;
-  background:linear-gradient(180deg,rgba(0,0,0,.42) 0%,transparent 26%,
-             transparent 64%,rgba(0,0,0,.55) 100%)}
-.badge{
-  position:absolute;top:9px;right:9px;display:inline-flex;align-items:center;gap:4px;
-  padding:3px 9px 3px 7px;border-radius:999px;font-size:11.5px;font-weight:600;
-  letter-spacing:.02em;color:#f7e6c8;
-  background:rgba(10,10,13,.60);border:1px solid rgba(227,183,116,.30);
-  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-}
-.badge svg{width:9px;height:9px;fill:var(--gold)}
-.prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(0,0,0,.5)}
-.prog i{display:block;height:100%;background:linear-gradient(90deg,var(--gold-2),var(--gold))}
+/* ── 页头（编辑式：等宽眉标 + 无衬线标题）──────────────────── */
+main{padding:0 var(--g) 72px}
+.bar{padding:34px 0 24px}
+.bar h1{margin:9px 0 0;font:600 clamp(24px,2.8vw,30px)/1.2 var(--font-heading);
+  letter-spacing:-.012em}
 
-.play{
-  position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
-  border-radius:50%;display:grid;place-items:center;
-  background:rgba(12,12,15,.5);border:1px solid rgba(255,255,255,.3);
-  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-  opacity:0;transform:scale(.86);
-  transition:opacity .3s,transform .38s var(--ease);
-}
-.card:hover .play{opacity:1;transform:scale(1)}
-.play::after{
-  content:"";margin-left:3px;
-  border-left:12px solid #fff;
-  border-top:7px solid transparent;border-bottom:7px solid transparent;
-}
-
-.cap{padding:9px 2px 0}
-.cap h3{
-  margin:0;font-size:13.5px;font-weight:500;line-height:1.45;transition:color .2s;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-}
-.card:hover .cap h3{color:#fff}
-.cap p{
-  display:flex;align-items:center;gap:7px;margin:5px 0 0;
-  font-size:12px;color:var(--text-3);letter-spacing:.01em;
-}
-.dot{width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.55}
-
-/* ── 空状态与分页 ───────────────────────── */
-.empty{display:grid;justify-items:center;text-align:center;padding:96px 0 40px}
-.empty .ring{
-  width:64px;height:64px;border-radius:50%;margin-bottom:22px;
-  border:1px solid var(--line-2);
-  background:radial-gradient(circle at 50% 30%,rgba(227,183,116,.16),transparent 68%);
-  display:grid;place-items:center;
-}
-.empty .ring::after{
-  content:"";margin-left:5px;
-  border-left:15px solid rgba(227,183,116,.55);
-  border-top:9px solid transparent;border-bottom:9px solid transparent;
-}
-.empty h2{margin:0;font-size:16px;font-weight:500;color:var(--text)}
-.empty p{margin:10px 0 0;font-size:13px;color:var(--text-3)}
-code{
-  padding:2px 7px;border-radius:5px;font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-  background:rgba(255,255,255,.07);border:1px solid var(--line);color:var(--text-2);
-}
-.pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:52px}
-.pager a{
-  padding:9px 18px;border-radius:999px;font-size:13px;color:var(--text-2);
-  border:1px solid var(--line);background:rgba(255,255,255,.03);transition:.2s;
-}
-.pager a:hover{color:var(--text);background:rgba(255,255,255,.08);border-color:var(--line-2)}
-.pager span{font-size:12.5px;color:var(--text-3);letter-spacing:.06em}
-
-@media(max-width:620px){
-  .seg{margin-left:auto;gap:0;padding:2px}
-  .seg a{padding:6px 11px;font-size:12.5px}
-}
 @media(max-width:760px){
-  .top{flex-wrap:wrap;gap:12px;padding:13px 18px}
-  .search{order:3;flex:1 1 100%;max-width:none}
-  .seg{order:2}
-  .grid{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:26px 16px}
-  .cap h3{font-size:12.5px}
+  .top{flex-wrap:wrap;height:auto;gap:12px;padding-top:10px;padding-bottom:10px}
+  .search{order:3;flex:1 1 100%;max-width:none;height:40px}
+  .et{order:1}
+  .ico{order:2}
+  .bar{padding:24px 0 18px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:24px 14px}
+  .cap h3{font-size:13px}
 }
 @media(max-width:560px){
-  main{padding:20px 16px 64px}
-  .top{padding:12px 16px}
-  .name{font-size:14px}
-  .seg a{padding:6px 10px;font-size:12px}
-  .grid{grid-template-columns:repeat(3,1fr);gap:22px 12px}
-  .cap h3{font-size:12px;line-height:1.4}
+  /* 不给固定列数：auto-fill 到这一档自然落成 2 列，海报不至于缩成邮票 */
+  .cap{padding-top:9px}
+  .cap h3{font-size:12.5px}
   .cap p{font-size:11px;gap:5px}
-  .badge{top:7px;right:7px;padding:2px 7px 2px 5px;font-size:10.5px}
+  .badge{top:6px;right:6px;padding:2px 6px 2px 5px;font-size:10px}
+  .top{gap:10px}
+  .et-btn{padding:0 11px;font-size:12.5px}
 }
-@media(prefers-reduced-motion:reduce){
-  *{transition:none!important;animation:none!important}
-  .card:hover{transform:none}
-  .card:hover .art>img{transform:none}
+/* 只有 420 以下才真的放不下「品牌名 + tab + 齿轮」，这时留图标即可 */
+@media(max-width:430px){
+  .brand b{display:none}
 }
 </style>
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="/">
-    <span class="mark"></span>
-    <span class="name">{{.Title}}</span>
+  <a class="brand" href="/" aria-label="{{.Title}}">
+    <span class="mark" aria-hidden="true"></span>
+    <b>{{.Title}}</b>
   </a>
   <form class="search" method="get" action="/" role="search">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
     <input type="search" name="q" value="{{.Query}}" placeholder="搜索片名、原名、拼音" autocomplete="off" aria-label="搜索">
     {{if .Kind}}<input type="hidden" name="kind" value="{{.Kind}}">{{end}}
   </form>
-  <nav class="seg">
-    <a href="/" data-base="/" class="{{if not .Kind}}on{{end}}">全部</a>
-    <a href="/?kind=movie" data-base="/?kind=movie" class="{{if eq .Kind "movie"}}on{{end}}">电影</a>
-    <a href="/?kind=episode" data-base="/?kind=episode" class="{{if eq .Kind "episode"}}on{{end}}">剧集</a>
+  <nav class="et" id="et" aria-label="分类">
+    <span class="et-thumb" id="thumb" aria-hidden="true"></span>
+    <a class="et-btn" href="/" data-base="/" {{if not .Kind}}aria-current="page"{{end}}>全部</a>
+    <a class="et-btn" href="/?kind=movie" data-base="/?kind=movie" {{if eq .Kind "movie"}}aria-current="page"{{end}}>电影</a>
+    <a class="et-btn" href="/?kind=episode" data-base="/?kind=episode" {{if eq .Kind "episode"}}aria-current="page"{{end}}>剧集</a>
   </nav>
-  <a class="gear" href="/settings" title="设置" aria-label="设置">
+  <a class="ico" href="/settings" title="设置" aria-label="设置">
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M4 7h9M18 7h2M4 17h4M12 17h8"/>
       <circle cx="15.5" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/>
@@ -252,9 +64,12 @@ code{
   </a>
 </header>
 
-<main>
+<main id="main">
   {{if .Items}}
-  <p class="count">共 {{.Total}} 条</p>
+  <div class="bar">
+    <p class="eyebrow">{{if .Query}}SEARCH{{else if eq .Kind "movie"}}MOVIES{{else if eq .Kind "episode"}}SERIES{{else}}LIBRARY{{end}} · {{.Total}}</p>
+    <h1>{{if .Query}}「{{.Query}}」{{else if eq .Kind "movie"}}电影{{else if eq .Kind "episode"}}剧集{{else}}全部影片{{end}}</h1>
+  </div>
   <div class="grid">
     {{range .Items}}
     <a class="card" href="/item/{{.ID}}">
@@ -284,20 +99,40 @@ code{
   {{if or (gt .Page 1) .NextPage}}
   <div class="pager">
     {{if gt .Page 1}}<a href="/?page={{.PrevPage}}{{if .Query}}&q={{.Query}}{{end}}{{if .Kind}}&kind={{.Kind}}{{end}}">上一页</a>{{end}}
-    <span>第 {{.Page}} 页</span>
+    <span>{{.Page}}</span>
     {{if .NextPage}}<a href="/?page={{.NextPage}}{{if .Query}}&q={{.Query}}{{end}}{{if .Kind}}&kind={{.Kind}}{{end}}">下一页</a>{{end}}
   </div>
   {{end}}
   {{else}}
+  <div class="bar">
+    <p class="eyebrow">{{if .Query}}SEARCH{{else}}LIBRARY{{end}} · 0</p>
+    <h1>{{if .Query}}没有匹配「{{.Query}}」{{else}}媒体库还是空的{{end}}</h1>
+  </div>
   <div class="empty">
-    <div class="ring"></div>
-    <h2>{{if .Query}}没有匹配「{{.Query}}」的条目{{else}}媒体库还是空的{{end}}</h2>
-    <p>{{if .Query}}换个关键词，或切到「全部」看看{{else}}运行 <code>litems scan</code> 建立索引{{end}}</p>
+    <p>{{if .Query}}换个关键词，或切到「全部」看看。{{else}}运行 <code>litems scan</code> 建立索引，或在设置里指定媒体根目录。{{end}}</p>
   </div>
   {{end}}
 </main>
 
 <script>
+/* ── tab 胶囊指示条：只动 translate / width，不触发重排 ───────── */
+(function(){
+  const et = document.getElementById('et');
+  const thumb = document.getElementById('thumb');
+  if (!et || !thumb) return;
+  function place(){
+    const on = et.querySelector('.et-btn[aria-current]');
+    if (!on) { thumb.removeAttribute('data-on'); return; }
+    thumb.style.width = on.offsetWidth + 'px';
+    thumb.style.translate = (on.offsetLeft - 4) + 'px 0';
+    thumb.setAttribute('data-on', '');
+  }
+  // 字体异步就绪后宽度会变，等 fonts.ready 再量一次
+  place();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(place);
+  addEventListener('resize', place);
+})();
+
 /* ── 实时搜索 ──────────────────────────────────────────────
    输入即搜（180ms 防抖）：请求 /api/items，用同一套 DTO 在客户端重建卡片。
    搜索键在服务端已做「去空格/标点、忽略大小写」折叠，所以 lala / lalaland /
@@ -305,8 +140,8 @@ code{
 const KIND = "{{.Kind}}";
 const form = document.querySelector('.search');
 const input = form.querySelector('input[name=q]');
-const mainEl = document.querySelector('main');
-const segLinks = Array.from(document.querySelectorAll('.seg a'));
+const mainEl = document.getElementById('main');
+const segLinks = Array.from(document.querySelectorAll('.et-btn'));
 const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>';
 
 let timer = null, seq = 0;
@@ -316,6 +151,15 @@ function el(tag, cls, text){
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
   return n;
+}
+
+function heading(total, q){
+  const box = el('div', 'bar');
+  const kicker = q ? 'SEARCH' : KIND === 'movie' ? 'MOVIES' : KIND === 'episode' ? 'SERIES' : 'LIBRARY';
+  box.appendChild(el('p', 'eyebrow', kicker + ' · ' + total));
+  box.appendChild(el('h1', null, q ? '「' + q + '」'
+    : KIND === 'movie' ? '电影' : KIND === 'episode' ? '剧集' : '全部影片'));
+  return box;
 }
 
 function makeCard(it){
@@ -368,15 +212,16 @@ function makeCard(it){
 function render(payload, q){
   const frag = document.createDocumentFragment();
   if (payload.items && payload.items.length){
-    frag.appendChild(el('p', 'count', '共 ' + payload.total + ' 条'));
+    frag.appendChild(heading(payload.total, q));
     const grid = el('div', 'grid');
     for (const it of payload.items) grid.appendChild(makeCard(it));
     frag.appendChild(grid);
   } else {
+    frag.appendChild(heading(0, q));
     const box = el('div', 'empty');
-    box.appendChild(el('div', 'ring'));
-    box.appendChild(el('h2', null, q ? '没有匹配「' + q + '」的条目' : '媒体库还是空的'));
-    box.appendChild(el('p', null, q ? '换个关键词，或切到「全部」看看' : '运行 litems scan 建立索引'));
+    box.appendChild(el('p', null, q
+      ? '换个关键词，或切到「全部」看看。'
+      : '运行 litems scan 建立索引，或在设置里指定媒体根目录。'));
     frag.appendChild(box);
   }
   mainEl.replaceChildren(frag);
