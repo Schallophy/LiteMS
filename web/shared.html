@@ -106,7 +106,10 @@ body{margin:0;min-height:100dvh}
 :where(.margin-app) a{color:inherit;text-decoration:none}
 :where(.margin-app) button{font:inherit;color:inherit;background:none;border:0;
   padding:0;cursor:pointer}
-.margin-app :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+/* 键盘聚焦环。不要在这里改 border-radius：outline 本来就跟随元素自身的圆角，
+   往焦点态塞一个 6px 半径等于聚焦瞬间把几何改了（搜索框那样嵌在胶囊里的输入框
+   会立刻露出一个方框）。offset 也压到 2px，别把环顶出容器。 */
+.margin-app :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 :where(.margin-app) code{padding:2px 6px;border-radius:6px;
   font:12.5px/1.45 var(--font-mono);background:var(--chip);color:var(--muted)}
 
@@ -134,7 +137,12 @@ body{margin:0;min-height:100dvh}
   flex:1 1 240px;max-width:440px;min-width:0;height:42px;padding:0 10px 0 14px;
   border-radius:var(--r-pill);background:var(--chip);color:var(--muted);
   transition:background .2s var(--ease-out),box-shadow .2s var(--ease-out)}
-.search:focus-within{background:var(--surface);box-shadow:var(--ring),var(--sh-sm);color:var(--ink)}
+/* 聚焦可见性交给胶囊本身，而不是里面那个输入框：input 是透明的、只占图标右边
+   那一块，在它身上画 outline 会变成胶囊内部一个方框（还把左侧图标留在框外）。
+   外层这圈暖色光晕对鼠标点击也显示——搜索框需要「我现在在打字」的状态提示。 */
+.search:focus-within{background:var(--surface);color:var(--ink);
+  box-shadow:0 0 0 1.5px var(--accent),var(--ring),var(--sh-sm)}
+.search input:focus-visible{outline:none}
 .search svg{width:17px;height:17px;flex:none;fill:none;stroke:currentColor;
   stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .search input{flex:1;min-width:0;height:100%;border:0;outline:0;background:none;
