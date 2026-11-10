@@ -152,30 +152,23 @@ function saveProgress(){
 }
 
 /* ---------- 播放方式 ---------- */
-const MODE_KEY = 'litems.playmode';
-const MODE_LABEL = {auto:'自动', pre:'预转码', live:'实时转码', native:'原生'};
-// ?mode=live|pre|native 直接指定播放方式，不落 localStorage：
-// 用来对比两种模式的实际表现，或者分享一条「这条用实时转码看」的链接。
+// ?mode=live|pre|native 直接指定播放方式，只作为调试/救急后门，不进 UI：
+// 用来对比两种转码的实际表现，或者某条片子被误判时强行换一条路。
 const MODE_OVERRIDE = (new URLSearchParams(location.search).get('mode') || '').toLowerCase();
 
 // AUDIO_HINT 为空＝文件名里没有浏览器解不了的音轨标签，这条能直接播。
 const DIRECT_OK = AUDIO_HINT === '';
-// 只有「不能直接播 + 已经有预转码产物」时才真有两种活法（预转码不耗 CPU，
-// 实时转码不占磁盘）。能直接播的没什么好选；不能直接播又没预转码，实时转码
-// 是唯一的路，也不用选——所以这两种情况播放器里都不摆这个选项。
-const MODE_CHOICES = !DIRECT_OK && PRE_READY && LIVE_READY;
 
+// 播放方式不需要用户操心，按优先级自动定，且**只在设置里不提供选项**：
+//   能直接播 → 原生直连（零转码、完整时长、Range 拖动最流畅）
+//   音轨解不了 → 有预转码产物就用它；没有才走实时转码
+// 预转码只是一次性的音轨转码、播放时不占 CPU，实时转码却要边转边播；
+// 两者都在时没有任何理由让人去选更费性能的那个。
 function pickMode(){
   if (MODE_OVERRIDE === 'pre' && PRE_READY) return 'pre';
   if (MODE_OVERRIDE === 'live' && LIVE_READY) return 'live';
   if (MODE_OVERRIDE === 'native') return 'native';
-  // 能直接播就先试原生直连——零转码、完整时长、Range 拖动最流畅。
-  // 实时转码是滑动窗口，拖动还会重起流，能不走的路就不走。
   if (DIRECT_OK) return 'native';
-  // 音轨解不了：用户在两种转码里挑过的那个优先，没挑过就预转码优先（省 CPU）
-  const pref = localStorage.getItem(MODE_KEY) || 'auto';
-  if (pref === 'pre' && PRE_READY) return 'pre';
-  if (pref === 'live' && LIVE_READY) return 'live';
   if (PRE_READY) return 'pre';
   if (LIVE_READY) return 'live';
   return 'native';
@@ -649,25 +642,9 @@ async function boot(){
     });
   }
 
-  /* 播放方式：只有真有两种活法时才摆出来（见 MODE_CHOICES），选完刷新页面生效 */
-  if (MODE_CHOICES){
-    art.setting.add({
-      html: '播放方式',
-      name: 'play-mode',
-      width: 240,
-      // 列表里没有「自动」，所以标签直接读实际生效的那一档，别读 localStorage
-      tooltip: (MODE_OVERRIDE ? 'URL 指定 · ' : '') + (MODE_LABEL[mode] || '自动'),
-      selector: [
-        {html:'预转码（不耗 CPU）', value:'pre',  default: mode === 'pre'},
-        {html:'实时转码（不占磁盘）', value:'live', default: mode === 'live'},
-      ],
-      onSelect(item){
-        localStorage.setItem(MODE_KEY, item.value);
-        location.reload();
-        return item.html;
-      },
-    });
-  }
+  // 播放方式不做成选项：能直接播就直连，音轨解不了就预转码优先、没有才实时转码，
+  // 由 pickMode 按优先级决定（预转码播完不占 CPU，没理由让人去选更费性能的那个）。
+  // 需要强行换路时用 ?mode=live|pre|native。
 
   /* 进度上报：播放中节流 10s，暂停/播完立刻存；离页用 sendBeacon */
   art.on('video:timeupdate', () => {
