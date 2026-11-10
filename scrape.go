@@ -630,12 +630,13 @@ func (r *Runner) searchMovie(ctx context.Context, it *Item) (*Meta, error) {
 			}
 		}
 
-		// 救回路径二：标题被文件名里的发布标记污染（HC / Chinese / 发布组名）
+		// 救回路径二：标题被文件名里的发布标记污染（HC / Chinese / BONE）
 		// 时，数据源对整个长串直接搜不到。从尾部逐词剥掉重搜——发布标记
-		// 几乎总是缀在尾部，剥到剩 3 个词为止，最后再试一次不带年份
-		// （年份来自文件名，可能标错；此时靠匹配门槛的年份差惩罚兜住）。
+		// 几乎总是缀在尾部，剥到剩 2 个词为止（The Odyssey BONE → The
+		// Odyssey），最后再试一次不带年份（年份来自文件名，可能标错；
+		// 此时靠匹配门槛的年份差惩罚兜住）。
 		words := strings.Fields(it.Title)
-		for n := 0; n < 4 && len(words) > 3; n++ {
+		for n := 0; n < 4 && len(words) > 2; n++ {
 			words = words[:len(words)-1]
 			short := strings.Join(words, " ")
 			q2 := Query{Title: short, Year: it.Year, Kind: KindMovie}
@@ -648,7 +649,7 @@ func (r *Runner) searchMovie(ctx context.Context, it *Item) (*Meta, error) {
 				return r.sc.Detail(ctx, m2.Cand.Key, KindMovie)
 			}
 			// 年份是唯一没试过的自由度：短标题去掉年份再搜一次
-			if n == 3 || len(words) == 3 {
+			if n == 3 || len(words) == 2 {
 				q3 := Query{Title: short, Kind: KindMovie}
 				c3, err := r.sc.Search(ctx, q3)
 				if err != nil {

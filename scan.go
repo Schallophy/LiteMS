@@ -364,32 +364,77 @@ func (s *Scanner) nfoMtime(dir, videoName string, kind Kind) int64 {
 	}
 	stem := strings.TrimSuffix(videoName, filepath.Ext(videoName))
 	mark(stem + ".nfo")
-	if kind == KindMovie {
+	// 多视频共享目录里的 movie.nfo 是别的条目的（写入侧 nfoPathFor 在
+	// 多视频时用 <stem>.nfo），认了就会把别人的 NFO 修改当成自己的刮削基准。
+	if kind == KindMovie && s.videoCountIn(dir) <= 1 {
 		mark("movie.nfo")
-	} else {
+	} else if kind != KindMovie {
 		mark("tvshow.nfo")
 	}
 	return latest
 }
 
-// findImages 找出磁盘上已有的 poster.jpg / fanart.jpg（相对媒体根）。
+// videoCountIn 数一个目录里的视频文件数（与 Runner.videoCount 同一套扩展名）。
+// 目录信息拿不到时按 1 处理，维持「每片一目录」的旧行为。
+func (s *Scanner) videoCountIn(dir string) int {
+	dm := s.dirMeta(dir)
+	if !dm.initialized {
+		return 1
+	}
+	n := 0
+	for _, e := range dm.entries {
+		if e.IsDir() {
+			continue
+		}
+		if IsExtIn(strings.ToLower(filepath.Ext(e.Name())), s.cfg.Library.VideoExt) {
+			n++
+		}
+	}
+	return n
+}
+
+// findImages 找出磁盘上已有的海报/背景图（相对媒体根）。
 // 刮削时会写这两个文件，但删库重建后必须能从文件本身重新发现，
 // 否则「NFO 与图片是唯一真相」不成立——重建后海报会凭空消失。
 // 剧集再往上找一层：图片挂在剧集目录，而不是 Season 目录。
+//
+// 命名约定与写入侧（imageBaseName / nfoPathFor）对称：
+//
+//	目录里只有一个视频 → poster.jpg / fanart.jpg（"每片一目录"布局）
+//	目录里有多个视频   → <stem>-poster.jpg / <stem>-fanart.jpg
+//
+// 多视频共享目录（qbt 下载目录里堆一堆单文件）绝不能认领通用名的
+// poster.jpg——那是别人的海报，认了就会出现「A 片用 B 片的海报」。
 func (s *Scanner) findImages(root, videoPath string, kind Kind) (poster, fanart string) {
 	dirs := []string{filepath.Dir(videoPath)}
 	if kind == KindEpisode {
 		dirs = append(dirs, filepath.Dir(dirs[0]))
 	}
+	stem := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
 	for _, d := range dirs {
+		shared := s.videoCountIn(d) > 1
 		if poster == "" {
-			if rel, ok := relIfExists(root, filepath.Join(d, "poster.jpg")); ok {
-				poster = rel
+			if !shared {
+				if rel, ok := relIfExists(root, filepath.Join(d, "poster.jpg")); ok {
+					poster = rel
+				}
+			}
+			if poster == "" {
+				if rel, ok := relIfExists(root, filepath.Join(d, stem+"-poster.jpg")); ok {
+					poster = rel
+				}
 			}
 		}
 		if fanart == "" {
-			if rel, ok := relIfExists(root, filepath.Join(d, "fanart.jpg")); ok {
-				fanart = rel
+			if !shared {
+				if rel, ok := relIfExists(root, filepath.Join(d, "fanart.jpg")); ok {
+					fanart = rel
+				}
+			}
+			if fanart == "" {
+				if rel, ok := relIfExists(root, filepath.Join(d, stem+"-fanart.jpg")); ok {
+					fanart = rel
+				}
 			}
 		}
 		if poster != "" && fanart != "" {
