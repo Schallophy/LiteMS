@@ -198,10 +198,53 @@ let curSubIdx = 0;
 let subOffsets = {};   // 服务端估的默认偏移：字幕 URL -> 秒
 const totalSubOffset = () => autoSubOffset + subOffset;
 
+/* 续看恢复：字幕设置按条目存 localStorage。
+   字号是跨条目的设备偏好（litems.subtitle.size），这里管的是会随片子变的几项：
+   开关、选中的语言、手动微调偏移。key 里带 ITEM，所以每部片各记各的。
+   选中语言存 URL 而不是下标：字幕列表增删后下标会漂，URL 才是稳定标识。 */
+const SUB_STATE_KEY = 'litems.subtitle.' + ITEM;
+const fmtSubOffset = v => (v > 0 ? '+' : '') + (Math.round(v * 10) / 10) + 's';
+
+function readSubState(){
+  try {
+    const j = JSON.parse(localStorage.getItem(SUB_STATE_KEY) || 'null');
+    if (!j || typeof j !== 'object') return null;
+    const off = Number(j.offset);
+    return {
+      on: typeof j.on === 'boolean' ? j.on : true,
+      url: typeof j.url === 'string' ? j.url : '',
+      offset: Number.isFinite(off) ? Math.min(10, Math.max(-10, off)) : 0,
+    };
+  } catch (e) { return null; }
+}
+
+const savedSub = readSubState();
+if (savedSub && SUBS.length){
+  subOn = savedSub.on;
+  const i = SUBS.findIndex(s => s.url === savedSub.url);
+  // 存的那个字幕文件没了（重命名/重新刮削）就回落到第一条，偏移也不该沿用——
+  // 它是按旧字幕调出来的，套到新字幕上只会更不准。
+  curSubIdx = i >= 0 ? i : 0;
+  subOffset = i >= 0 ? savedSub.offset : 0;
+}
+
+function saveSubState(){
+  try {
+    localStorage.setItem(SUB_STATE_KEY, JSON.stringify({
+      on: subOn,
+      url: (SUBS[curSubIdx] && SUBS[curSubIdx].url) || '',
+      offset: subOffset,
+    }));
+  } catch (e) {}
+}
+
 // 偏移实现同内核：把 cue 的原始时间打点后整体平移，换语言重载时重新打点。
 // subBase 用来把「绝对字幕时间」对上「会话相对时间」——实时模式换起播点时用。
 function applyOffset(sec){
-  const cues = art.subtitle.cues;
+  // 字幕轨可能还没载入：Artplayer 的 cues getter 是 Array.from(track.cues)，
+  // track 为空时它自己就抛 TypeError，不是返回空数组，所以取值这一步要 try。
+  let cues;
+  try { cues = art.subtitle.cues || []; } catch (e) { return; }
   if (!cues.length) return;
   // 时长必须是正的才拿来当上界。视频元数据还没到时 art.duration 是 0，
   // 而 number 类型上 0 也算 finite —— 用它做上限会把每条 cue 的 start/end
@@ -558,11 +601,11 @@ async function boot(){
     }
   }
 
-  /* 字幕：默认第一条（[scrape].sub_langs 的偏好顺序） */
+  /* 字幕：续看时恢复上次的语言/开关/偏移，否则用 [scrape].sub_langs 的第一条 */
   const subURL = u => u + '&fmt=vtt';
   const subArgs = name => ({name, type: 'vtt', encoding: 'utf-8'});
 
-  // 字号：拖动条调节（12–44px），存 localStorage 跨条目沿用
+  // 字号是跨条目的设备偏好（同一块屏幕看所有片都该一样大），保持全局存储
   const SUB_SIZE_KEY = 'litems.subtitle.size';
   const subSize = (() => {
     const v = parseInt(localStorage.getItem(SUB_SIZE_KEY) || '', 10);
@@ -572,15 +615,26 @@ async function boot(){
   applySubSize(subSize);
 
   if (SUBS.length) {
-    art.subtitle.switch(subURL(SUBS[0].url), subArgs(SUBS[0].label)).catch(()=>{});
+    art.subtitle.switch(subURL(SUBS[curSubIdx].url), subArgs(SUBS[curSubIdx].label)).catch(()=>{});
+
+    // 换语言会把手动偏移归零，滑块也得跟着回 0，否则显示值和实际值对不上。
+    // 直接改 DOM：设置项带 data-name，Artplayer 内部 option 的拿法各版本不一样。
+    const syncOffsetControl = () => {
+      const box = document.querySelector('[data-name="subtitle-offset-custom"]');
+      if (!box) return;
+      const range = box.querySelector('input[type=range]');
+      const tip = box.querySelector('.art-setting-item-right-tooltip');
+      if (range) range.value = subOffset;
+      if (tip) tip.textContent = fmtSubOffset(subOffset);
+    };
 
     // 默认偏移由服务端算好（内嵌轨当参考，逐条最近邻取中位数）。这里异步取，
-    // 不拖慢首屏；拿到之后如果没有手动微调，就直接套上。
+    // 不拖慢首屏；两层偏移是相加关系，手动微调回来之后也照样叠加再套一次。
     const applyAutoOffset = idx => {
       const u = SUBS[idx] && SUBS[idx].url;
       if (!u) return;
       autoSubOffset = subOffsets[u] || 0;
-      if (!subOffset) applyOffset(subBase + totalSubOffset());
+      applyOffset(subBase + totalSubOffset());
     };
     fetch('/api/suboffset/' + ITEM).then(r => r.json()).then(j => {
       subOffsets = (j && j.offsets) || {};
@@ -590,11 +644,12 @@ async function boot(){
     art.setting.add({
       html: '字幕',
       name: 'subtitle-toggle',
-      switch: true,
+      switch: subOn,
       onSwitch(item){
         subOn = !item.switch;
         item.switch = subOn;
         setSubVisible(subOn);
+        saveSubState();
         return subOn;
       },
     });
@@ -603,14 +658,16 @@ async function boot(){
       art.setting.add({
         html: '字幕语言',
         width: 220,
-        tooltip: SUBS[0].label,
-        selector: SUBS.map((s, i) => ({html: s.label, url: s.url, default: i === 0})),
+        tooltip: SUBS[curSubIdx].label,
+        selector: SUBS.map((s, i) => ({html: s.label, url: s.url, default: i === curSubIdx})),
         onSelect(item){
           curSubIdx = SUBS.findIndex(s => s.url === item.url);
           if (curSubIdx < 0) curSubIdx = 0;
           // 换语言就换一套偏移：每条字幕相对参考轨的偏差不一样
           autoSubOffset = subOffsets[item.url] || 0;
           subOffset = 0;
+          syncOffsetControl();
+          saveSubState();
           art.subtitle.switch(subURL(item.url), subArgs(item.html)).catch(()=>{});
           return item.html;
         },
@@ -633,14 +690,19 @@ async function boot(){
     art.setting.add({
       html: '字幕偏移',
       name: 'subtitle-offset-custom',
-      tooltip: '0s',
-      range: [0, -10, 10, 0.1],
+      tooltip: fmtSubOffset(subOffset),
+      range: [subOffset, -10, 10, 0.1],
       onChange(item){
         subOffset = item.range[0];
+        saveSubState();                            // 先落盘，别让后面的渲染异常吞掉设置
         applyOffset(subBase + totalSubOffset());
-        return (subOffset > 0 ? '+' : '') + subOffset + 's';
+        return fmtSubOffset(subOffset);
       },
     });
+
+    // Artplayer 建 range 时先赋 value、后设 min（此时 min 还是默认的 0），
+    // 负偏移会被浏览器夹成 0。等设置项挂上 DOM 后再补一次，正数负数都能正确显示。
+    syncOffsetControl();
   }
 
   // 播放方式不做成选项：能直接播就直连，音轨解不了就预转码优先、没有才实时转码，
@@ -709,6 +771,15 @@ window.__litemsAudio = () => ({
     error: audioEl.error && audioEl.error.code,
   } : null,
   audioOn: audioOn,
+  subs: {
+    on: subOn,
+    idx: curSubIdx,
+    url: (SUBS[curSubIdx] && SUBS[curSubIdx].url) || '',
+    auto: autoSubOffset,
+    manual: subOffset,
+    // 换语言时要能把滑块读数同步归零；这里顺便暴露给诊断面板
+    offsetCtrl: !!document.querySelector('[data-name="subtitle-offset-custom"]'),
+  },
 });
 
 if (/[?&]diag(=1)?(&|$)/.test(location.search)) {
