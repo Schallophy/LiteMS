@@ -158,17 +158,24 @@ const MODE_LABEL = {auto:'自动', pre:'预转码', live:'实时转码', native:
 // 用来对比两种模式的实际表现，或者分享一条「这条用实时转码看」的链接。
 const MODE_OVERRIDE = (new URLSearchParams(location.search).get('mode') || '').toLowerCase();
 
+// AUDIO_HINT 为空＝文件名里没有浏览器解不了的音轨标签，这条能直接播。
+const DIRECT_OK = AUDIO_HINT === '';
+// 只有「不能直接播 + 已经有预转码产物」时才真有两种活法（预转码不耗 CPU，
+// 实时转码不占磁盘）。能直接播的没什么好选；不能直接播又没预转码，实时转码
+// 是唯一的路，也不用选——所以这两种情况播放器里都不摆这个选项。
+const MODE_CHOICES = !DIRECT_OK && PRE_READY && LIVE_READY;
+
 function pickMode(){
   if (MODE_OVERRIDE === 'pre' && PRE_READY) return 'pre';
   if (MODE_OVERRIDE === 'live' && LIVE_READY) return 'live';
   if (MODE_OVERRIDE === 'native') return 'native';
+  // 能直接播就先试原生直连——零转码、完整时长、Range 拖动最流畅。
+  // 实时转码是滑动窗口，拖动还会重起流，能不走的路就不走。
+  if (DIRECT_OK) return 'native';
+  // 音轨解不了：用户在两种转码里挑过的那个优先，没挑过就预转码优先（省 CPU）
   const pref = localStorage.getItem(MODE_KEY) || 'auto';
   if (pref === 'pre' && PRE_READY) return 'pre';
   if (pref === 'live' && LIVE_READY) return 'live';
-  // auto：音轨没问题的先试原生直连——零转码、完整时长、Range 拖动最流畅。
-  // 实时转码是滑动窗口，总时长只有已转出的部分（几十秒起），拖动还会重起
-  // 流，能不走的路就不走。音轨解不了才转码：有预转码产物用预转码，否则实时。
-  if (AUDIO_HINT === '') return 'native';
   if (PRE_READY) return 'pre';
   if (LIVE_READY) return 'live';
   return 'native';
@@ -642,20 +649,18 @@ async function boot(){
     });
   }
 
-  /* 播放方式：两种模式都是一等功能，选完刷新页面生效 */
-  if (PRE_READY || LIVE_READY){
-    const pref = localStorage.getItem(MODE_KEY) || 'auto';
-    const optsList = [];
-    if (PRE_READY) optsList.push({html:'预转码（不耗 CPU）', value:'pre'});
-    if (LIVE_READY) optsList.push({html:'实时转码（不占磁盘）', value:'live'});
+  /* 播放方式：只有真有两种活法时才摆出来（见 MODE_CHOICES），选完刷新页面生效 */
+  if (MODE_CHOICES){
     art.setting.add({
       html: '播放方式',
       name: 'play-mode',
       width: 240,
-      tooltip: MODE_OVERRIDE && MODE_LABEL[MODE_OVERRIDE]
-        ? 'URL 指定 · ' + MODE_LABEL[MODE_OVERRIDE]
-        : (MODE_LABEL[pref] || '自动'),
-      selector: optsList.map(o => ({...o, default: o.value === mode})),
+      // 列表里没有「自动」，所以标签直接读实际生效的那一档，别读 localStorage
+      tooltip: (MODE_OVERRIDE ? 'URL 指定 · ' : '') + (MODE_LABEL[mode] || '自动'),
+      selector: [
+        {html:'预转码（不耗 CPU）', value:'pre',  default: mode === 'pre'},
+        {html:'实时转码（不占磁盘）', value:'live', default: mode === 'live'},
+      ],
       onSelect(item){
         localStorage.setItem(MODE_KEY, item.value);
         location.reload();

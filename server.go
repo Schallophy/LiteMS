@@ -879,10 +879,10 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 		LiveReady:  ffmpegReady(),
 		Subs:       s.subsFor(*it),
 	}
-	// 转码缓存已就绪：?web=1 会自动命中它，无声提示就不用了
-	if s.tc.Has(id) {
-		data.AudioHint = ""
-	}
+	// 注意：这里**不能**因为转码缓存就绪就把 AudioHint 抹掉。播放页要拿它判断
+	// 「能不能直接播」——抹掉后就会误判成原生直连，而 /stream/ 永远是原文件，
+	// 结果画面正常、音轨依旧无声。缓存就绪时页面会自己走预转码，那条「没声音」
+	// 的提示在非原生模式下是隐藏的，不需要在这里替它消音。
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tpl.ExecuteTemplate(w, "play.html", data); err != nil {
 		warnf("渲染播放页失败：%v", err)
