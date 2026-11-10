@@ -45,17 +45,18 @@ func TestPlanMirrorSingleFile(t *testing.T) {
 	root := t.TempDir()
 	linkDir := filepath.Join(t.TempDir(), "Downloads")
 
-	// 文件名与条目名一致：平铺
+	// 文件名与条目名一致：同样「每片一目录」，目录名去掉扩展名
 	p := filepath.Join(root, "movie.mkv")
 	os.WriteFile(p, []byte("x"), 0o644)
 	items, _ := planMirror(p, "movie.mkv", linkDir)
-	if len(items) != 1 || items[0][1] != filepath.Join(linkDir, "movie.mkv") {
-		t.Errorf("平铺规则错误：%v", items)
+	want := filepath.Join(linkDir, "movie", "movie.mkv")
+	if len(items) != 1 || items[0][1] != want {
+		t.Errorf("单文件归档规则错误：%v，应为 %v", items, want)
 	}
 
-	// 文件名与条目名不一致：补一层条目名目录
+	// 条目名不带扩展名：目录名保持原样
 	items, _ = planMirror(p, "Bar.2023", linkDir)
-	want := filepath.Join(linkDir, "Bar.2023", "movie.mkv")
+	want = filepath.Join(linkDir, "Bar.2023", "movie.mkv")
 	if len(items) != 1 || items[0][1] != want {
 		t.Errorf("归档规则错误：%v，应为 %v", items, want)
 	}
@@ -117,10 +118,10 @@ func TestCleanDangling(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("应清理 1 条悬空链接，得到 %d", n)
 	}
-	if _, err := os.Lstat(filepath.Join(media, "Downloads", "A.mkv")); err != nil {
+	if _, err := os.Lstat(filepath.Join(media, "Downloads", "A", "A.mkv")); err != nil {
 		t.Errorf("正常链接不应被清理：%v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(media, "Downloads", "B.mkv")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(media, "Downloads", "B", "B.mkv")); !os.IsNotExist(err) {
 		t.Errorf("悬空链接应被删除")
 	}
 }
@@ -160,7 +161,7 @@ func TestCleanDanglingNested(t *testing.T) {
 	if _, err := os.Lstat(mirrorFoo); !os.IsNotExist(err) {
 		t.Errorf("只剩侧车文件的孤儿目录应被移除：%v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(media, "Downloads", "keep.mkv")); err != nil {
+	if _, err := os.Lstat(filepath.Join(media, "Downloads", "keep", "keep.mkv")); err != nil {
 		t.Errorf("正常镜像不应被清理：%v", err)
 	}
 }
@@ -182,7 +183,7 @@ func TestSyncDownloadsCopyMode(t *testing.T) {
 	if n, _ := syncDownloads(cfg); n != 1 {
 		t.Fatalf("首次应复制 1 个文件，得到 %d", n)
 	}
-	dst := filepath.Join(media, "Downloads", "movie.mkv")
+	dst := filepath.Join(media, "Downloads", "movie", "movie.mkv")
 	fi, err := os.Stat(dst)
 	if err != nil || fi.Mode()&os.ModeSymlink != 0 {
 		t.Fatalf("copy 模式应是实体文件：%v", err)

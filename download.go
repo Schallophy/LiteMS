@@ -68,12 +68,23 @@ func isTempFile(name string) bool {
 	return false
 }
 
+// stripVideoExt 去掉条目名尾部的视频扩展名（用作目录名）。
+// 只认真正的视频扩展名：Bar.2023 的 .2023 不是扩展名，不能被剥掉。
+func stripVideoExt(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".mkv", ".mp4", ".avi", ".ts", ".m4v", ".mov", ".wmv", ".webm":
+		return strings.TrimSuffix(name, filepath.Ext(name))
+	}
+	return name
+}
+
 // planMirror 计算一个下载条目（种子目录或单文件）应镜像到库里的文件清单。
 //
 // 目录：按原结构归档到 <落点>/<目录名>/ 下，用内容目录名而不是相对下载根
 // 的路径——自定义保存位置不会把外层层级带进库。
-// 单文件：文件名与条目名一致时平铺，不一致就补一层条目名目录，
-// 避免两个种子的同名文件互相覆盖。
+// 单文件：同样「每片一目录」（目录名 = 条目名去扩展名）。平铺会让镜像根
+// 堆满散文件，刮削产物（NFO/海报）也跟着散落，还会出现共享目录里
+// 「A 片认领 B 片海报」的串位——布局上根除它。
 func planMirror(entryPath, entryName, linkDir string) ([][2]string, error) {
 	fi, err := os.Stat(entryPath)
 	if err != nil {
@@ -83,11 +94,7 @@ func planMirror(entryPath, entryName, linkDir string) ([][2]string, error) {
 	var items [][2]string // [源, 落点]
 	if !fi.IsDir() {
 		base := filepath.Base(entryPath)
-		dst := filepath.Join(linkDir, entryName)
-		if base != entryName {
-			dst = filepath.Join(linkDir, entryName, base)
-		}
-		return [][2]string{{entryPath, dst}}, nil
+		return [][2]string{{entryPath, filepath.Join(linkDir, stripVideoExt(entryName), base)}}, nil
 	}
 
 	base := filepath.Base(entryPath)
