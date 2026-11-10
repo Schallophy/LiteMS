@@ -742,6 +742,46 @@ WHERE id=?`,
 	return err
 }
 
+// RekeyItem 条目目录改名后的数据库迁移：ID、rel_path、search_key、图片路径
+// 一起换。progress.item_id 是外键（ON DELETE CASCADE，没有 ON UPDATE），SQLite
+// 不允许先改父主键（子行悬挂）、也不允许子行指向不存在的父——所以顺序必须是
+// 取出 progress → 删行 → 改 items 主键 → 把 progress 插回新 ID。
+func (d *DB) RekeyItem(oldID, newID, newRel, posterRel, fanartRel, title, orig string) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var pos, dur, fin, upd int64
+	err = tx.QueryRow(`SELECT position_ms, duration_ms, finished, updated_at
+		FROM progress WHERE item_id=?`, oldID).Scan(&pos, &dur, &fin, &upd)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	hasProgress := err == nil
+
+	if _, err := tx.Exec(`DELETE FROM progress WHERE item_id=?`, oldID); err != nil {
+		return fmt.Errorf("删旧 progress: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE items SET id=?, rel_path=?, search_key=?, poster_path=?, fanart_path=?
+		WHERE id=?`,
+		newID, newRel, SearchKey(title, orig, newRel),
+		nullString(posterRel), nullString(fanartRel), oldID); err != nil {
+		return fmt.Errorf("改条目主键: %w", err)
+	}
+	if hasProgress {
+		if _, err := tx.Exec(`INSERT INTO progress(item_id,position_ms,duration_ms,finished,updated_at)
+			VALUES(?,?,?,?,?)`, newID, pos, dur, fin, upd); err != nil {
+			return fmt.Errorf("回插 progress: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交改名事务: %w", err)
+	}
+	return nil
+}
+
 // SetScrapeStatus 只更新状态与时间戳（miss / manual / error 用）。
 func (d *DB) SetScrapeStatus(id, status string, ts int64) error {
 	_, err := d.sql.Exec(`UPDATE items SET scrape_status=?, scraped_at=? WHERE id=?`, status, ts, id)

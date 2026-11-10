@@ -108,8 +108,17 @@ func TestScrapePipeline(t *testing.T) {
 		t.Fatalf("应成功 1 条，实际 %+v", stats)
 	}
 
-	// NFO 落盘且内容正确
-	nfoPath := filepath.Join(dir, "movie.nfo")
+	// 目录已按刮削到的英文名改名（original_title 是拉丁字母的 "Interstellar"）
+	renamed := filepath.Join(root, "电影", "Interstellar (2014)")
+	if _, err := os.Stat(renamed); err != nil {
+		t.Fatalf("目录应改名为 Interstellar (2014)：%v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("旧目录应已不存在：%v", err)
+	}
+
+	// NFO 落盘且内容正确（在新目录里）
+	nfoPath := filepath.Join(renamed, "movie.nfo")
 	b, err := os.ReadFile(nfoPath)
 	if err != nil {
 		t.Fatalf("应生成 movie.nfo：%v", err)
@@ -127,9 +136,9 @@ func TestScrapePipeline(t *testing.T) {
 		}
 	}
 
-	// 图片落盘
+	// 图片落盘（新目录里）
 	for _, name := range []string{"poster.jpg", "fanart.jpg"} {
-		fi, err := os.Stat(filepath.Join(dir, name))
+		fi, err := os.Stat(filepath.Join(renamed, name))
 		if err != nil {
 			t.Errorf("应下载 %s：%v", name, err)
 			continue
@@ -139,7 +148,7 @@ func TestScrapePipeline(t *testing.T) {
 		}
 	}
 
-	// 索引回填
+	// 索引回填，rel_path 与图片路径都指向新目录
 	items, _, err := db.ListItems(ItemFilter{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +159,16 @@ func TestScrapePipeline(t *testing.T) {
 	it := items[0]
 	if it.TmdbID != 157336 || it.Rating < 8.4 || it.PosterPath == "" || it.FanartPath == "" {
 		t.Errorf("索引回填不完整：%+v", it)
+	}
+	if it.RelPath != filepath.ToSlash(filepath.Join("电影", "Interstellar (2014)", "星际穿越 (2014).mkv")) {
+		t.Errorf("rel_path 应指向新目录：%q", it.RelPath)
+	}
+	if !strings.Contains(it.PosterPath, "Interstellar (2014)") {
+		t.Errorf("poster_path 应在新目录里：%q", it.PosterPath)
+	}
+	// 改名后的条目按新 ID 存在（ItemID = sha1(root/rel)）
+	if want := ItemID(root, filepath.ToSlash(it.RelPath)); it.ID != want {
+		t.Errorf("ID 应与新路径一致：got %s want %s", it.ID, want)
 	}
 	if it.ScrapeStatus != "ok" || it.ScrapedAt == 0 {
 		t.Errorf("状态应为 ok 且有刮削时间：%+v", it)

@@ -409,6 +409,8 @@ func (r *Runner) processMovie(ctx context.Context, it *Item, full, dir, stem str
 		r.fail(it, err)
 		return
 	}
+	// 刮到了正经名字，目录也跟着换——发布组名不该留在用户的媒体库里
+	r.renameToScrapedName(ctx, it, dir, meta)
 	r.stats.OK++
 	r.stats.Images += images
 	fmt.Printf("  [成功] %-22s TMDB %-8d %s\n", truncate(nfo.Title, 22), meta.TmdbID, imageNote(images))
