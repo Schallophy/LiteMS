@@ -300,3 +300,28 @@ body{margin:0;min-height:100dvh}
   -webkit-mask-image:radial-gradient(circle at 50% 42%,#000 22%,transparent 74%);
           mask-image:radial-gradient(circle at 50% 42%,#000 22%,transparent 74%)}
 {{end}}
+
+{{define "themeBoot"}}
+<script>
+/* 主题解析：data-theme=auto 时按系统偏好现算，并监听变化——
+   切系统深浅色时页面立刻跟着走，不用刷新。显式 light/dark 则原样保留。
+   放在 </style> 之后、</head> 之前：此时 body 还没解析，不会闪一帧错误配色。 */
+(function(){
+  var root = document.documentElement;
+  var pref = root.getAttribute('data-theme') || 'auto';
+  var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  function paint(){
+    var t = (pref === 'light' || pref === 'dark') ? pref
+          : (mq && mq.matches ? 'dark' : 'light');
+    root.setAttribute('data-theme', t);
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', t === 'dark' ? '#111112' : '#f5f4f1');
+  }
+  paint();
+  if (pref !== 'light' && pref !== 'dark' && mq){
+    if (mq.addEventListener) mq.addEventListener('change', paint);
+    else if (mq.addListener) mq.addListener(paint);   // Safari < 14
+  }
+})();
+</script>
+{{end}}

@@ -90,8 +90,23 @@ type ScrapeConfig struct {
 
 type UIConfig struct {
 	Title    string `toml:"title"`
-	Theme    string `toml:"theme"`
+	Theme    string `toml:"theme"` // auto | light | dark；auto 跟随系统
 	PageSize int    `toml:"page_size"`
+}
+
+// NormalizeTheme 把 [ui].theme 收敛到三个合法值。
+// auto 是默认：浏览器端按 prefers-color-scheme 现算，切换系统主题时页面跟着变；
+// light / dark 则是明确的覆盖。不认识的值按 auto 处理，不让一个手滑的主题名
+// 把整站卡在某个颜色上。
+func NormalizeTheme(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "light":
+		return "light"
+	case "dark":
+		return "dark"
+	default:
+		return "auto"
+	}
 }
 
 type WatchConfig struct {
@@ -150,7 +165,7 @@ func DefaultConfig() *Config {
 		},
 		UI: UIConfig{
 			Title:    "我的媒体库",
-			Theme:    "dark",
+			Theme:    "auto",
 			PageSize: 60,
 		},
 		Watch: WatchConfig{Enabled: true, IntervalMin: 30},
@@ -276,6 +291,10 @@ func (c *Config) applyDefaults() {
 	if c.UI.PageSize <= 0 {
 		c.UI.PageSize = d.UI.PageSize
 	}
+	if c.UI.Theme == "" {
+		c.UI.Theme = d.UI.Theme
+	}
+	c.UI.Theme = NormalizeTheme(c.UI.Theme)
 	if c.Watch.IntervalMin <= 0 {
 		c.Watch.IntervalMin = d.Watch.IntervalMin
 	}

@@ -85,6 +85,7 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
   .actions .btn{flex:1 1 auto}
 }
 </style>
+{{template "themeBoot"}}
 </head>
 <body>
 <header class="top">
@@ -204,6 +205,25 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
                  placeholder="{{if .OMDBMasked}}已配置 {{.OMDBMasked}} — 留空不修改{{else}}仅在后端切到 omdb 时需要{{end}}">
         </label>
         <p class="hint">OMDb 免费档每天 1000 次，没有中文简介、没有背景图，只在新片匹配失败时当兜底。</p>
+      </div>
+    </section>
+
+    <section class="sec">
+      <div class="sec-no">05</div>
+      <div class="sec-body">
+        <h2>外观</h2>
+        <label>
+          <span class="lbl">主题</span>
+          <select name="page_theme">
+            <option value="auto" {{if eq .Theme "auto"}}selected{{end}}>跟随系统</option>
+            <option value="light" {{if eq .Theme "light"}}selected{{end}}>浅色</option>
+            <option value="dark" {{if eq .Theme "dark"}}selected{{end}}>深色</option>
+          </select>
+        </label>
+        <p class="hint">
+          「跟随系统」按浏览器的深色偏好现算：系统切成深色，页面立刻跟着变，不用刷新。
+          选浅色或深色就是钉死某一套配色。保存后立即生效。
+        </p>
       </div>
     </section>
 

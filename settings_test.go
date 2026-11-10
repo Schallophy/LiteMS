@@ -86,10 +86,10 @@ title = "我的媒体库"
 	text := string(got)
 
 	for _, want := range []string{
-		"# 手工写的注释",                     // 文件头注释
+		"# 手工写的注释",                        // 文件头注释
 		`root = "/home/u/Media"   # 行尾注释`, // 其它段原样
 		"concurrency = 2          # 不许被改动",
-		`provider = "tmdb"`,   // 白名单内被更新
+		`provider = "tmdb"`, // 白名单内被更新
 		`tmdb_token = "new-token"`,
 		`omdb_key = ""`, // 显式清空
 		"[scrape]",
@@ -212,5 +212,57 @@ provider = "tmdb"
 	}
 	if !strings.Contains(string(text), "# 手工写的注释") {
 		t.Errorf("文件头注释丢失")
+	}
+}
+
+// 主题三个值原样保留，其它一律按 auto：手滑写个 "Dark"/"night" 也不能把整站卡住。
+func TestNormalizeTheme(t *testing.T) {
+	cases := map[string]string{
+		"light":   "light",
+		"dark":    "dark",
+		"auto":    "auto",
+		"Dark":    "dark",
+		" light ": "light",
+		"":        "auto",
+		"night":   "auto",
+	}
+	for in, want := range cases {
+		if got := NormalizeTheme(in); got != want {
+			t.Errorf("NormalizeTheme(%q) = %q，想要 %q", in, got, want)
+		}
+	}
+}
+
+// 设置页保存主题：写进 [ui].theme，并且运行时值立刻切过去（不必重启）。
+func TestWriteThemeSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := writeSectionKeys(path, "ui", uiSettingKeys, map[string]string{
+		"theme": tomlString("dark"),
+	}); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	cfg, _, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("重新解析失败: %v", err)
+	}
+	if cfg.UI.Theme != "dark" {
+		t.Errorf("[ui].theme = %q，想要 dark", cfg.UI.Theme)
+	}
+	// 再写一次 auto，确认是原位替换而不是追加重复键
+	if err := writeSectionKeys(path, "ui", uiSettingKeys, map[string]string{
+		"theme": tomlString("auto"),
+	}); err != nil {
+		t.Fatalf("二次写入失败: %v", err)
+	}
+	text, _ := os.ReadFile(path)
+	if strings.Count(string(text), `theme = `) != 1 {
+		t.Errorf("[ui].theme 出现多次:\n%s", text)
+	}
+	cfg2, _, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("二次解析失败: %v", err)
+	}
+	if cfg2.UI.Theme != "auto" {
+		t.Errorf("二次写入后 theme = %q，想要 auto", cfg2.UI.Theme)
 	}
 }

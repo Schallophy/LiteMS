@@ -39,6 +39,10 @@ type Server struct {
 	credsMu sync.RWMutex
 	creds   scrapeCreds
 
+	// 主题同理：设置页改完立刻生效，不必重启；空值表示沿用 cfg 里的初值。
+	themeMu sync.RWMutex
+	theme   string
+
 	tc  *Transcoder
 	hls *HLSServer
 
@@ -821,7 +825,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		next = page + 1
 	}
 	data := pageData{
-		Title: s.cfg.UI.Title, Theme: s.cfg.UI.Theme,
+		Title: s.cfg.UI.Title, Theme: s.pageTheme(),
 		Query: f.Q, Kind: f.Kind, Sort: f.Sort, Page: page,
 		PrevPage: page - 1, NextPage: next, Total: total, Items: out,
 	}
@@ -844,7 +848,7 @@ func (s *Server) handleItemPage(w http.ResponseWriter, r *http.Request) {
 	}
 	d := s.toDTO(*it)
 	data := pageData{
-		Title: s.cfg.UI.Title, Theme: s.cfg.UI.Theme, Item: &d,
+		Title: s.cfg.UI.Title, Theme: s.pageTheme(), Item: &d,
 		Detail:      detailFor(s.roots, *it),
 		HelperToken: s.cfg.Launch.Token, HelperPort: helperPort(s.cfg.Launch.Listen),
 		AudioHint: audioHint(it.RelPath, it.Container),
@@ -872,7 +876,7 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 	d := s.toDTO(*it)
 	data := pageData{
 		Title:      s.cfg.UI.Title,
-		Theme:      s.cfg.UI.Theme,
+		Theme:      s.pageTheme(),
 		Item:       &d,
 		AudioHint:  audioHint(it.RelPath, it.Container),
 		AudioReady: s.tc.Has(id),

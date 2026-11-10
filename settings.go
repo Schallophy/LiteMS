@@ -19,6 +19,9 @@ var scrapeSettingKeys = []string{"provider", "language", "tmdb_token", "tmdb_key
 // librarySettingKeys 是设置页允许写入 [library] 的字段白名单。
 var librarySettingKeys = []string{"root", "extra_roots", "follow_file_symlinks", "download_dir", "download_mode"}
 
+// uiSettingKeys 是设置页允许写入 [ui] 的字段白名单（主题只写这一项，标题不动）。
+var uiSettingKeys = []string{"theme"}
+
 // tomlString 把 Go 字符串序列化成 TOML 字符串字面量。
 // 写回函数现在写的是「原始 TOML 右值」，字符串必须由调用方自行加引号。
 func tomlString(s string) string {
@@ -92,6 +95,24 @@ func (s *Server) setCreds(c scrapeCreds) {
 	s.credsMu.Unlock()
 }
 
+// pageTheme 返回当前生效的主题（auto / light / dark）。设置页改完立刻生效，
+// 所以先看运行时的值，没有才回落到配置文件里的初值。
+func (s *Server) pageTheme() string {
+	s.themeMu.RLock()
+	t := s.theme
+	s.themeMu.RUnlock()
+	if t != "" {
+		return t
+	}
+	return NormalizeTheme(s.cfg.UI.Theme)
+}
+
+func (s *Server) setTheme(t string) {
+	s.themeMu.Lock()
+	s.theme = NormalizeTheme(t)
+	s.themeMu.Unlock()
+}
+
 // settingsView 是设置页的渲染数据。
 type settingsView struct {
 	Title        string
@@ -105,11 +126,11 @@ type settingsView struct {
 	ConfigPath   string
 	ConfigExists bool
 	AuthOn       bool
-	LibraryRoot    string
-	LibraryExtra   string
-	LibraryLinks   bool
-	DownloadDir    string
-	DownloadMode   string
+	LibraryRoot  string
+	LibraryExtra string
+	LibraryLinks bool
+	DownloadDir  string
+	DownloadMode string
 	Message      string
 	Error        string
 	Probe        string
@@ -122,16 +143,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	cur := s.credsSnapshot()
 	v := settingsView{
-		Title:       s.cfg.UI.Title,
-		Theme:       s.cfg.UI.Theme,
-		Token:       s.settingsToken,
-		Provider:    cur.Provider,
-		Language:    cur.Language,
-		TMDBMasked:  maskSecret(cur.TMDBToken),
-		TMDBKeyMask: maskSecret(cur.TMDBKey),
-		OMDBMasked:  maskSecret(cur.OMDBKey),
-		ConfigPath:  cfgPath,
-		AuthOn:      s.cfg.Server.AuthUser != "",
+		Title:        s.cfg.UI.Title,
+		Theme:        s.pageTheme(),
+		Token:        s.settingsToken,
+		Provider:     cur.Provider,
+		Language:     cur.Language,
+		TMDBMasked:   maskSecret(cur.TMDBToken),
+		TMDBKeyMask:  maskSecret(cur.TMDBKey),
+		OMDBMasked:   maskSecret(cur.OMDBKey),
+		ConfigPath:   cfgPath,
+		AuthOn:       s.cfg.Server.AuthUser != "",
 		LibraryRoot:  s.cfg.Library.Root,
 		LibraryExtra: strings.Join(s.cfg.Library.ExtraRoots, "\n"),
 		LibraryLinks: s.cfg.Library.FollowFileSymlinks,
@@ -189,6 +210,14 @@ func (s *Server) applySettings(w http.ResponseWriter, r *http.Request, v *settin
 	if next.Scrape.Provider != "tmdb" && next.Scrape.Provider != "omdb" {
 		v.Error = fmt.Sprintf("数据源只能是 tmdb 或 omdb，收到 %q", next.Scrape.Provider)
 		return true
+	}
+
+	// ---- 外观 ----
+	// 表单里没有这个字段（旧页面缓存）就保持原值，别把用户明确的 light/dark 冲成 auto
+	if vals, ok := r.PostForm["page_theme"]; ok && len(vals) > 0 {
+		theme := NormalizeTheme(vals[0])
+		next.UI.Theme = theme
+		v.Theme = theme
 	}
 
 	// ---- 媒体库 ----
@@ -278,6 +307,15 @@ func (s *Server) applySettings(w http.ResponseWriter, r *http.Request, v *settin
 		v.Error = "写入配置文件失败：" + err.Error()
 		return true
 	}
+
+	// 外观：主题改完立刻生效（页面每次渲染都读运行时值），不用重启
+	if err := writeSectionKeys(cfgPath, "ui", uiSettingKeys, map[string]string{
+		"theme": tomlString(next.UI.Theme),
+	}); err != nil {
+		v.Error = "写入配置文件失败：" + err.Error()
+		return true
+	}
+	s.setTheme(next.UI.Theme)
 
 	s.setCreds(credsFromConfig(&next))
 	v.ConfigExists = true
