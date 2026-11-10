@@ -27,7 +27,7 @@ func TestPlanMirrorDir(t *testing.T) {
 	src := makeFakeTorrent(t, t.TempDir(), "Foo.2024.1080p")
 	linkDir := filepath.Join(t.TempDir(), "Downloads")
 
-	items, err := planMirror(src, "Foo.2024.1080p", linkDir)
+	items, err := planMirror(src, "Foo.2024.1080p", linkDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,14 +48,14 @@ func TestPlanMirrorSingleFile(t *testing.T) {
 	// 文件名与条目名一致：同样「每片一目录」，目录名去掉扩展名
 	p := filepath.Join(root, "movie.mkv")
 	os.WriteFile(p, []byte("x"), 0o644)
-	items, _ := planMirror(p, "movie.mkv", linkDir)
+	items, _ := planMirror(p, "movie.mkv", linkDir, "")
 	want := filepath.Join(linkDir, "movie", "movie.mkv")
 	if len(items) != 1 || items[0][1] != want {
 		t.Errorf("单文件归档规则错误：%v，应为 %v", items, want)
 	}
 
 	// 条目名不带扩展名：目录名保持原样
-	items, _ = planMirror(p, "Bar.2023", linkDir)
+	items, _ = planMirror(p, "Bar.2023", linkDir, "")
 	want = filepath.Join(linkDir, "Bar.2023", "movie.mkv")
 	if len(items) != 1 || items[0][1] != want {
 		t.Errorf("归档规则错误：%v，应为 %v", items, want)
@@ -75,7 +75,7 @@ func TestSyncDownloadsSymlinkIdempotent(t *testing.T) {
 	cfg.Library.DownloadDir = dl
 	cfg.Library.DownloadMode = "symlink"
 
-	n, err := syncDownloads(cfg)
+	n, err := syncDownloads(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestSyncDownloadsSymlinkIdempotent(t *testing.T) {
 	}
 
 	// 第二次：幂等，无新建
-	n, err = syncDownloads(cfg)
+	n, err = syncDownloads(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestCleanDangling(t *testing.T) {
 	// 种子 A 正常做种；种子 B 下载后被删
 	os.WriteFile(filepath.Join(dl, "A.mkv"), []byte("a"), 0o644)
 	os.WriteFile(filepath.Join(dl, "B.mkv"), []byte("b"), 0o644)
-	syncDownloads(cfg)
+	syncDownloads(cfg, nil)
 
 	os.Remove(filepath.Join(dl, "B.mkv"))
 	n := cleanDangling(downloadLinkDir(cfg))
@@ -139,7 +139,7 @@ func TestCleanDanglingNested(t *testing.T) {
 	cfg.Library.Root = media
 	cfg.Library.DownloadDir = dl
 	cfg.Library.DownloadMode = "symlink"
-	if n, _ := syncDownloads(cfg); n != 1 {
+	if n, _ := syncDownloads(cfg, nil); n != 1 {
 		t.Fatalf("应新建 1 条链接，得到 %d", n)
 	}
 	link := filepath.Join(media, "Downloads", "Foo.2024", "movie.mkv")
@@ -150,13 +150,13 @@ func TestCleanDanglingNested(t *testing.T) {
 	// 种子整个删掉，再放个旁观的正常种子
 	os.RemoveAll(src)
 	os.WriteFile(filepath.Join(dl, "keep.mkv"), []byte("k"), 0o644)
-	syncDownloads(cfg)
+	syncDownloads(cfg, nil)
 
 	// scrape 的侧车文件不该挡住孤儿壳清理
 	mirrorFoo := filepath.Join(media, "Downloads", "Foo.2024")
 	os.WriteFile(filepath.Join(mirrorFoo, "movie.nfo"), []byte("<movie/>"), 0o644)
 	os.WriteFile(filepath.Join(mirrorFoo, "poster.jpg"), []byte("img"), 0o644)
-	syncDownloads(cfg)
+	syncDownloads(cfg, nil)
 
 	if _, err := os.Lstat(mirrorFoo); !os.IsNotExist(err) {
 		t.Errorf("只剩侧车文件的孤儿目录应被移除：%v", err)
@@ -180,7 +180,7 @@ func TestSyncDownloadsCopyMode(t *testing.T) {
 	cfg.Library.DownloadDir = dl
 	cfg.Library.DownloadMode = "copy"
 
-	if n, _ := syncDownloads(cfg); n != 1 {
+	if n, _ := syncDownloads(cfg, nil); n != 1 {
 		t.Fatalf("首次应复制 1 个文件，得到 %d", n)
 	}
 	dst := filepath.Join(media, "Downloads", "movie", "movie.mkv")
@@ -194,7 +194,7 @@ func TestSyncDownloadsCopyMode(t *testing.T) {
 		t.Errorf("副本 mtime %v != 源 %v", fi.ModTime(), si.ModTime())
 	}
 	// 二次同步幂等
-	if n, _ := syncDownloads(cfg); n != 0 {
+	if n, _ := syncDownloads(cfg, nil); n != 0 {
 		t.Errorf("第二次不应复制，得到 %d", n)
 	}
 }
@@ -234,5 +234,61 @@ func TestLinkDirFromBasename(t *testing.T) {
 	cfg.Library.DownloadDir = "/home/u/Downloads"
 	if got := downloadLinkDir(cfg); got != filepath.Join("/data/media", "Downloads") {
 		t.Errorf("linkDir = %q", got)
+	}
+}
+
+// 条目在库里被刮削改名后，同步必须跟随新目录，而不是把旧名目录复活。
+func TestSyncFollowsRename(t *testing.T) {
+	home := t.TempDir()
+	dl := filepath.Join(home, "Downloads")
+	media := filepath.Join(home, "Media")
+	os.MkdirAll(dl, 0o755)
+	os.MkdirAll(media, 0o755)
+	os.WriteFile(filepath.Join(dl, "Foo.2024.1080p.mkv"), []byte("v"), 0o644)
+
+	cfg := &Config{}
+	cfg.Library.Root = media
+	cfg.Library.DownloadDir = dl
+	cfg.Library.DownloadMode = "symlink"
+	db, err := OpenDB(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SyncRoots([]string{media}); err != nil {
+		t.Fatal(err)
+	}
+
+	if n, err := syncDownloads(cfg, db); err != nil || n != 1 {
+		t.Fatalf("首次应新建 1 条链接：n=%d err=%v", n, err)
+	}
+	oldDir := filepath.Join(media, "Downloads", "Foo.2024.1080p")
+	if _, err := os.Lstat(filepath.Join(oldDir, "Foo.2024.1080p.mkv")); err != nil {
+		t.Fatalf("镜像不存在：%v", err)
+	}
+
+	// 模拟刮削改名
+	newDir := filepath.Join(media, "Downloads", "Foo (2024)")
+	if err := os.Rename(oldDir, newDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// 再同步：不应复活旧目录，应记录映射并跟随新目录
+	if n, err := syncDownloads(cfg, db); err != nil || n != 0 {
+		t.Fatalf("改名后同步不应新建：n=%d err=%v", n, err)
+	}
+	if _, err := os.Lstat(oldDir); !os.IsNotExist(err) {
+		t.Error("旧名目录被复活了")
+	}
+	if v, _ := db.GetKV(mirrorDirKey("Foo.2024.1080p.mkv")); v != "Foo (2024)" {
+		t.Errorf("改名映射未记录：%q", v)
+	}
+	// 映射生效：删掉新目录里的链接再同步，应重建在新目录而不是旧目录
+	os.Remove(filepath.Join(newDir, "Foo.2024.1080p.mkv"))
+	if n, _ := syncDownloads(cfg, db); n != 1 {
+		t.Fatalf("映射生效后应重建 1 条链接：n=%d", n)
+	}
+	if _, err := os.Lstat(filepath.Join(newDir, "Foo.2024.1080p.mkv")); err != nil {
+		t.Errorf("链接没重建进改名后的目录：%v", err)
 	}
 }

@@ -85,19 +85,23 @@ func stripVideoExt(name string) string {
 // 单文件：同样「每片一目录」（目录名 = 条目名去扩展名）。平铺会让镜像根
 // 堆满散文件，刮削产物（NFO/海报）也跟着散落，还会出现共享目录里
 // 「A 片认领 B 片海报」的串位——布局上根除它。
-func planMirror(entryPath, entryName, linkDir string) ([][2]string, error) {
+// dirName 非空时覆盖顶层目录名：刮削改名后的条目靠它跟上新名字
+// （见 syncDownloads 里的改名跟随），否则每次同步都会把旧名目录复活。
+func planMirror(entryPath, entryName, linkDir, dirName string) ([][2]string, error) {
 	fi, err := os.Stat(entryPath)
 	if err != nil {
 		return nil, err
+	}
+	if dirName == "" {
+		dirName = stripVideoExt(entryName)
 	}
 
 	var items [][2]string // [源, 落点]
 	if !fi.IsDir() {
 		base := filepath.Base(entryPath)
-		return [][2]string{{entryPath, filepath.Join(linkDir, stripVideoExt(entryName), base)}}, nil
+		return [][2]string{{entryPath, filepath.Join(linkDir, dirName, base)}}, nil
 	}
 
-	base := filepath.Base(entryPath)
 	err = filepath.WalkDir(entryPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -112,7 +116,7 @@ func planMirror(entryPath, entryName, linkDir string) ([][2]string, error) {
 		if relErr != nil {
 			return relErr
 		}
-		items = append(items, [2]string{path, filepath.Join(linkDir, base, rel)})
+		items = append(items, [2]string{path, filepath.Join(linkDir, dirName, rel)})
 		return nil
 	})
 	return items, err
@@ -271,7 +275,12 @@ var sidecarExts = map[string]bool{
 }
 
 // syncDownloads 检查下载目录并把新内容镜像进库。返回新建条目数。
-func syncDownloads(cfg *Config) (int, error) {
+//
+// 改名跟随：条目在库里的目录可能已被刮削改名（planMirror 推导的目标不在了）。
+// 此时遍历镜像根找指向同一内容的软链，把现居目录名记进 kv
+// （mirror_dir:<条目名>）并按它镜像——不记的话，每次同步都会把旧名目录
+// 连同软链重新建出来，刮好的条目被顶回发布组名。
+func syncDownloads(cfg *Config, db *DB) (int, error) {
 	if cfg.Library.DownloadDir == "" {
 		return 0, nil
 	}
@@ -289,10 +298,29 @@ func syncDownloads(cfg *Config) (int, error) {
 			continue
 		}
 		entryPath := filepath.Join(cfg.Library.DownloadDir, name)
-		items, err := planMirror(entryPath, name, linkDir)
+		dirName := ""
+		if db != nil {
+			dirName, _ = db.GetKV(mirrorDirKey(name))
+		}
+		items, err := planMirror(entryPath, name, linkDir, dirName)
 		if err != nil {
 			warnf("下载镜像：跳过 %s（%v）", name, err)
 			continue
+		}
+		// 推导的目标不在、又没有记录过改名 → 找现居目录并记下来
+		if dirName == "" {
+			if _, err := os.Lstat(items[0][1]); err != nil {
+				if alt := findRenamedDir(entryPath, linkDir); alt != "" {
+					logf("下载镜像：%s 已改名为 %s，跟随新目录", name, alt)
+					if db != nil {
+						_ = db.SetKV(mirrorDirKey(name), alt)
+					}
+					if items, err = planMirror(entryPath, name, linkDir, alt); err != nil {
+						warnf("下载镜像：跳过 %s（%v）", name, err)
+						continue
+					}
+				}
+			}
 		}
 		for _, it := range items {
 			c, _, err := applyMirror(it[0], it[1], cfg.Library.DownloadMode)
@@ -311,13 +339,55 @@ func syncDownloads(cfg *Config) (int, error) {
 	return created, nil
 }
 
+// mirrorDirKey kv 键：某下载条目在库里现居的目录名（刮削改名后记录）。
+func mirrorDirKey(entryName string) string {
+	return "mirror_dir:" + entryName
+}
+
+// findRenamedDir 找条目内容在镜像根下的现居目录：遍历镜像根，找指向
+// 该条目（单文件）或条目内部文件（目录种子）的软链，返回链接所在目录
+// 相对镜像根的第一段。没有就返回空串。
+func findRenamedDir(entryPath, linkDir string) string {
+	var found string
+	isFile := false
+	if fi, err := os.Stat(entryPath); err == nil && !fi.IsDir() {
+		isFile = true
+	}
+	_ = filepath.WalkDir(linkDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || found != "" || d.IsDir() {
+			return nil
+		}
+		target, lerr := os.Readlink(p)
+		if lerr != nil {
+			return nil // 普通文件不是镜像软链
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(p), target)
+		}
+		if isFile {
+			if filepath.Clean(target) != filepath.Clean(entryPath) {
+				return nil
+			}
+		} else if !strings.HasPrefix(target, entryPath+string(os.PathSeparator)) {
+			return nil
+		}
+		rel, rerr := filepath.Rel(linkDir, filepath.Dir(p))
+		if rerr != nil || rel == "." {
+			return nil
+		}
+		found = strings.Split(filepath.ToSlash(rel), "/")[0]
+		return nil
+	})
+	return found
+}
+
 // syncAndIndex 镜像 + （有新内容时）增量扫描 + 刮削。
 // serve 的同步循环与启动流程共用这一段。
 func syncAndIndex(cfg *Config, db *DB) {
 	mirrorMu.Lock()
 	defer mirrorMu.Unlock()
 
-	created, err := syncDownloads(cfg)
+	created, err := syncDownloads(cfg, db)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			warnf("下载镜像失败：%v", err)
