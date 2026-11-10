@@ -27,13 +27,17 @@ main{padding:0 var(--g) 88px}
   color:var(--faint)}
 .sec h2{margin:0 0 20px;font:600 16px/1.4 var(--font-heading);letter-spacing:.01em}
 
-.alert{display:flex;gap:10px;align-items:flex-start;margin-bottom:16px;
-  padding:12px 16px;border-radius:10px;font-size:13px;line-height:1.65;
-  background:color-mix(in srgb,var(--tone) 9%,transparent);
-  box-shadow:inset 2px 0 0 var(--tone);
-  color:color-mix(in srgb,var(--tone) 62%,var(--ink))}
-.alert.ok{--tone:#3f9d63}
-.alert.err{--tone:var(--danger)}
+/* 结果提示：浮在视口底部，不参与文档流——保存/测试后页面不会被顶下去。
+   沿用共享层的 .toast（fixed + translate + 淡入），这里只改形状与错误色。 */
+.toast{border-radius:var(--r-panel);max-width:min(560px,calc(100vw - 32px));
+  padding:12px 18px;line-height:1.7;text-align:left}
+/* 服务端直出时就已经带 .on，补一段入场动画，不然是「啪」地出现 */
+.toast.on{animation:tip-in .32s var(--ease-out) both}
+@keyframes tip-in{from{opacity:0;transform:translate(-50%,10px)}}
+.toast.err{color:var(--danger);
+  background:color-mix(in srgb,var(--danger) 12%,var(--surface));
+  box-shadow:var(--ring),var(--sh-md)}
+.toast.err.on{pointer-events:auto;cursor:pointer}
 
 label{display:block;margin-bottom:20px}
 .lbl{display:block;margin-bottom:8px;font-size:12.5px;color:var(--muted)}
@@ -99,8 +103,11 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
     <p class="lead">刮削用的 API 凭据只保存在本机配置文件里，不会发往任何第三方。</p>
   </header>
 
-  {{if .Error}}<div class="alert err">{{.Error}}</div>{{end}}
-  {{if .Message}}<div class="alert ok">{{.Message}}</div>{{end}}
+  {{if .Error}}
+  <div class="toast err on" id="tip" role="alert" title="点击关闭">{{.Error}}</div>
+  {{else if .Message}}
+  <div class="toast on" id="tip" role="status">{{.Message}}</div>
+  {{end}}
 
   <form method="post" action="/settings" autocomplete="off">
     <input type="hidden" name="token" value="{{.Token}}">
@@ -220,5 +227,42 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;
   </div>
 </div>
 </main>
+
+<script>
+/* 表单是整页 POST 回来的：浏览器会从头渲染并停在页面顶部，点「测试连接」时
+   人还在底部的按钮上，回来就丢了位置。提交前把滚动位置记进 sessionStorage，
+   回来再还原。只在这页真的有结果提示时还原——从别处进设置页不会跳到旧位置。 */
+const tipEl = document.getElementById('tip');
+const formEl = document.querySelector('form');
+const SCROLL_KEY = 'litems.settings.scroll';
+
+formEl.addEventListener('submit', () => {
+  try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (e) {}
+});
+
+if (tipEl) {
+  let y = null;
+  try {
+    y = sessionStorage.getItem(SCROLL_KEY);
+    sessionStorage.removeItem(SCROLL_KEY);
+  } catch (e) {}
+  if (y !== null) {
+    // 等布局稳定再滚：文档没图片，load 后一帧一定拿得到最终高度
+    const restore = () => requestAnimationFrame(() => window.scrollTo(0, Number(y) || 0));
+    if (document.readyState === 'complete') restore();
+    else addEventListener('load', restore);
+  }
+
+  const close = () => {
+    tipEl.classList.remove('on');
+    setTimeout(() => tipEl.remove(), 400);
+  };
+  if (tipEl.classList.contains('err')) {
+    tipEl.addEventListener('click', close);   // 错误常驻，点一下关掉
+  } else {
+    setTimeout(close, 5000);                  // 成功 5 秒自动淡出
+  }
+}
+</script>
 </body>
 </html>
