@@ -124,7 +124,10 @@ main{padding:0 var(--g) 72px}
     const on = et.querySelector('.et-btn[aria-current]');
     if (!on) { thumb.removeAttribute('data-on'); return; }
     thumb.style.width = on.offsetWidth + 'px';
-    thumb.style.translate = (on.offsetLeft - 4) + 'px 0';
+    // 不要减 .et 的 padding：offsetLeft 已经是相对 .et 内边距盒的偏移（含 4px padding），
+    // 而 thumb 的 left:0 也落在内边距盒边缘，两者同一基准，减 4 会把指示条左移 4px，
+    // 视觉上就是文字在胶囊里偏右。
+    thumb.style.translate = on.offsetLeft + 'px 0';
     thumb.setAttribute('data-on', '');
   }
   // 字体异步就绪后宽度会变，等 fonts.ready 再量一次
