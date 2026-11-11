@@ -62,9 +62,93 @@ main{padding:84px var(--g) 48px}
   inset 2px 0 0 var(--warn)}
 .notice .more{color:var(--faint)}
 
+/* 字幕校准：播放器下方的独立区域。默认收成一行，展开才是精细控制台。
+   不做成播放器设置里的一项——那里只有一行滑块，0.1 秒的步进在触屏上
+   根本拖不准，也没地方放基准轨。 */
+.calib{margin:16px 0 0;border-radius:var(--r-panel);
+  background:var(--surface);box-shadow:var(--ring),var(--sh-xs);
+  transition:box-shadow .25s var(--ease-out)}
+.calib[data-open]{box-shadow:var(--ring),var(--sh-sm)}
+.calib[hidden]{display:none}
+.calib-head{display:flex;align-items:center;gap:11px;width:100%;
+  padding:14px 17px;border-radius:var(--r-panel);text-align:left}
+.calib-head:hover{background:var(--chip)}
+.calib-ico{width:16px;height:16px;flex:0 0 auto;fill:none;stroke:var(--accent-text);
+  stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.calib-t{font-size:13.5px;font-weight:600;color:var(--ink)}
+.calib-sum{margin-left:auto;font:500 12px/1 var(--font-mono);color:var(--faint);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.calib-chev{width:14px;height:14px;flex:0 0 auto;fill:none;stroke:var(--faint);
+  stroke-width:2;stroke-linecap:round;stroke-linejoin:round;
+  transition:transform .25s var(--ease-out)}
+.calib[data-open] .calib-chev{transform:rotate(180deg)}
+
+.calib-body{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;
+  padding:16px 17px 18px;border-top:1px solid var(--line)}
+/* 宽屏两列：基准轨和偏移并排，滑块/当前句/底栏跨列。
+   一块很宽的卡片里把控件全挤在左边最难看，撑满又会被拉成长条。 */
+@media(min-width:900px){
+  .calib-body{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px 40px}
+  .calib-range,.calib-split,.calib-foot,#calibCueRow{grid-column:1/-1}
+}
+.calib-body[hidden]{display:none}
+.calib-row{display:flex;align-items:center;gap:14px}
+.calib-lab{flex:0 0 50px;font:500 11px/1 var(--font-mono);letter-spacing:.13em;
+  text-transform:uppercase;color:var(--faint)}
+
+.calib-sel{flex:1;min-width:0;height:36px;padding:0 34px 0 12px;border:0;
+  border-radius:10px;background-color:var(--chip);color:var(--ink);
+  font-size:13.5px;appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23888a8f' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 13px center;background-size:11px}
+.calib-sel:focus-visible{outline:none;box-shadow:0 0 0 1.5px var(--accent)}
+
+.calib-adj{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.calib-adj button{flex:0 0 72px;height:36px;padding:0 10px;
+  border-radius:10px;background:var(--chip);color:var(--muted);
+  font:500 12.5px/1 var(--font-mono);font-variant-numeric:tabular-nums;
+  transition:background .16s,color .16s,transform .12s var(--ease-out)}
+.calib-adj button:hover{background:color-mix(in srgb,var(--ink) 10%,transparent);
+  color:var(--ink)}
+.calib-adj button:active{transform:scale(.94)}
+.calib-num{flex:1 1 auto;min-width:88px;max-width:220px;height:36px;padding:0 8px;border:0;border-radius:10px;
+  background:var(--chip);color:var(--ink);text-align:center;
+  font:600 14.5px/1 var(--font-mono);font-variant-numeric:tabular-nums}
+.calib-num:focus{outline:none;box-shadow:0 0 0 1.5px var(--accent)}
+
+.calib-range{width:100%;height:20px;appearance:none;background:none;
+  cursor:pointer;margin:-4px 0 0}
+.calib-range::-webkit-slider-runnable-track{height:4px;border-radius:3px;
+  background:color-mix(in srgb,var(--ink) 15%,transparent)}
+.calib-range::-webkit-slider-thumb{appearance:none;width:16px;height:16px;
+  margin-top:-6px;border-radius:50%;background:var(--accent-soft);
+  box-shadow:0 1px 4px rgb(0 0 0/.4)}
+.calib-range::-moz-range-track{height:4px;border-radius:3px;
+  background:color-mix(in srgb,var(--ink) 15%,transparent)}
+.calib-range::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;
+  background:var(--accent-soft);box-shadow:0 1px 4px rgb(0 0 0/.4)}
+
+.calib-split{margin:-8px 0 0;font:500 11.5px/1.5 var(--font-mono);color:var(--faint)}
+.calib-cue{margin:0;flex:1;min-width:0;font-size:13px;line-height:1.65;color:var(--muted);
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.calib-cue b{color:var(--ink);font-weight:500}
+
+.calib-foot{display:flex;align-items:center;gap:12px;padding-top:2px}
+.calib-reset{height:32px;padding:0 14px;border-radius:9px;background:var(--chip);
+  color:var(--muted);font-size:12.5px;font-weight:500;
+  transition:background .16s,color .16s}
+.calib-reset:hover{color:var(--ink);background:color-mix(in srgb,var(--ink) 10%,transparent)}
+.calib-tip{margin-left:auto;font-size:11.5px;color:var(--faint);text-align:right}
+
 @media(max-width:560px){
   main{padding-top:70px}
   .bar .title{font-size:13px}
+  .calib-head{padding:13px 15px}
+  .calib-body{padding:14px 15px 16px;gap:13px}
+  .calib-lab{flex-basis:44px}
+  .calib-adj button{flex:1 1 0;min-width:0;padding:0 4px;font-size:12.5px}
+  .calib-num{flex:1.3 1 0;min-width:0;max-width:none}
+  .calib-tip{display:none}
 }
 </style>
 {{template "themeBoot"}}
@@ -94,6 +178,53 @@ main{padding:84px var(--g) 48px}
     </div>
     {{else}}
     <div class="notice" id="hint" hidden></div>
+    {{end}}
+
+    {{if .Subs}}
+    <section class="calib" id="calib" hidden>
+      <button class="calib-head" id="calibHead" type="button" aria-expanded="false" aria-controls="calibBody">
+        <svg class="calib-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="13" rx="2.5"/><path d="M7 12.5h10M7 15.5h6"/>
+        </svg>
+        <span class="calib-t">字幕校准</span>
+        <span class="calib-sum" id="calibSum">—</span>
+        <svg class="calib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg>
+      </button>
+
+      <div class="calib-body" id="calibBody" hidden>
+        <div class="calib-row" id="calibRefRow">
+          <label class="calib-lab" for="calibRef">基准轨</label>
+          <select id="calibRef" class="calib-sel"></select>
+        </div>
+
+        <div class="calib-row">
+          <span class="calib-lab">偏移</span>
+          <div class="calib-adj">
+            <button type="button" data-step="-1" aria-label="减少 1 秒">−1</button>
+            <button type="button" data-step="-0.1" aria-label="减少 0.1 秒">−0.1</button>
+            <input id="calibNum" class="calib-num" type="text" inputmode="decimal"
+                   value="0.00" aria-label="字幕偏移秒数">
+            <button type="button" data-step="0.1" aria-label="增加 0.1 秒">+0.1</button>
+            <button type="button" data-step="1" aria-label="增加 1 秒">+1</button>
+          </div>
+        </div>
+
+        <input id="calibRange" class="calib-range" type="range" min="-20" max="20"
+               step="0.01" value="0" aria-label="字幕偏移滑块">
+
+        <p class="calib-split" id="calibSplit">自动 0.00s ＋ 手动 0.00s</p>
+
+        <div class="calib-row" id="calibCueRow">
+          <span class="calib-lab">当前句</span>
+          <p class="calib-cue" id="calibCue">—</p>
+        </div>
+
+        <div class="calib-foot">
+          <button type="button" class="calib-reset" id="calibReset">回到自动值</button>
+          <span class="calib-tip">输入框里 ↑ ↓ 微调 0.05s，按住 Shift 是 0.5s</span>
+        </div>
+      </div>
+    </section>
     {{end}}
   </div>
 </main>
@@ -624,17 +755,147 @@ async function boot(){
   if (SUBS.length) {
     art.subtitle.switch(subURL(SUBS[curSubIdx].url), subArgs(SUBS[curSubIdx].label)).catch(()=>{});
 
-    // 换语言 / 换基准轨都会改动滑块背后的值，DOM 得跟着回读，
-    // 否则显示值和实际值对不上。直接改 DOM：设置项带 data-name，
-    // Artplayer 内部 option 的拿法各版本不一样。
-    const syncOffsetControl = () => {
-      const box = document.querySelector('[data-name="subtitle-offset-custom"]');
-      if (!box) return;
-      const range = box.querySelector('input[type=range]');
-      const tip = box.querySelector('.art-setting-item-right-tooltip');
-      if (range) range.value = subOffset;
-      if (tip) tip.textContent = fmtSubOffset(subOffset);
+    /* ---------- 字幕校准区 ----------
+       独立于播放器设置面板：那里只能塞一行 range，0.1 秒的步进在触屏上拖不准，
+       也放不下基准轨选择。这里给到 0.01 秒精度：±1 / ±0.1 按钮、直接输入、
+       滑块三者同步，还能看到当前这句字幕的实际时间。 */
+    const calibEl     = document.getElementById('calib');
+    const calibHead   = document.getElementById('calibHead');
+    const calibBody   = document.getElementById('calibBody');
+    const calibSum    = document.getElementById('calibSum');
+    const calibRefSel = document.getElementById('calibRef');
+    const calibRefRow = document.getElementById('calibRefRow');
+    const calibNum    = document.getElementById('calibNum');
+    const calibRange  = document.getElementById('calibRange');
+    const calibSplit  = document.getElementById('calibSplit');
+    const calibCue    = document.getElementById('calibCue');
+    const calibReset  = document.getElementById('calibReset');
+
+    const refName = u => (SUBS.find(s => s.url === u) || {}).label || '自动';
+    const round2 = v => Math.round(v * 100) / 100;
+    const totalOffset = () => round2(totalSubOffset());
+    let keepTotal = null;   // 换基准轨期间暂存「换之前看到的偏移量」
+    let typing = false;     // 输入框有焦点时不覆盖用户正在敲的内容
+
+    // 滑块上下限跟着自动偏移走：两条字幕差出三十秒时，±20 的固定范围
+    // 连「回到自动值」都拖不到。
+    const spanOf = () => Math.max(SUB_OFF_MAX, Math.ceil(Math.abs(autoSubOffset)) + 5);
+
+    // 面板读数一律显示「这条字幕整体偏移多少」，自动值和手动量拆在下一行，
+    // 这样换基准轨（自动值变了）时读数不会莫名其妙跳一下。
+    const syncCalibUI = () => {
+      const v = totalOffset();
+      if (!typing) calibNum.value = v.toFixed(2);
+      calibRange.min = -spanOf();
+      calibRange.max = spanOf();
+      calibRange.value = v;
+      calibSplit.textContent = '自动 ' + autoSubOffset.toFixed(2) + 's ＋ 手动 '
+        + subOffset.toFixed(2) + 's';
+      calibSum.textContent = (v > 0 ? '+' : '') + v.toFixed(2) + 's'
+        + (subRef ? ' · 基准 ' + refName(subRef) : ' · 自动基准');
     };
+
+    const setTotal = v => {
+      const span = spanOf();
+      v = Math.min(span, Math.max(-span, round2(v)));
+      subOffset = round2(v - autoSubOffset);
+      saveSubState();
+      applyOffset(subBase + totalSubOffset());
+      syncCalibUI();
+    };
+
+    // "01:23.45"——精细调整要看毫秒，clock() 只到秒
+    const clockMs = s => {
+      s = Math.max(0, s || 0);
+      const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+      const sec = (s % 60).toFixed(2).padStart(5, '0');
+      return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + sec;
+    };
+
+    // 当前句对照：暂停在哪一帧、这句字幕落在什么时间，是判断「早了还是晚了」的依据
+    const refreshCue = () => {
+      if (calibBody.hidden || !art || !art.video) return;
+      let cues;
+      try { cues = art.subtitle.cues || []; } catch (e) { cues = []; }
+      const t = art.video.currentTime;
+      const c = cues.find(x => t >= x.startTime && t <= x.endTime);
+      calibCue.textContent = c
+        ? clockMs(c.startTime) + ' → ' + clockMs(c.endTime) + '　'
+          + String(c.text || '').replace(/\s*\n\s*/g, ' ').slice(0, 80)
+        : '这一时刻没有字幕';
+    };
+
+    const fillRefOptions = () => {
+      calibRefSel.innerHTML = '';
+      [{ url: '', label: '自动（内嵌优先）' }]
+        .concat(SUBS.map(s => ({ url: s.url, label: s.label })))
+        .forEach(o => {
+          const el = document.createElement('option');
+          el.value = o.url;
+          el.textContent = o.label;
+          calibRefSel.appendChild(el);
+        });
+      calibRefSel.value = subRef;
+      // 只有一条字幕就没有参照物，基准轨那一行收掉
+      calibRefRow.hidden = SUBS.length < 2;
+    };
+
+    calibEl.hidden = false;
+    fillRefOptions();
+    syncCalibUI();
+
+    calibHead.addEventListener('click', () => {
+      const open = calibBody.hidden;
+      calibBody.hidden = !open;
+      calibEl.toggleAttribute('data-open', open);
+      calibHead.setAttribute('aria-expanded', String(open));
+      if (open) { syncCalibUI(); refreshCue(); }
+    });
+
+    calibEl.querySelectorAll('.calib-adj button').forEach(b => {
+      b.addEventListener('click', () => setTotal(totalOffset() + Number(b.dataset.step)));
+    });
+
+    // 拖动即时生效（不能等 change，否则要松手才动，边拖边对不上画面）。
+    // 焦点若还留在输入框里，syncCalibUI 会故意跳过它，这里补一次强制同步。
+    calibRange.addEventListener('input', () => {
+      setTotal(Number(calibRange.value));
+      calibNum.value = totalOffset().toFixed(2);
+    });
+
+    // 输入框：回车/失焦才解析，否则打到一半的 "-" 会被当成 0；顺手认全角符号
+    const commitNum = () => {
+      const raw = calibNum.value
+        .replace(/＋/g, '+').replace(/[－—–−]/g, '-').replace(',', '.').trim();
+      const v = Number(raw);
+      if (Number.isFinite(v)) setTotal(v); else syncCalibUI();
+    };
+    calibNum.addEventListener('change', commitNum);
+    calibNum.addEventListener('focus', () => { typing = true; calibNum.select(); });
+    // 失焦时先落值再重画：输完 "1.5" 松手，显示要规范成 "1.50"
+    calibNum.addEventListener('blur', () => { typing = false; commitNum(); syncCalibUI(); });
+    calibNum.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') { ev.preventDefault(); commitNum(); calibNum.blur(); return; }
+      // ↑↓ 微调：0.05 秒，按住 Shift 是 0.5 秒
+      if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        setTotal(totalOffset() + (ev.shiftKey ? 0.5 : 0.05) * (ev.key === 'ArrowUp' ? 1 : -1));
+      }
+    });
+
+    calibRefSel.addEventListener('change', () => setSubRef(calibRefSel.value));
+    calibReset.addEventListener('click', () => setTotal(autoSubOffset));
+
+    let cueTick = 0;
+    art.on('video:timeupdate', () => {
+      const now = Date.now();
+      if (now - cueTick < 200) return;
+      cueTick = now;
+      refreshCue();
+    });
+    art.on('video:seeked', refreshCue);
+    art.on('subtitleLoad', refreshCue);
+
 
     // 偏移由服务端按「基准轨」算好（逐条在基准轨里找时间最近的 cue，取差值中位数），
     // 异步取，不拖慢首屏。两层偏移是相加关系：autoSubOffset 每条轨各自一份，
@@ -645,22 +906,29 @@ async function boot(){
         subOffsets = (j && j.offsets) || {};
         // 存的基准轨已经没了（字幕删了/改过名）：服务端回落成自动挑选，本地也跟着清，
         // 否则每次进来都白请求一次，面板上还挂着一个不存在的名字。
-        if (j && j.auto && subRef) { subRef = ''; saveSubState(); }
+        if (j && j.auto && subRef) { subRef = ''; fillRefOptions(); saveSubState(); }
         autoSubOffset = subOffsets[(SUBS[curSubIdx] || {}).url] || 0;
+        // 换基准轨时把用户眼前的那个偏移量原样保住：服务端对两套参照系
+        // 各自取整到 0.1 秒，用「自动值之差」折算会漂掉百毫秒。
+        if (keepTotal !== null) {
+          subOffset = round2(keepTotal - autoSubOffset);
+          keepTotal = null;
+          saveSubState();
+        }
         applyOffset(subBase + totalSubOffset());
+        syncCalibUI();
         return j;
       }).catch(()=>{});
     };
     loadOffsets();
 
     // 换基准轨只是换参照物，不该让画面里的字幕当场跳一下。新基准在旧参照系里的
-    // 偏移量折算进滑块（m' = m + a_b），这样每条轨的绝对位置都没变。
+    // 偏移量折算进手动量（m' = m + a_b），这样每条轨的绝对位置都没变。
     const setSubRef = url => {
       if (url === subRef) return;
-      const carry = subOffsets[url] || 0;
+      keepTotal = totalOffset();   // 换参照物不改变绝对位置
       subRef = url;
-      subOffset = Math.min(SUB_OFF_MAX, Math.max(-SUB_OFF_MAX, Math.round((subOffset + carry) * 10) / 10));
-      syncOffsetControl();
+      if (calibRefSel.value !== url) calibRefSel.value = url;
       saveSubState();
       loadOffsets();
     };
@@ -691,27 +959,14 @@ async function boot(){
           // 对所有轨都成立，不能跟着换语言清掉。
           autoSubOffset = subOffsets[item.url] || 0;
           saveSubState();
+          syncCalibUI();          // 自动值变了，面板读数要跟着走
           art.subtitle.switch(subURL(item.url), subArgs(item.html)).catch(()=>{});
           return item.html;
         },
       });
 
-      // 字幕校准：多轨时挑一条当尺子，其余字幕相对它整体平移。
-      // 内嵌轨通常不用选（它和视频同容器同时间基），这条主要解决
-      // 「两条外挂字幕谁都不准，或者内嵌轨不存在」的情况。
-      const refName = u => (SUBS.find(s => s.url === u) || {}).label || '自动';
-      art.setting.add({
-        html: '字幕校准',
-        name: 'subtitle-calib',
-        width: 240,
-        tooltip: subRef ? refName(subRef) : '自动',
-        selector: [{html: '自动（内嵌优先）', url: '', default: !subRef}]
-          .concat(SUBS.map(s => ({html: s.label, url: s.url, default: s.url === subRef}))),
-        onSelect(item){
-          setSubRef(item.url);
-          return item.url ? refName(item.url) : '自动';
-        },
-      });
+      // 校准与偏移都挪到播放器下方的独立区域了（见 .calib），
+      // 设置面板里只留「能不能调字幕」这一层。
     }
 
     art.setting.add({
@@ -727,22 +982,33 @@ async function boot(){
       },
     });
 
-    art.setting.add({
-      html: '字幕偏移',
-      name: 'subtitle-offset-custom',
-      tooltip: fmtSubOffset(subOffset),
-      range: [subOffset, -SUB_OFF_MAX, SUB_OFF_MAX, 0.1],
-      onChange(item){
-        subOffset = item.range[0];
-        saveSubState();                            // 先落盘，别让后面的渲染异常吞掉设置
-        applyOffset(subBase + totalSubOffset());
-        return fmtSubOffset(subOffset);
-      },
-    });
-
-    // Artplayer 建 range 时先赋 value、后设 min（此时 min 还是默认的 0），
-    // 负偏移会被浏览器夹成 0。等设置项挂上 DOM 后再补一次，正数负数都能正确显示。
-    syncOffsetControl();
+    // 控制栏入口：播到一半想调时不用滚回页面下方。点一下就是「展开 + 滚到可见」，
+    // 全屏时它就在控制栏上，用完关掉继续看。
+    if (art.controls && art.controls.add) {
+      art.controls.add({
+        name: 'subcal',
+        position: 'right',
+        index: 30,
+        html: '<i class="art-icon"><svg width="22" height="22" viewBox="0 0 24 24"'
+            + ' fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"'
+            + ' stroke-linejoin="round"><rect x="3" y="5" width="18" height="13" rx="2.5"/>'
+            + '<path d="M7 12.5h10M7 15.5h6"/></svg></i>',
+        tooltip: '字幕校准',
+        click(){
+          // 全屏时面板在播放器下方、被全屏区盖住，先退出来再展开
+          const fsOn = art.fullscreen || art.fullscreenWeb;
+          if (fsOn) {
+            art.fullscreen = false;
+            art.fullscreenWeb = false;
+          }
+          const go = () => {
+            if (calibBody.hidden) calibHead.click();
+            calibEl.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+          };
+          if (fsOn) setTimeout(go, 320); else go();
+        },
+      });
+    }
   }
 
   // 播放方式不做成选项：能直接播就直连，音轨解不了就预转码优先、没有才实时转码，
@@ -818,8 +1084,9 @@ window.__litemsAudio = () => ({
     ref: subRef,          // 校准用的基准轨；空 = 自动（内嵌优先）
     auto: autoSubOffset,
     manual: subOffset,
+    total: totalSubOffset(),
     offsets: subOffsets,
-    offsetCtrl: !!document.querySelector('[data-name="subtitle-offset-custom"]'),
+    calibOpen: !!(document.getElementById('calibBody') && !document.getElementById('calibBody').hidden),
   },
 });
 
