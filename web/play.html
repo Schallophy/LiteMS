@@ -1,1402 +1,940 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="margin-app" data-theme="{{.Theme}}">
+<html lang="zh-CN" data-theme="dark">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="{{if eq .Theme "dark"}}#111112{{else}}#f5f4f1{{end}}">
-<title>正在播放 · {{.Item.Title}}</title>
+{{template "head" .}}
+{{template "css" .}}
 <style>
-{{template "marginCSS"}}
-
-/* 顶栏：沉浸播放时悬浮在画面上方，鼠标不动几秒后淡出 */
-.bar{position:fixed;inset:0 0 auto;z-index:10;
-  display:flex;align-items:center;gap:16px;
-  padding:14px var(--g) 32px;
-  background:linear-gradient(180deg,var(--canvas) 0%,
-    color-mix(in srgb,var(--canvas) 72%,transparent) 58%,transparent 100%);
-  transition:opacity .3s var(--ease-out)}
-.bar.hide{opacity:0;pointer-events:none}
-.back{display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 16px 0 13px;
-  border-radius:var(--r-pill);font-size:13px;font-weight:500;color:var(--ink);
-  flex:0 0 auto}
-.back svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;
-  stroke-linecap:round;stroke-linejoin:round;transition:transform .25s var(--ease-out)}
-.back:hover svg{transform:translateX(-2px)}
-.bar .title{min-width:0;font-size:14px;font-weight:500;color:var(--ink);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bar .title small{margin-left:9px;font:500 11px/1 var(--font-mono);
-  letter-spacing:.1em;color:var(--faint)}
-
-/* 实时转码：播放器自己的时间轴只覆盖本次会话窗口，全片进度看这一颗 */
-.livepos{margin-left:auto;padding:7px 13px;border-radius:var(--r-pill);
-  font:500 11.5px/1 var(--font-mono);letter-spacing:.04em;color:var(--muted);
-  background:var(--chip);white-space:nowrap;font-variant-numeric:tabular-nums}
-.livepos[hidden]{display:none}
-.livepos b{color:var(--accent-text);font-weight:600}
-
-/* 实时转码的全片进度条（替换按窗口时长算比例的内置进度条） */
-.livebar{position:relative;flex:1;height:3px;margin:0 12px;border-radius:3px;
-  background:color-mix(in srgb,var(--ink) 22%,transparent);cursor:pointer;
-  touch-action:none;                 /* 手机上拖动不被当成滚动 */
-  transition:height .15s var(--ease-out)}
-.livebar:hover,.livebar.drag{height:6px}
-.livebar-buf,.livebar-fill{position:absolute;left:0;top:0;bottom:0;
-  border-radius:3px;pointer-events:none}
-.livebar-buf{background:color-mix(in srgb,var(--ink) 32%,transparent)}
-.livebar-fill{background:var(--accent-soft)}
-.livebar-dot{position:absolute;top:50%;left:0;width:11px;height:11px;border-radius:50%;
-  background:var(--accent-soft);transform:translate(-50%,-50%);
-  box-shadow:0 1px 5px rgb(0 0 0/.45);pointer-events:none}
-
-main{padding:84px var(--g) 48px}
-.wrap{max-width:1280px;margin:0 auto}
-#player{aspect-ratio:16/9;width:100%;border-radius:var(--r-card);overflow:hidden;
-  background:#000;box-shadow:var(--ring),var(--sh-md)}
-
-/* 提示条：音轨警告，出现在播放器下方 */
-.notice{margin:16px 0 0;padding:13px 17px;border-radius:var(--r-panel);
-  font-size:13.5px;line-height:1.8;color:var(--muted);
-  background:var(--surface);box-shadow:var(--ring),var(--sh-xs)}
-.notice b{color:var(--accent-text);font-weight:600}
-.notice.warn{box-shadow:var(--ring),var(--sh-xs),
-  inset 2px 0 0 var(--warn)}
-.notice .more{color:var(--faint)}
-
-/* 字幕校准：播放器下方的独立区域。默认收成一行，展开才是精细控制台。
-   不做成播放器设置里的一项——那里只有一行滑块，0.1 秒的步进在触屏上
-   根本拖不准，也没地方放基准轨。 */
-.calib{margin:16px 0 0;border-radius:var(--r-panel);
-  background:var(--surface);box-shadow:var(--ring),var(--sh-xs);
-  transition:box-shadow .25s var(--ease-out)}
-.calib[data-open]{box-shadow:var(--ring),var(--sh-sm)}
-.calib[hidden]{display:none}
-.calib-head{display:flex;align-items:center;gap:11px;width:100%;
-  padding:14px 17px;border-radius:var(--r-panel);text-align:left}
-.calib-head:hover{background:var(--chip)}
-.calib-ico{width:16px;height:16px;flex:0 0 auto;fill:none;stroke:var(--accent-text);
-  stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-.calib-t{font-size:13.5px;font-weight:600;color:var(--ink)}
-.calib-sum{margin-left:auto;font:500 12px/1 var(--font-mono);color:var(--faint);
-  font-variant-numeric:tabular-nums;white-space:nowrap}
-.calib-chev{width:14px;height:14px;flex:0 0 auto;fill:none;stroke:var(--faint);
-  stroke-width:2;stroke-linecap:round;stroke-linejoin:round;
-  transition:transform .25s var(--ease-out)}
-.calib[data-open] .calib-chev{transform:rotate(180deg)}
-
-.calib-body{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;
-  padding:16px 17px 18px;border-top:1px solid var(--line)}
-/* 宽屏两列：基准轨和偏移并排，滑块/当前句/底栏跨列。
-   一块很宽的卡片里把控件全挤在左边最难看，撑满又会被拉成长条。 */
-@media(min-width:900px){
-  .calib-body{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px 40px}
-  .calib-range,.calib-split,.calib-foot,#calibCueRow{grid-column:1/-1}
+/* 播放页是一间放影厅：不管站点主题是什么，这里一直是暗的。 */
+html[data-theme]{
+  --bg:#07080A;--surface:#101417;--surface-2:#171D21;--line:#242B30;
+  --ink:#F0EDE8;--ink-2:#9AA0A3;--ink-3:#6C7275;--burn:#E1483C;
 }
-.calib-body[hidden]{display:none}
+body{background:#07080A;overflow:hidden;overscroll-behavior:none}
 
-/* ── 对齐视图：两条轨并排画同一段时间，当前轨可整体拖动 ──
-   字幕对不对齐，看两块颜色能不能咬合，比盯数字直观得多。 */
-.calib-tl{grid-column:1/-1;display:flex;flex-direction:column;gap:10px;
-  padding:12px 14px 10px;border-radius:var(--r-panel);background:var(--chip)}
-.tl-bar{display:flex;align-items:center;gap:10px}
-.tl-title{font:500 11px/1 var(--font-mono);letter-spacing:.14em;
-  text-transform:uppercase;color:var(--faint);flex:0 0 auto}
-.tl-tip{margin-left:auto;font:500 11.5px/1.3 var(--font-mono);color:var(--faint);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tl-tip.on{color:var(--accent-text);font-weight:600}
-.tl-tip b{color:var(--accent-text);font-weight:600}
-.tl-zoom{display:flex;align-items:center;gap:4px;flex:0 0 auto}
-.tl-zoom button{width:22px;height:22px;border-radius:6px;background:var(--surface);
-  color:var(--muted);font:600 13px/1 var(--font-mono);
-  box-shadow:var(--ring);transition:color .16s}
-.tl-zoom button:hover{color:var(--ink)}
-.tl-zoom span{min-width:32px;text-align:center;
-  font:500 11px/1 var(--font-mono);color:var(--faint)}
+.stage{position:fixed;inset:0;overflow:hidden;background:#000;cursor:default}
+.stage.idle{cursor:none}
+.stage.idle .top,.stage.idle .ctl{opacity:0;pointer-events:none}
+.stage.idle .cue{bottom:28px}
+video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 
-.tl-grid{display:grid;grid-template-columns:44px minmax(0,1fr);
-  row-gap:5px;align-items:center}
-.tl-label{font:500 11px/1 var(--font-mono);color:var(--faint);letter-spacing:.06em;
-  white-space:nowrap;overflow:hidden}
-.tl-lane{position:relative;height:28px;border-radius:6px;
-  background:color-mix(in srgb,var(--ink) 7%,transparent);
-  overflow:hidden;touch-action:none}
-.tl-clips{position:absolute;inset:0;will-change:transform}
-.tl-cue{position:absolute;top:5px;bottom:5px;min-width:2px;border-radius:3px;
-  background:color-mix(in srgb,var(--ink) 34%,transparent)}
-#tlCurLane .tl-cue{background:color-mix(in srgb,var(--accent-soft) 82%,transparent)}
-.tl-drag{cursor:grab}
-.tl-drag:active,.calib-tl.dragging .tl-drag{cursor:grabbing}
-.calib-tl.dragging #tlCurLane .tl-cue{opacity:.75}
-.tl-play{position:absolute;top:0;bottom:0;width:1px;
-  background:var(--ink);pointer-events:none;z-index:2;
-  box-shadow:0 0 3px rgb(0 0 0/.5)}
-.tl-axis{position:relative;height:13px}
-.tl-tick{position:absolute;top:0;transform:translateX(-50%);
-  font:500 9.5px/1 var(--font-mono);color:var(--faint);white-space:nowrap}
-.tl-empty{position:absolute;inset:0;display:flex;align-items:center;
-  justify-content:center;font-size:11px;color:var(--faint)}
+/* 字幕：自己画，才能和排版一致，也才能随手调偏移 */
+.cue{
+  position:absolute;left:0;right:0;bottom:clamp(72px,11vh,120px);
+  padding:0 6vw;text-align:center;pointer-events:none;
+  transition:bottom .3s var(--ease);
+}
+.cue span{
+  display:inline-block;background:rgba(0,0,0,.66);color:#fff;
+  font-size:clamp(15px,2.1vw,25px);line-height:1.5;
+  padding:.1em .5em;white-space:pre-line;text-wrap:balance;
+  max-width:min(92vw,44em);
+}
 
-.calib-row{display:flex;align-items:center;gap:14px}
-.calib-lab{flex:0 0 50px;font:500 11px/1 var(--font-mono);letter-spacing:.13em;
-  text-transform:uppercase;color:var(--faint)}
+/* 顶栏 */
+.top{
+  position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:14px;
+  padding:clamp(12px,2vw,20px) clamp(12px,2.4vw,26px);
+  background:linear-gradient(to bottom,rgba(0,0,0,.82),rgba(0,0,0,0));
+  transition:opacity .28s var(--ease);
+}
+.tbtn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  min-width:34px;height:34px;padding:0 10px;border:0;border-radius:1px;
+  background:rgba(255,255,255,.06);color:var(--ink);cursor:pointer;
+  font:400 13px var(--sans);transition:background .18s var(--ease)
+}
+.tbtn:hover{background:rgba(255,255,255,.14)}
+.tbtn svg{width:18px;height:18px}
+.ttl{flex:1;min-width:0;display:flex;align-items:baseline;gap:10px}
+.ttl b{
+  font-family:var(--serif);font-weight:400;font-size:clamp(15px,1.6vw,19px);
+  color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.ttl span{font-size:12px;color:var(--ink-2);flex:none;font-variant-numeric:tabular-nums}
 
-.calib-sel{flex:1;min-width:0;height:36px;padding:0 34px 0 12px;border:0;
-  border-radius:10px;background-color:var(--chip);color:var(--ink);
-  font-size:13.5px;appearance:none;cursor:pointer;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23888a8f' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat:no-repeat;background-position:right 13px center;background-size:11px}
-.calib-sel:focus-visible{outline:none;box-shadow:0 0 0 1.5px var(--accent)}
+/* 控制条 */
+.ctl{
+  position:absolute;left:0;right:0;bottom:0;
+  padding:0 clamp(12px,2.4vw,26px) clamp(10px,1.6vw,18px);
+  background:linear-gradient(to top,rgba(0,0,0,.9),rgba(0,0,0,.55) 45%,rgba(0,0,0,0));
+  transition:opacity .28s var(--ease);
+}
+.scrub{position:relative;height:20px;display:flex;align-items:center}
+.scrub input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:20px;background:none;
+  margin:0;cursor:pointer;
+}
+.scrub input[type=range]::-webkit-slider-runnable-track{
+  height:3px;background:rgba(255,255,255,.24);transition:height .16s var(--ease);
+}
+.scrub input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:#fff;
+  margin-top:-4px;transition:transform .16s var(--ease);
+}
+.scrub input[type=range]:hover::-webkit-slider-runnable-track{height:6px}
+.scrub input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.25);margin-top:-2.5px}
+.scrub input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.24)}
+.scrub input[type=range]::-moz-range-progress{height:3px;background:var(--burn)}
+.scrub input[type=range]::-moz-range-thumb{
+  width:11px;height:11px;border:0;border-radius:50%;background:#fff;
+}
+.seekfill{
+  position:absolute;left:0;top:50%;height:3px;margin-top:-1.5px;
+  background:var(--burn);pointer-events:none;width:0;
+}
+.row{display:flex;align-items:center;gap:clamp(6px,1vw,14px);margin-top:2px}
+.ibtn{
+  position:relative;
+  display:inline-flex;align-items:center;justify-content:center;
+  width:34px;height:34px;border:0;border-radius:1px;background:none;
+  color:var(--ink);cursor:pointer;opacity:.86;transition:opacity .16s,background .16s
+}
+.ibtn:hover{opacity:1;background:rgba(255,255,255,.1)}
+.ibtn svg{width:22px;height:22px}
+.ibtn.on{opacity:1;color:#fff}
+.ibtn.on::after{content:"";position:absolute;transform:translateY(13px);width:12px;height:2px;background:var(--burn)}
+.tm{
+  font-size:12.5px;color:rgba(255,255,255,.72);font-variant-numeric:tabular-nums;
+  letter-spacing:.02em;white-space:nowrap;
+}
+.tm i{font-style:normal;color:rgba(255,255,255,.4)}
+.sp{flex:1}
+.vol{display:flex;align-items:center;gap:6px}
+.vol input[type=range]{
+  -webkit-appearance:none;appearance:none;width:0;height:18px;background:none;
+  transition:width .2s var(--ease);cursor:pointer;
+}
+.vol:hover input[type=range],.vol input[type=range]:focus{width:78px}
+.vol input[type=range]::-webkit-slider-runnable-track{height:3px;background:rgba(255,255,255,.28)}
+.vol input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;margin-top:-3px
+}
+.vol input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.28)}
 
-.calib-adj{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
-.calib-adj button{flex:0 0 72px;height:36px;padding:0 10px;
-  border-radius:10px;background:var(--chip);color:var(--muted);
-  font:500 12.5px/1 var(--font-mono);font-variant-numeric:tabular-nums;
-  transition:background .16s,color .16s,transform .12s var(--ease-out)}
-.calib-adj button:hover{background:color-mix(in srgb,var(--ink) 10%,transparent);
-  color:var(--ink)}
-.calib-adj button:active{transform:scale(.94)}
-.calib-num{flex:1 1 auto;min-width:88px;max-width:220px;height:36px;padding:0 8px;border:0;border-radius:10px;
-  background:var(--chip);color:var(--ink);text-align:center;
-  font:600 14.5px/1 var(--font-mono);font-variant-numeric:tabular-nums}
-.calib-num:focus{outline:none;box-shadow:0 0 0 1.5px var(--accent)}
+/* 中央播放按钮（暂停时出现） */
+.bigplay{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:76px;height:76px;border-radius:50%;border:1px solid rgba(255,255,255,.4);
+  background:rgba(0,0,0,.42);color:#fff;display:grid;place-items:center;
+  cursor:pointer;transition:opacity .2s var(--ease),transform .2s var(--ease)
+}
+.bigplay:hover{background:rgba(0,0,0,.6);transform:translate(-50%,-50%) scale(1.04)}
+.bigplay svg{width:28px;height:28px;margin-left:3px}
+.bigplay[hidden]{display:none}
 
-.calib-range{width:100%;height:20px;appearance:none;background:none;
-  cursor:pointer;margin:-4px 0 0}
-.calib-range::-webkit-slider-runnable-track{height:4px;border-radius:3px;
-  background:color-mix(in srgb,var(--ink) 15%,transparent)}
-.calib-range::-webkit-slider-thumb{appearance:none;width:16px;height:16px;
-  margin-top:-6px;border-radius:50%;background:var(--accent-soft);
-  box-shadow:0 1px 4px rgb(0 0 0/.4)}
-.calib-range::-moz-range-track{height:4px;border-radius:3px;
-  background:color-mix(in srgb,var(--ink) 15%,transparent)}
-.calib-range::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;
-  background:var(--accent-soft);box-shadow:0 1px 4px rgb(0 0 0/.4)}
+/* 提示条：音轨可能没声音 */
+.notice{
+  position:absolute;left:clamp(12px,2.4vw,26px);bottom:calc(96px + env(safe-area-inset-bottom));
+  max-width:min(440px,72vw);padding:12px 14px;
+  background:rgba(16,20,23,.96);border-left:2px solid var(--burn);
+  font-size:13px;line-height:1.6;color:var(--ink-2);
+}
+.notice b{color:var(--ink);font-weight:500}
+.notice .nb{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.notice button{
+  border:1px solid var(--line);background:none;color:var(--ink);
+  padding:6px 11px;border-radius:1px;cursor:pointer;font:400 12.5px var(--sans)
+}
+.notice button:hover{border-color:var(--ink)}
+.notice button.primary{background:var(--ink);color:#0A0C0E;border-color:var(--ink)}
 
-.calib-split{margin:-8px 0 0;font:500 11.5px/1.5 var(--font-mono);color:var(--faint)}
-.calib-cue{margin:0;flex:1;min-width:0;font-size:13px;line-height:1.65;color:var(--muted);
-  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.calib-cue b{color:var(--ink);font-weight:500}
+/* 抽屉 */
+.drawer{
+  position:absolute;top:0;right:0;bottom:0;width:min(392px,100%);
+  background:rgba(12,16,19,.98);border-left:1px solid var(--line);
+  overflow-y:auto;padding:18px 20px 40px;
+  transform:translateX(100%);transition:transform .3s var(--ease);
+  visibility:hidden;
+}
+.drawer.open{transform:none;visibility:visible}
+.drawer h2{
+  margin:0 0 18px;font-family:var(--serif);font-weight:400;font-size:19px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px
+}
+.drawer h2 button{
+  border:0;background:none;color:var(--ink-3);cursor:pointer;font-size:12.5px;
+  padding:4px
+}
+.drawer h2 button:hover{color:var(--ink)}
+.dsec{border-top:1px solid var(--line);padding:16px 0 4px}
+.dsec h3{margin:0 0 10px;font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--ink-3)}
+.opts{list-style:none;margin:0;padding:0}
+.opts li{border-bottom:1px solid rgba(255,255,255,.05)}
+.opts label{display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;font-size:13.5px}
+.opts input{appearance:none;width:12px;height:12px;border:1px solid var(--ink-3);border-radius:50%;flex:none;margin:0}
+.opts input:checked{border-color:var(--burn);box-shadow:inset 0 0 0 3px #0C1013,inset 0 0 0 8px var(--burn)}
+.opts .src{margin-left:auto;font-size:11px;color:var(--ink-3);border:1px solid var(--line);padding:1px 6px}
+.dhint{margin:8px 0 0;font-size:12px;line-height:1.6;color:var(--ink-3)}
+.offrow{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.offrow input[type=number]{
+  width:96px;background:var(--surface);border:1px solid var(--line);color:var(--ink);
+  padding:7px 9px;font:400 13px var(--sans);border-radius:1px;font-variant-numeric:tabular-nums
+}
+.offrow span{font-size:12.5px;color:var(--ink-3)}
+.offrange{width:100%;-webkit-appearance:none;appearance:none;background:none;height:18px}
+.offrange::-webkit-slider-runnable-track{height:2px;background:var(--line)}
+.offrange::-webkit-slider-thumb{
+  -webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--ink);margin-top:-5.5px
+}
+.offrange::-moz-range-track{height:2px;background:var(--line)}
+.nudge{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.nudge button{
+  border:1px solid var(--line);background:none;color:var(--ink-2);
+  padding:6px 10px;border-radius:1px;cursor:pointer;font:400 12.5px var(--sans)
+}
+.nudge button:hover{color:var(--ink);border-color:var(--ink)}
+.dbtns{display:flex;flex-wrap:wrap;gap:8px}
+.dbtns button{
+  border:1px solid var(--line);background:none;color:var(--ink-2);
+  padding:7px 11px;border-radius:1px;cursor:pointer;font:400 12.5px var(--sans)
+}
+.dbtns button[aria-pressed=true]{background:var(--ink);color:#0A0C0E;border-color:var(--ink)}
+.dbtns button:hover{border-color:var(--ink);color:var(--ink)}
+.dbtns button[aria-pressed=true]:hover{color:#0A0C0E}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-size:12.5px;color:var(--ink-3)}
+.keys kbd{
+  font:400 11.5px var(--sans);color:var(--ink-2);border:1px solid var(--line);
+  padding:1px 6px;justify-self:start
+}
+.toast{
+  position:absolute;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%);
+  background:rgba(12,16,19,.96);border:1px solid var(--line);
+  padding:9px 14px;font-size:12.5px;color:var(--ink);max-width:min(86vw,460px);
+  text-align:center;transition:opacity .2s var(--ease)
+}
+.toast[hidden]{display:none}
 
-.calib-foot{display:flex;align-items:center;gap:12px;padding-top:2px}
-.calib-reset{height:32px;padding:0 14px;border-radius:9px;background:var(--chip);
-  color:var(--muted);font-size:12.5px;font-weight:500;
-  transition:background .16s,color .16s}
-.calib-reset:hover{color:var(--ink);background:color-mix(in srgb,var(--ink) 10%,transparent)}
-.calib-tip{margin-left:auto;font-size:11.5px;color:var(--faint);text-align:right}
-
-@media(max-width:560px){
-  main{padding-top:70px}
-  .bar .title{font-size:13px}
-  .calib-head{padding:13px 15px}
-  .calib-body{padding:14px 15px 16px;gap:13px}
-  .calib-lab{flex-basis:44px}
-  .calib-adj button{flex:1 1 0;min-width:0;padding:0 4px;font-size:12.5px}
-  .calib-num{flex:1.3 1 0;min-width:0;max-width:none}
-  .calib-tip{display:none}
+/* 抽屉打开时，控制条让出右边那一条，别被盖住 */
+@media (min-width:720px){
+  .stage.panel .top,.stage.panel .ctl{right:392px}
+  .stage.panel .cue{right:392px}
+  .stage.panel .notice{max-width:min(380px,50vw)}
+}
+@media (max-width:719px){
+  .notice{padding:10px 12px;font-size:12.5px;max-width:calc(100vw - 24px)}
 }
 </style>
-{{template "themeBoot"}}
 </head>
 <body>
-<header class="bar" id="bar">
-  <a class="back glass" href="/item/{{.Item.ID}}">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-    返回
-  </a>
-  <div class="title">{{.Item.Title}}{{if .Item.Year}}<small>{{.Item.Year}}</small>{{end}}</div>
-  <div class="livepos" id="livepos" hidden></div>
-</header>
+<main class="stage" id="stage"
+      data-id="{{.Item.ID}}"
+      data-pos="{{.Item.PositionMS}}"
+      data-dur="{{.Item.DurationMS}}"
+      data-hint="{{.AudioHint}}"
+      data-audio="{{if .AudioReady}}1{{else}}0{{end}}"
+      data-live="{{if .LiveReady}}1{{else}}0{{end}}">
 
-<main>
-  <div class="wrap">
-    <div id="player"></div>
-    {{if eq .AudioHint "bad"}}
-    <div class="notice warn" id="hint">
-      这个文件的音轨是 <b>DTS / TrueHD / PCM</b> 一类编码，浏览器解不了（画面正常但没声音）。
-      页面会自动用转码模式播放；也可以回详情页「mpv 播放」交给本地播放器。
+  <video id="v" playsinline preload="metadata"{{if .Item.Poster}} poster="{{.Item.Poster}}"{{end}}></video>
+  <audio id="a" preload="auto"></audio>
+  <div class="cue" aria-live="off"><span id="cue"></span></div>
+
+  <div class="top" id="top">
+    <a class="tbtn" href="/item/{{.Item.ID}}" title="回到详情">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </a>
+    <div class="ttl">
+      <b>{{.Item.Title}}</b>
+      {{if eq .Item.Kind "episode"}}<span>S{{printf "%02d" .Item.Season}}E{{printf "%02d" .Item.Episode}}</span>{{end}}
     </div>
-    {{else if eq .AudioHint "maybe"}}
-    <div class="notice warn" id="hint">
-      音轨为 <b>AC3 / EAC3</b>，浏览器在 MKV 里解不了（画面正常但没声音）。
-      页面会自动用转码模式播放；也可以回详情页「mpv 播放」交给本地播放器。
-    </div>
-    {{else}}
-    <div class="notice" id="hint" hidden></div>
-    {{end}}
-
-    {{if .Subs}}
-    <section class="calib" id="calib" hidden>
-      <button class="calib-head" id="calibHead" type="button" aria-expanded="false" aria-controls="calibBody">
-        <svg class="calib-ico" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3" y="5" width="18" height="13" rx="2.5"/><path d="M7 12.5h10M7 15.5h6"/>
-        </svg>
-        <span class="calib-t">字幕校准</span>
-        <span class="calib-sum" id="calibSum">—</span>
-        <svg class="calib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg>
-      </button>
-
-      <div class="calib-body" id="calibBody" hidden>
-        <div class="calib-tl" id="calibTl">
-          <div class="tl-bar">
-            <span class="tl-title">对齐视图</span>
-            <span class="tl-tip" id="tlTip">拖动下轨对齐</span>
-            <span class="tl-zoom">
-              <button type="button" id="tlZoomOut" aria-label="缩小时间范围">−</button>
-              <span id="tlSpanLabel">40s</span>
-              <button type="button" id="tlZoomIn" aria-label="放大时间范围">+</button>
-            </span>
-          </div>
-          <div class="tl-grid">
-            <span class="tl-label" id="tlRefLabel">基准</span>
-            <div class="tl-lane" id="tlRefLane"><div class="tl-clips" id="tlRefClips"></div></div>
-            <span class="tl-label">当前</span>
-            <div class="tl-lane tl-drag" id="tlCurLane">
-              <div class="tl-clips" id="tlCurClips"></div>
-            </div>
-            <span class="tl-label"></span>
-            <div class="tl-axis" id="tlAxis"></div>
-          </div>
-        </div>
-
-        <div class="calib-row" id="calibRefRow">
-          <label class="calib-lab" for="calibRef">基准轨</label>
-          <select id="calibRef" class="calib-sel"></select>
-        </div>
-
-        <div class="calib-row">
-          <span class="calib-lab">偏移</span>
-          <div class="calib-adj">
-            <button type="button" data-step="-1" aria-label="减少 1 秒">−1</button>
-            <button type="button" data-step="-0.1" aria-label="减少 0.1 秒">−0.1</button>
-            <input id="calibNum" class="calib-num" type="text" inputmode="decimal"
-                   value="0.00" aria-label="字幕偏移秒数">
-            <button type="button" data-step="0.1" aria-label="增加 0.1 秒">+0.1</button>
-            <button type="button" data-step="1" aria-label="增加 1 秒">+1</button>
-          </div>
-        </div>
-
-        <input id="calibRange" class="calib-range" type="range" min="-20" max="20"
-               step="0.01" value="0" aria-label="字幕偏移滑块">
-
-        <p class="calib-split" id="calibSplit">自动 0.00s ＋ 手动 0.00s</p>
-
-        <div class="calib-row" id="calibCueRow">
-          <span class="calib-lab">当前句</span>
-          <p class="calib-cue" id="calibCue">—</p>
-        </div>
-
-        <div class="calib-foot">
-          <button type="button" class="calib-reset" id="calibReset">回到自动值</button>
-          <span class="calib-tip">输入框里 ↑ ↓ 微调 0.05s，按住 Shift 是 0.5s</span>
-        </div>
-      </div>
-    </section>
-    {{end}}
+    <button class="tbtn" id="panelBtn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="1"/><path d="M7 15h4M13 15h4"/></svg>
+      字幕与音轨
+    </button>
   </div>
+
+  <button class="bigplay" id="bigplay" type="button" aria-label="播放">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+  </button>
+
+  <div class="notice" id="notice" hidden></div>
+
+  <div class="ctl" id="ctl">
+    <div class="scrub">
+      <span class="seekfill" id="seekfill"></span>
+      <input type="range" id="seek" min="0" max="1000" value="0" step="1" aria-label="播放进度">
+    </div>
+    <div class="row">
+      <button class="ibtn" id="playBtn" type="button" aria-label="播放/暂停"></button>
+      <span class="tm"><span id="cur">0:00</span> <i>/</i> <span id="dur">0:00</span></span>
+      <div class="vol">
+        <button class="ibtn" id="volBtn" type="button" aria-label="静音"></button>
+        <input type="range" id="vol" min="0" max="100" value="100" aria-label="音量">
+      </div>
+      <span class="sp"></span>
+      <button class="ibtn" id="ccBtn" type="button" aria-label="字幕" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="1.5"/><text x="12" y="14.4" text-anchor="middle" font-size="7.4" font-family="system-ui,-apple-system,sans-serif" stroke="none" fill="currentColor" letter-spacing=".4">CC</text></svg>
+      </button>
+      <button class="ibtn" id="fsBtn" type="button" aria-label="全屏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <aside class="drawer" id="drawer" aria-label="字幕与音轨">
+    <h2>字幕与音轨 <button type="button" id="drawerClose">关闭</button></h2>
+
+    <div class="dsec">
+      <h3>字幕</h3>
+      <ul class="opts" id="subOpts">
+        <li><label><input type="radio" name="sub" value="" checked> 关闭</label></li>
+        {{range .Subs}}
+        <li><label>
+          <input type="radio" name="sub" value="{{.URL}}" data-label="{{.Label}}" data-lang="{{.Lang}}">
+          {{.Label}}<span class="src">{{if eq .Src "embed"}}内嵌{{else if eq .Src "imported"}}导入{{else}}外挂{{end}}</span>
+        </label></li>
+        {{else}}
+        <li><label style="color:var(--ink-3);cursor:default">这条没有字幕轨<span class="src">0</span></label></li>
+        {{end}}
+      </ul>
+      <p class="dhint" id="subState">还没选字幕。点一条开始，会先按内嵌轨自动对齐。</p>
+    </div>
+
+    <div class="dsec" id="offSec" hidden>
+      <h3>时间轴</h3>
+      <div class="offrow">
+        <label class="sr" for="offNum">偏移秒数</label>
+        <input type="number" id="offNum" step="0.01" value="0">
+        <span>秒</span>
+      </div>
+      <input class="offrange" type="range" id="offRange" min="-30" max="30" step="0.01" value="0" aria-label="偏移秒数">
+      <div class="nudge">
+        <button type="button" data-nudge="-0.1">−0.1</button>
+        <button type="button" data-nudge="0.1">+0.1</button>
+        <button type="button" data-nudge="-0.5">−0.5</button>
+        <button type="button" data-nudge="0.5">+0.5</button>
+        <button type="button" id="zeroBtn">归零</button>
+        <button type="button" id="autoBtn">自动对齐</button>
+      </div>
+      <p class="dhint">正值让字幕提前出现。0.01 秒一档，可以直接改数字。</p>
+    </div>
+
+    <div class="dsec">
+      <h3>声音</h3>
+      <div class="dbtns">
+        <button type="button" id="mDirect" aria-pressed="false">原生直连</button>
+        <button type="button" id="mAudio" aria-pressed="false">AAC 音轨</button>
+        <button type="button" id="mLive" aria-pressed="false">实时转码</button>
+      </div>
+      <p class="dhint" id="modeLine">——</p>
+    </div>
+
+    <div class="dsec">
+      <h3>快捷键</h3>
+      <dl class="keys">
+        <kbd>空格</kbd><span>播放 / 暂停</span>
+        <kbd>← →</kbd><span>快退 / 快进 5 秒</span>
+        <kbd>J L</kbd><span>快退 / 快进 10 秒</span>
+        <kbd>↑ ↓</kbd><span>音量</span>
+        <kbd>M</kbd><span>静音</span>
+        <kbd>C</kbd><span>字幕开关</span>
+        <kbd>F</kbd><span>全屏</span>
+      </dl>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast" hidden></div>
 </main>
 
-<script src="/vendor/artplayer.js"></script>
+<script src="/vendor/hls.js"></script>
 <script>
-const ITEM = "{{.Item.ID}}";
-const SUBS = [
-{{range .Subs}}{{if .URL}}{lang:"{{.Lang}}",label:"{{.Label}}",url:"{{.URL}}"},{{end}}{{end}}
-];
-// 两种转码模式就绪情况：预转码=音轨已提前转好；实时=ffmpeg 可用
-const PRE_READY  = {{if .AudioReady}}true{{else}}false{{end}};
-const LIVE_READY = {{if .LiveReady}}true{{else}}false{{end}};
-// 音轨兼容性（bad/maybe/""），来自文件名识别；"" 表示没发现浏览器解不了的音轨
-const AUDIO_HINT = "{{.AudioHint}}";
-const RESUME_MS  = parseInt("{{.Item.PositionMS}}", 10) || 0;
-const DURATION_MS= parseInt("{{.Item.DurationMS}}", 10) || 0;
+(function(){
+  'use strict';
 
-let art = null;
-let mode = 'native';      // native / pre / live
-let base = 0;             // 实时模式下本次会话的起播秒数（时间轴基准）
-let subBase = 0;          // 字幕基准偏移：实时模式下 = -base
-let audioEl = null;       // 预转码模式的声音来源
-let lastSave = 0;
-let restarting = false;
-let LIVE_TOTAL = 0;       // 全片时长（秒，服务端 ffprobe）。live 的窗口时长
-                          // 不代表全片，进度条与进度上报都按这个值折算
+  var stage = document.getElementById('stage');
+  var ID = stage.dataset.id;
+  var POS0 = parseInt(stage.dataset.pos, 10) || 0;
+  var DUR0 = parseInt(stage.dataset.dur, 10) || 0;
+  var HINT = stage.dataset.hint || '';
+  var AUDIO_READY = stage.dataset.audio === '1';
+  var LIVE_READY = stage.dataset.live === '1';
 
-const hintEl = document.getElementById('hint');
-function showHint(html){
-  hintEl.hidden = false;
-  hintEl.classList.add('warn');
-  hintEl.innerHTML = html;
-}
+  var v = document.getElementById('v');
+  var a = document.getElementById('a');
+  var cueEl = document.getElementById('cue');
+  var cueBox = document.querySelector('.cue');
+  var seek = document.getElementById('seek');
+  var seekfill = document.getElementById('seekfill');
+  var curEl = document.getElementById('cur');
+  var durEl = document.getElementById('dur');
+  var playBtn = document.getElementById('playBtn');
+  var volBtn = document.getElementById('volBtn');
+  var volEl = document.getElementById('vol');
+  var ccBtn = document.getElementById('ccBtn');
+  var fsBtn = document.getElementById('fsBtn');
+  var bigplay = document.getElementById('bigplay');
+  var drawer = document.getElementById('drawer');
+  var notice = document.getElementById('notice');
+  var toastEl = document.getElementById('toast');
 
-/* ---------- 时间轴 ---------- */
-const clock = s => {
-  s = Math.max(0, Math.floor(s || 0));
-  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
-  const mm = String(m).padStart(2, '0'), ss = String(x).padStart(2, '0');
-  return h ? h + ':' + mm + ':' + ss : mm + ':' + ss;
-};
-// 实时模式的时间轴从会话起播点算起，对外（进度上报）要加回 base
-const curPos = () => (mode === 'live' ? base : 0) + (art && art.video ? art.video.currentTime : 0);
-const curDur = () => mode === 'live' && LIVE_TOTAL ? LIVE_TOTAL
-                   : DURATION_MS ? DURATION_MS / 1000
-                   : (art && art.video ? art.video.duration : 0);
+  var mode = 'direct';      // direct | audio | live
+  var live = null;          // {token,start,total}
+  var hls = null;
+  var cues = [];            // [{s,e,t}]
+  var off = 0;              // 正数 = 字幕提前
+  var lastSave = 0;
+  var offCache = null;
+  var liveFailed = false;   // 实时转码失败过就别再自动重试，免得死循环
 
-function saveProgress(){
-  if (!art || !art.video || !curDur()) return;
-  fetch('/api/progress', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      item_id: ITEM,
-      position_ms: Math.round(curPos() * 1000),
-      duration_ms: Math.round(curDur() * 1000),
-    })}).catch(()=>{});
-}
-
-/* ---------- 播放方式 ---------- */
-// ?mode=live|pre|native 直接指定播放方式，只作为调试/救急后门，不进 UI：
-// 用来对比两种转码的实际表现，或者某条片子被误判时强行换一条路。
-const MODE_OVERRIDE = (new URLSearchParams(location.search).get('mode') || '').toLowerCase();
-
-// AUDIO_HINT 为空＝文件名里没有浏览器解不了的音轨标签，这条能直接播。
-const DIRECT_OK = AUDIO_HINT === '';
-
-// 播放方式不需要用户操心，按优先级自动定，且**只在设置里不提供选项**：
-//   能直接播 → 原生直连（零转码、完整时长、Range 拖动最流畅）
-//   音轨解不了 → 有预转码产物就用它；没有才走实时转码
-// 预转码只是一次性的音轨转码、播放时不占 CPU，实时转码却要边转边播；
-// 两者都在时没有任何理由让人去选更费性能的那个。
-function pickMode(){
-  if (MODE_OVERRIDE === 'pre' && PRE_READY) return 'pre';
-  if (MODE_OVERRIDE === 'live' && LIVE_READY) return 'live';
-  if (MODE_OVERRIDE === 'native') return 'native';
-  if (DIRECT_OK) return 'native';
-  if (PRE_READY) return 'pre';
-  if (LIVE_READY) return 'live';
-  return 'native';
-}
-
-function loadHLS(){
-  if (window.Hls) return Promise.resolve();
-  return new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = '/vendor/hls.js';
-    s.onload = res;
-    s.onerror = () => rej(new Error('hls.js 加载失败'));
-    document.head.appendChild(s);
-  });
-}
-
-/* ---------- 字幕 ---------- */
-// 切换字幕源时 ArtPlayer 会重建 <track>，偏移与开关都得自己记住再套回去。
-// 偏移分两层：autoSubOffset 是服务端估的整体偏移（拿内嵌轨当参考），
-// subOffset 是用户滑块上的微调量，实际生效的是两者之和——这样用户不用
-// 从 0 开始一点点试，只需在自动值上修正差的那一点。
-let autoSubOffset = 0;
-let subOffset = 0;
-let subOn = true;
-let curSubIdx = 0;
-let subOffsets = {};   // 服务端估的偏移：字幕 URL -> 秒（相对下面这条基准轨）
-let subRef = '';       // 基准轨 URL：校准时的参照物，空 = 自动（内嵌轨优先）
-const totalSubOffset = () => autoSubOffset + subOffset;
-
-/* 续看恢复：字幕设置按条目存 localStorage。
-   字号是跨条目的设备偏好（litems.subtitle.size），这里管的是会随片子变的几项：
-   开关、选中的语言、手动微调偏移、校准用的基准轨。key 里带 ITEM，所以每部片各记各的。
-   选中语言存 URL 而不是下标：字幕列表增删后下标会漂，URL 才是稳定标识。 */
-const SUB_STATE_KEY = 'litems.subtitle.' + ITEM;
-// 手动微调上限（秒）。校准换基准时要把进位折算进滑块，10 秒在偏移大的片源上会被夹掉。
-const SUB_OFF_MAX = 20;
-const fmtSubOffset = v => (v > 0 ? '+' : '') + (Math.round(v * 10) / 10) + 's';
-
-function readSubState(){
-  try {
-    const j = JSON.parse(localStorage.getItem(SUB_STATE_KEY) || 'null');
-    if (!j || typeof j !== 'object') return null;
-    const off = Number(j.offset);
-    return {
-      on: typeof j.on === 'boolean' ? j.on : true,
-      url: typeof j.url === 'string' ? j.url : '',
-      offset: Number.isFinite(off) ? Math.min(SUB_OFF_MAX, Math.max(-SUB_OFF_MAX, off)) : 0,
-      ref: typeof j.ref === 'string' ? j.ref : '',
-    };
-  } catch (e) { return null; }
-}
-
-const savedSub = readSubState();
-if (savedSub && SUBS.length){
-  subOn = savedSub.on;
-  const i = SUBS.findIndex(s => s.url === savedSub.url);
-  // 存的那个字幕文件没了（重命名/重新刮削）就回落到第一条，偏移也不该沿用——
-  // 它是按旧字幕调出来的，套到新字幕上只会更不准。基准轨跟着一起丢：
-  // 参照物没了，之前那套偏移就没有意义了。
-  curSubIdx = i >= 0 ? i : 0;
-  subOffset = i >= 0 ? savedSub.offset : 0;
-  subRef = i >= 0 ? savedSub.ref : '';
-}
-
-function saveSubState(){
-  try {
-    localStorage.setItem(SUB_STATE_KEY, JSON.stringify({
-      on: subOn,
-      url: (SUBS[curSubIdx] && SUBS[curSubIdx].url) || '',
-      offset: subOffset,
-      ref: subRef,
-    }));
-  } catch (e) {}
-}
-
-// 偏移实现同内核：把 cue 的原始时间打点后整体平移，换语言重载时重新打点。
-// subBase 用来把「绝对字幕时间」对上「会话相对时间」——实时模式换起播点时用。
-function applyOffset(sec){
-  // 字幕轨可能还没载入：Artplayer 的 cues getter 是 Array.from(track.cues)，
-  // track 为空时它自己就抛 TypeError，不是返回空数组，所以取值这一步要 try。
-  let cues;
-  try { cues = art.subtitle.cues || []; } catch (e) { return; }
-  if (!cues.length) return;
-  // 时长必须是正的才拿来当上界。视频元数据还没到时 art.duration 是 0，
-  // 而 number 类型上 0 也算 finite —— 用它做上限会把每条 cue 的 start/end
-  // 全 clamp 成 0，表现就是「整条字幕挤在片头同一秒、之后一条都不显示」。
-  const dur = mode === 'live' ? 1e9
-    : (Number.isFinite(art.duration) && art.duration > 0 ? art.duration : 1e9);
-  for (const c of cues){
-    if (c.originalStartTime == null){
-      c.originalStartTime = c.startTime;
-      c.originalEndTime = c.endTime;
-    }
-    c.startTime = Math.min(Math.max(c.originalStartTime + sec, 0), dur);
-    c.endTime = Math.min(Math.max(c.originalEndTime + sec, 0), dur);
-  }
-  art.subtitle.update();
-}
-
-function setSubVisible(on){
-  const tt = art.subtitle.textTrack;
-  if (tt) tt.mode = on ? 'hidden' : 'disabled';
-  const box = document.querySelector('.art-subtitle');
-  if (!on && box) box.innerHTML = '';
-  if (on) setTimeout(() => art.subtitle.update(), 60);
-}
-
-/* ---------- 预转码模式：原视频（静音）+ AAC 音轨 ---------- */
-// 声音来自独立 <audio>，而独立 <audio> 的自动播放一定会被浏览器的自动播放
-// 策略拦下：视频那侧的原音轨（EAC3/DTS 之类）本来就没法解，浏览器把它当"无声
-// 内容"放行，于是画面自己在跑，audio.play() 却静默 reject —— 症状就是
-// 「画面正常、一点声音都没有」，控制台也不报错。
-//
-// 所以要等一次用户手势才可能出声。入口只有一个：视频真正开始播放（playing
-// 事件）——那时候用户刚点过播放器，手势已经有了。不绑全局点击，也不往画面上
-// 盖按钮：ArtPlayer 的点击本身就是播放/暂停开关，重复补手势只会拿到
-// "play() request was interrupted by a call to pause()" 这种假报警。
-let audioOn = false;
-let audioRetry = 0;
-
-function startPreAudio(){
-  if (!audioEl || !art || !art.video) return;
-  const v = art.video;
-  // 已经在播且对得上，就别每次调用都重设时间
-  if (!audioEl.paused && Math.abs(audioEl.currentTime - v.currentTime) < 0.3) return;
-  // readyState 为 0 时赋 currentTime 会被忽略，交给 loadedmetadata 再补
-  if (audioEl.readyState > 0 && Math.abs(audioEl.currentTime - v.currentTime) > 0.3){
-    try { audioEl.currentTime = v.currentTime; } catch(e){}
-  }
-  audioEl.play().then(() => {
-    audioOn = true;
-    audioRetry = 0;
-  }).catch(err => {
-    // AbortError：这次 play 还没落地就被 pause() 打断（用户暂停、切播放方式、
-    // 或者进度同步触发的 seek）。这不是故障，视频还在播就补一次，最多三轮。
-    const msg = (err && err.message) || '';
-    if ((err && err.name === 'AbortError') || /interrupted by a call to pause/i.test(msg)){
-      if (!v.paused && audioRetry < 3){
-        audioRetry++;
-        setTimeout(() => { if (art && art.video && !art.video.paused) startPreAudio(); }, 300);
-      }
-      return;
-    }
-    if (err && err.name === 'NotAllowedError'){
-      // 这一次播放还不算用户手势。不弹提示、也不盖按钮——再点一次播放器，
-      // playing 事件会重新走到这里。
-      return;
-    }
-    showHint('声音启动失败：' + (msg || err));
-  });
-}
-
-function setupPreAudio(){
-  audioEl = new Audio('/audio/' + ITEM);
-  audioEl.preload = 'auto';
-  const v = art.video;
-
-  // 音量/静音/倍速跟随播放器控件。用事件而不是定时轮询：轮询会把用户刚调过的
-  // 状态又盖回去，也白白唤醒。
-  const syncVol = () => {
-    audioEl.volume = v.volume;
-    audioEl.muted = v.muted;
-    if (audioOn) audioEl.playbackRate = v.playbackRate;
+  var ICON = {
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="3.4" height="14"/><rect x="13.6" y="5" width="3.4" height="14"/></svg>',
+    vol: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 9.5h3.2L12 6v12L7.2 14.5H4z"/><path d="M15.5 9a4 4 0 010 6"/></svg>',
+    mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 9.5h3.2L12 6v12L7.2 14.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>'
   };
-  ['volumechange', 'ratechange'].forEach(ev => v.addEventListener(ev, syncVol));
-  syncVol();
 
-  // 用 playing 而不是 play：play 只是"请求播放"，被暂停打断过也会触发一次；
-  // playing 才是真的出画面了，这时候拉音轨不会和 pause 打架。
-  v.addEventListener('playing', () => startPreAudio());
-  v.addEventListener('pause', () => audioEl.pause());
-  v.addEventListener('seeking', () => {
-    if (!audioOn) return;
-    try { audioEl.currentTime = v.currentTime; } catch(e){}
-  });
-
-  // 漂移校正：>250ms 硬对齐；50–250ms 用 ±3% 速率慢慢收，避免频繁跳变
-  v.addEventListener('timeupdate', () => {
-    if (!audioOn || audioEl.paused) return;
-    const d = audioEl.currentTime - v.currentTime;
-    const rate = v.playbackRate || 1;
-    if (Math.abs(d) > 0.25) audioEl.currentTime = v.currentTime;
-    else if (Math.abs(d) > 0.06) audioEl.playbackRate = rate * (d > 0 ? 0.97 : 1.03);
-    else audioEl.playbackRate = rate;
-  });
-
-  audioEl.addEventListener('loadedmetadata', () => {
-    const now = art && art.video;
-    if (!now) return;
-    try { audioEl.currentTime = now.currentTime; } catch(e){}
-    if (audioOn || !now.paused) startPreAudio();
-  });
-
-  // 桌面端已授权自动播放的话，这一次就直接成了
-  startPreAudio();
-}
-
-/* ---------- 实时转码模式：HLS 分段边转边发 ---------- */
-// 服务端按实时速度产出分段、只保留最近几分钟窗口。所以：
-// 1) 起播必须落在会话起点（否则会从「直播边缘」开始，白跳过十几秒）；
-// 2) 观众暂停时要让 ffmpeg 一起停，否则窗口会滑过他的位置，回来后全是 404。
-let liveTok = null;
-let liveBeat = null;
-
-function liveCtl(action){
-  if (mode !== 'live' || !liveTok) return;
-  fetch('/api/live/' + ITEM + '?ctl=' + action + '&token=' + liveTok,
-        {method:'POST'}).catch(()=>{});
-}
-function beatOn(){
-  beatOff();
-  liveBeat = setInterval(() => liveCtl('pause'), 20000);  // 暂停期间续命，别被会话回收
-}
-function beatOff(){
-  if (liveBeat){ clearInterval(liveBeat); liveBeat = null; }
-}
-
-function attachHls(video, url, a){
-  const hls = new Hls({maxBufferLength: 30, backBufferLength: 180});
-  hls.loadSource(url);
-  hls.attachMedia(video);
-  hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    try { video.currentTime = 0; } catch(e){}
-  });
-  // 第三个参数就是 ArtPlayer 实例。这里必须用它，不能用全局 art——
-  // customType 是在 new ArtPlayer() 构造期间调用的，那时全局 art 还没赋值，
-  // 写成 art.hls 会抛 TypeError，hls 实例就丢了（切模式/重起流时销毁不掉）。
-  a.hls = hls;
-  a.on('destroy', () => { try { hls.destroy(); } catch(e){} });
-}
-
-// 拖到还没转出来的位置（或已删掉的旧分段）时，从目标位置重新起流。
-// 实时模式的时间轴以「本次起播点」为 0，重启后 base 跟着变。
-// keepPaused：拖动时若在暂停，重启后仍保持暂停（否则会自己放起来）。
-async function restartLive(atSec, keepPaused){
-  if (restarting) return;
-  restarting = true;
-  try {
-    const j = await fetch('/api/live/' + ITEM + '?start=' + Math.max(0, Math.floor(atSec)))
-      .then(r => r.json());
-    if (!j.url) throw new Error(j.error || '起流失败');
-    base = j.start;
-    liveTok = j.token;
-    subBase = -base;
-    if (j.total > 0) LIVE_TOTAL = j.total;
-    applyOffset(subBase + totalSubOffset());
-
-    if (art.hls) { try { art.hls.destroy(); } catch(e){} art.hls = null; }
-    const v = art.video;
-    v.pause();
-    v.removeAttribute('src');
-    v.load();
-
-    const hls = new Hls({maxBufferLength: 30, backBufferLength: 180});
-    hls.loadSource(j.url);
-    hls.attachMedia(v);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      try {
-        v.currentTime = 0;
-        if (!keepPaused) v.play().catch(()=>{});
-      } catch(e){}
-    });
-    art.hls = hls;
-  } catch (e) {
-    showHint('重新起流失败：' + e.message);
-  } finally {
-    setTimeout(() => { restarting = false; }, 800);
+  function toast(t, ms){
+    toastEl.textContent = t;
+    toastEl.hidden = false;
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function(){ toastEl.hidden = true; }, ms || 2600);
   }
-}
+  function fmt(sec){
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    sec = Math.floor(sec);
+    var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(s).padStart(2, '0');
+  }
+  function durSec(){
+    if (mode === 'live' && live) return live.total || 0;
+    if (DUR0 > 0) return DUR0 / 1000;
+    return isFinite(v.duration) ? v.duration : 0;
+  }
+  function curSec(){
+    if (mode === 'live' && live) return live.start + v.currentTime;
+    return v.currentTime || 0;
+  }
 
-/* ---------- 启动 ---------- */
-async function boot(){
-  mode = pickMode();
-
-  const opts = {
-    container: '#player',
-    autoplay: true,
-    setting: true,
-    playbackRate: true,
-    aspectRatio: true,
-    fullscreen: true,
-    pip: true,
-    hotkey: true,
-    // 控件强调色跟站点一致（播放器永远压在黑底上，用暗色那一档）
-    theme: '#e0a458',
-  };
-  {{if .Item.Poster}}opts.poster = "{{.Item.Poster}}";{{end}}
-
-  if (mode === 'live'){
-    try {
-      await loadHLS();
-      const start = RESUME_MS > 30000 ? Math.floor(RESUME_MS / 1000) : 0;
-      const j = await fetch('/api/live/' + ITEM + '?start=' + start).then(r => r.json());
-      if (!j.url) throw new Error(j.error || '起流失败');
-      base = j.start;
-      liveTok = j.token;
-      LIVE_TOTAL = j.total || 0;
-      subBase = -base;
-      opts.url = j.url;
-      opts.type = 'm3u8';
-      opts.customType = {m3u8: (video, url, a) => attachHls(video, url, a)};
-    } catch (e) {
-      // 实时转码起不来就退回原生播放（画面仍能出，只是可能没声音）
-      mode = 'native';
-      opts.url = '/stream/' + ITEM;
-      showHint('实时转码没能启动：' + e.message);
+  /* ── 起点：?t=0 从头，?t=秒 定点，否则接着上次 ───────────────── */
+  function startAt(){
+    var q = new URLSearchParams(location.search);
+    if (q.has('t')) {
+      var n = parseFloat(q.get('t'));
+      return isFinite(n) ? n : 0;
     }
-  } else {
-    opts.url = '/stream/' + ITEM;
+    return POS0 / 1000;
   }
 
-  if (mode !== 'native') hintEl.hidden = true;   // 有转码兜住声音，就别再吓人
-
-  art = new Artplayer(opts);
-
-  art.on('subtitleLoad', () => {
-    if (subBase || totalSubOffset()) applyOffset(subBase + totalSubOffset());
-    if (!subOn) setSubVisible(false);
-  });
-
-  // 视频元数据到位后重算一次：字幕常常比视频先加载完，那时还没有真实时长。
-  art.on('video:loadedmetadata', () => {
-    if (subBase || totalSubOffset()) applyOffset(subBase + totalSubOffset());
-  });
-
-  // 续播：预转码/原生模式直接跳到位置；实时模式的起播点已经在会话里了
-  if (mode !== 'live' && RESUME_MS > 30000){
-    art.on('ready', () => { art.currentTime = RESUME_MS / 1000; });
+  /* ── 声音：原生直连 / AAC 音轨 / 实时转码 ────────────────────── */
+  function setBadges(){
+    document.getElementById('mDirect').setAttribute('aria-pressed', mode === 'direct');
+    document.getElementById('mAudio').setAttribute('aria-pressed', mode === 'audio');
+    document.getElementById('mLive').setAttribute('aria-pressed', mode === 'live');
+    document.getElementById('mAudio').disabled = false;
+    document.getElementById('mLive').disabled = !LIVE_READY;
+    var line = document.getElementById('modeLine');
+    if (mode === 'direct') line.textContent = '直接播原文件。视频和声音都来自本地文件，不占 CPU。';
+    else if (mode === 'audio') line.textContent = '画面来自原文件（静音），声音走预转码的 AAC 音轨。';
+    else line.textContent = '整条流由 ffmpeg 实时转码，占用 CPU，拖动后要等几秒重新起播。';
+    if (!LIVE_READY) line.textContent += ' 这台机器没装 ffmpeg，实时转码不可用。';
   }
 
-  if (mode === 'pre') setupPreAudio();
+  function clearNotice(){ notice.hidden = true; notice.innerHTML = ''; }
 
-  if (mode === 'live'){
-    // 拖到缓冲范围之外（还没转出来 / 已被清理）→ 重启会话。
-    // buffer 还空着的时候不能下判断：起播瞬间（0 > end-0.5 恒真）以及 hls.js
-    // 处理分段间隙时的内部 seek 都会被误判成"跳出窗口"，白白重启会话。
-    art.video.addEventListener('seeking', () => {
-      if (restarting || !art.video) return;
-      const v = art.video, b = v.buffered;
-      if (!b.length) return;
-      const end = b.end(b.length - 1);
-      const startB = b.start(0);
-      if (v.currentTime > end - 0.5 || v.currentTime < startB - 1.5){
-        restartLive(base + v.currentTime);
-      }
-    });
-    // ffmpeg 跟着暂停/继续，窗口才不会滑过观众的位置
-    art.video.addEventListener('pause', () => { if (!restarting){ liveCtl('pause'); beatOn(); saveProgress(); } });
-    art.video.addEventListener('playing', () => { liveCtl('resume'); beatOff(); });
-
-    // 播放器自带的时间轴只覆盖本次会话（窗口就几分钟），数字容易让人以为
-    // 这是个一分钟的短片；改成右上角显示全片进度，控件里的时间读数去掉。
-    try { art.controls.remove('time'); } catch(e){}
-    const lp = document.getElementById('livepos');
-    if (lp){
-      lp.hidden = false;
-      const tick = () => {
-        if (!art || !art.video) return;
-        lp.innerHTML = '实时转码 · <b>' + clock(base + (art.video.currentTime || 0)) + '</b>'
-                     + (LIVE_TOTAL ? ' / ' + clock(LIVE_TOTAL) : '');
-      };
-      tick();
-      setInterval(tick, 1000);
+  function showAudioNotice(){
+    if (!HINT || mode !== 'direct') { clearNotice(); return; }
+    var why = HINT === 'bad'
+      ? '这条音轨是 DTS / TrueHD / PCM 一类，浏览器基本都没有解码器'
+      : '这条音轨是 AC3 / EAC3，部分浏览器不带解码器';
+    notice.innerHTML = '';
+    var b = document.createElement('b');
+    b.textContent = why + '。';
+    notice.appendChild(b);
+    notice.appendChild(document.createTextNode('现在听到的很可能是静音画面。'));
+    var wrap = document.createElement('div');
+    wrap.className = 'nb';
+    var acc = document.createElement('button');
+    acc.className = 'primary'; acc.type = 'button'; acc.textContent = '转成 AAC 音轨';
+    acc.addEventListener('click', function(){ prepAudio(); });
+    wrap.appendChild(acc);
+    if (LIVE_READY) {
+      var lv = document.createElement('button');
+      lv.type = 'button'; lv.textContent = '改用实时转码';
+      lv.addEventListener('click', function(){ switchMode('live'); });
+      wrap.appendChild(lv);
     }
+    var ig = document.createElement('button');
+    ig.type = 'button'; ig.textContent = '知道了';
+    ig.addEventListener('click', clearNotice);
+    wrap.appendChild(ig);
+    notice.appendChild(wrap);
+    notice.hidden = false;
+  }
 
-    // 换掉内置进度条：它按「窗口时长」算比例，看着像播到结尾其实才刚开头，
-    // 拖动比例也全是错的。换成全片比例的条——位置 = (base + currentTime)/全片；
-    // 拖动 = 比例 × 全片 → 重启会话（服务端支持从任意位置起流）。
-    // 跳转代价（1~2 秒重起流）由转码本身决定，但「跳到哪」必须是真的。
-    try { art.controls.remove('progress'); } catch(e){}
-    art.controls.add({
-      name: 'livebar',
-      position: 'top',
-      index: 1,
-      html: '<div class="livebar"><div class="livebar-buf"></div>'
-          + '<div class="livebar-fill"></div><div class="livebar-dot"></div></div>',
-    });
-    // art.controls.add 不返回控件元素（源码里 super.add(e) 没有 return），
-    // 只能从 DOM 拿；拿不到就别绑事件，宁可没有进度条也不能在这里抛错中断
-    // 后面的初始化。
-    const strip = document.querySelector('.livebar');
-    if (strip){
-      const bufEl = strip.querySelector('.livebar-buf');
-      const fillEl = strip.querySelector('.livebar-fill');
-      const dotEl = strip.querySelector('.livebar-dot');
-      let dragRatio = null;   // 拖动中的预览比例；null = 未在拖动
+  function useDirect(at){
+    mode = 'direct';
+    teardownLive();
+    a.pause(); a.removeAttribute('src'); a.load();
+    v.muted = false;
+    if (!v.src || !v.src.endsWith('/stream/' + ID)) v.src = '/stream/' + ID;
+    v.volume = volEl.value / 100;
+    if (typeof at === 'number') v.currentTime = at;
+    setBadges(); showAudioNotice();
+    v.play().catch(function(){ syncPlayIcon(); });
+  }
 
-      function paintBar(){
-        if (!LIVE_TOTAL || !art || !art.video) return;
-        const pos = dragRatio !== null ? dragRatio
-                  : (base + (art.video.currentTime || 0)) / LIVE_TOTAL;
-        const pct = (Math.min(1, Math.max(0, pos)) * 100).toFixed(2) + '%';
-        fillEl.style.width = pct;
-        dotEl.style.left = pct;
-        if (dragRatio === null){
-          const b = art.video.buffered;
-          const end = b.length ? b.end(b.length - 1) : 0;
-          bufEl.style.width = (Math.min(1, (base + end) / LIVE_TOTAL) * 100).toFixed(2) + '%';
-        }
-      }
+  function useAudio(at){
+    mode = 'audio';
+    teardownLive();
+    v.muted = true;
+    if (!v.src || !v.src.endsWith('/stream/' + ID)) v.src = '/stream/' + ID;
+    a.src = '/audio/' + ID;
+    a.volume = volEl.value / 100;
+    var t = typeof at === 'number' ? at : v.currentTime;
+    // 画面和音轨必须从同一个点起，否则一开播就错位
+    var seekBoth = function(){
+      try { a.currentTime = t; } catch (e) {}
+      try { v.currentTime = t; } catch (e) {}
+      v.removeEventListener('loadedmetadata', seekBoth);
+    };
+    v.addEventListener('loadedmetadata', seekBoth);
+    if (v.readyState >= 1) seekBoth();
+    setBadges(); clearNotice();
+    Promise.all([
+      v.play().catch(function(){}),
+      a.play().catch(function(){ toast('音轨还没准备好，稍等一下。'); })
+    ]);
+  }
 
-      const barRatio = ev => {
-        const rect = strip.getBoundingClientRect();
-        const x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
-        return Math.min(1, Math.max(0, x / rect.width));
-      };
-      strip.addEventListener('pointerdown', ev => {
-        if (restarting || !LIVE_TOTAL) return;
-        ev.preventDefault();
-        strip.classList.add('drag');
-        dragRatio = barRatio(ev);
-        paintBar();
-        try { strip.setPointerCapture(ev.pointerId); } catch(e){}
+  function switchMode(next, at){
+    if (next === 'audio' && !AUDIO_READY) { prepAudio(); return; }
+    if (next === 'live' && !LIVE_READY) { toast('ffmpeg 未安装，实时转码不可用。'); return; }
+    var now = typeof at === 'number' ? at : curSec();
+    var paused = v.paused;
+    if (next === 'live') { startLive(now, !paused); }
+    else if (next === 'audio') { useAudio(now); if (paused) { v.pause(); a.pause(); } }
+    else { useDirect(now); if (paused) v.pause(); }
+  }
+
+  /* 预转码 AAC 音轨：POST 起任务，轮询到 done 再切 */
+  var polling = null;
+  function prepAudio(){
+    clearInterval(polling);
+    notice.innerHTML = '';
+    var p = document.createElement('b');
+    p.textContent = '正在转音轨…';
+    notice.appendChild(p);
+    var st = document.createElement('span');
+    notice.appendChild(st);
+    notice.hidden = false;
+    fetch('/api/transcode/' + ID, {method:'POST'})
+      .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
+      .then(function(job){
+        if (job.state === 'done') { AUDIO_READY = true; useAudio(v.currentTime); return; }
+        polling = setInterval(function(){
+          fetch('/api/transcode/' + ID).then(function(r){ return r.json(); }).then(function(j){
+            if (j.state === 'done') {
+              clearInterval(polling); AUDIO_READY = true;
+              toast('音轨好了，已经切过去。');
+              useAudio(v.currentTime);
+            } else if (j.state === 'error') {
+              clearInterval(polling);
+              st.textContent = ' 失败：' + (j.error || '未知错误');
+            } else {
+              st.textContent = ' ' + Math.round((j.progress || 0) * 100) + '%（转完会自动切换，可以继续看）';
+            }
+          });
+        }, 2000);
+      })
+      .catch(function(e){
+        st.textContent = ' ' + (e.message || '启动失败');
       });
-      strip.addEventListener('pointermove', ev => {
-        if (dragRatio === null) return;
-        dragRatio = barRatio(ev);
-        paintBar();
-      });
-      const endDrag = ev => {
-        if (dragRatio === null) return;
-        const r = dragRatio;
-        dragRatio = null;
-        strip.classList.remove('drag');
-        try { strip.releasePointerCapture(ev.pointerId); } catch(e){}
-        const target = r * LIVE_TOTAL;
-        // 原地松手（±3 秒）不重启，别白白断一次流
-        if (Math.abs(target - (base + art.video.currentTime)) < 3){ paintBar(); return; }
-        restartLive(target, art.video.paused);
-      };
-      strip.addEventListener('pointerup', endDrag);
-      strip.addEventListener('pointercancel', endDrag);
-      art.on('video:timeupdate', paintBar);
-      art.on('video:progress', paintBar);
-      paintBar();
-    }
   }
 
-  /* 字幕：续看时恢复上次的语言/开关/偏移，否则用 [scrape].sub_langs 的第一条 */
-  const subURL = u => u + '&fmt=vtt';
-  const subArgs = name => ({name, type: 'vtt', encoding: 'utf-8'});
+  function teardownLive(){
+    if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
+    live = null;
+  }
 
-  // 字号是跨条目的设备偏好（同一块屏幕看所有片都该一样大），保持全局存储
-  const SUB_SIZE_KEY = 'litems.subtitle.size';
-  const subSize = (() => {
-    const v = parseInt(localStorage.getItem(SUB_SIZE_KEY) || '', 10);
-    return Number.isFinite(v) ? Math.min(44, Math.max(12, v)) : 20;
-  })();
-  const applySubSize = px => art.subtitle.style({'font-size': px + 'px'});
-  applySubSize(subSize);
+  function startLive(at, autoplay){
+    teardownLive();
+    var wasAudio = mode === 'audio';
+    mode = 'live';
+    a.pause(); a.removeAttribute('src'); a.load();
+    v.muted = false;
+    notice.innerHTML = '';
+    var p = document.createElement('b');
+    p.textContent = '正在起实时转码…';
+    notice.appendChild(p);
+    notice.hidden = false;
+    setBadges();
 
-  if (SUBS.length) {
-    art.subtitle.switch(subURL(SUBS[curSubIdx].url), subArgs(SUBS[curSubIdx].label)).catch(()=>{});
-
-    /* ---------- 字幕校准区 ----------
-       独立于播放器设置面板：那里只能塞一行 range，0.1 秒的步进在触屏上拖不准，
-       也放不下基准轨选择。这里给到 0.01 秒精度：±1 / ±0.1 按钮、直接输入、
-       滑块三者同步，还能看到当前这句字幕的实际时间。 */
-    const calibEl     = document.getElementById('calib');
-    const calibHead   = document.getElementById('calibHead');
-    const calibBody   = document.getElementById('calibBody');
-    const calibSum    = document.getElementById('calibSum');
-    const calibRefSel = document.getElementById('calibRef');
-    const calibRefRow = document.getElementById('calibRefRow');
-    const calibNum    = document.getElementById('calibNum');
-    const calibRange  = document.getElementById('calibRange');
-    const calibSplit  = document.getElementById('calibSplit');
-    const calibCue    = document.getElementById('calibCue');
-    const calibReset  = document.getElementById('calibReset');
-
-    const refName = u => (SUBS.find(s => s.url === u) || {}).label || '自动';
-    const round2 = v => Math.round(v * 100) / 100;
-    const totalOffset = () => round2(totalSubOffset());
-    let keepTotal = null;   // 换基准轨期间暂存「换之前看到的偏移量」
-    let typing = false;     // 输入框有焦点时不覆盖用户正在敲的内容
-
-    // 滑块上下限跟着自动偏移走：两条字幕差出三十秒时，±20 的固定范围
-    // 连「回到自动值」都拖不到。
-    const spanOf = () => Math.max(SUB_OFF_MAX, Math.ceil(Math.abs(autoSubOffset)) + 5);
-
-    // 面板读数一律显示「这条字幕整体偏移多少」，自动值和手动量拆在下一行，
-    // 这样换基准轨（自动值变了）时读数不会莫名其妙跳一下。
-    const syncCalibUI = () => {
-      const v = totalOffset();
-      if (!typing) calibNum.value = v.toFixed(2);
-      calibRange.min = -spanOf();
-      calibRange.max = spanOf();
-      calibRange.value = v;
-      calibSplit.textContent = '自动 ' + autoSubOffset.toFixed(2) + 's ＋ 手动 '
-        + subOffset.toFixed(2) + 's';
-      calibSum.textContent = (v > 0 ? '+' : '') + v.toFixed(2) + 's'
-        + (subRef ? ' · 基准 ' + refName(subRef) : ' · 自动基准');
-    };
-
-    const setTotal = v => {
-      const span = spanOf();
-      v = Math.min(span, Math.max(-span, round2(v)));
-      subOffset = round2(v - autoSubOffset);
-      saveSubState();
-      applyOffset(subBase + totalSubOffset());
-      syncCalibUI();
-      tlPaint();
-    };
-
-    // "01:23.45"——精细调整要看毫秒，clock() 只到秒
-    const clockMs = s => {
-      s = Math.max(0, s || 0);
-      const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
-      const sec = (s % 60).toFixed(2).padStart(5, '0');
-      return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + sec;
-    };
-
-    // 当前句对照：暂停在哪一帧、这句字幕落在什么时间，是判断「早了还是晚了」的依据
-    const refreshCue = () => {
-      if (calibBody.hidden || !art || !art.video) return;
-      let cues;
-      try { cues = art.subtitle.cues || []; } catch (e) { cues = []; }
-      const t = art.video.currentTime;
-      const c = cues.find(x => t >= x.startTime && t <= x.endTime);
-      calibCue.textContent = c
-        ? clockMs(c.startTime) + ' → ' + clockMs(c.endTime) + '　'
-          + String(c.text || '').replace(/\s*\n\s*/g, ' ').slice(0, 80)
-        : '这一时刻没有字幕';
-    };
-
-    /* ── 对齐视图 ──
-       上下两条轨画同一段时间：上面是基准轨（不动），下面是当前轨（可整体拖）。
-       两块颜色咬在一起就是对上了，比盯数字直观。 */
-    let refTrackURL = '';      // 服务端实际用作基准的字幕 URL
-    let refCues = [];          // 基准轨的 cue 区间（字幕文件里的原始时间）
-    const refCueCache = new Map();
-
-    const tlClock = s => {
-      s = Math.max(0, s || 0);
-      const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
-      return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0'))
-        + ':' + String(Math.floor(s % 60)).padStart(2, '0');
-    };
-
-    // 只认时间戳行就够了：内嵌轨抽出来的也是标准 WebVTT
-    const parseVttCues = txt => {
-      const ts = str => {
-        const m = /^(?:(\d+):)?(\d{1,2}):(\d{2}(?:\.\d+)?)$/.exec(String(str).trim().replace(',', '.'));
-        return m ? (+m[1] || 0) * 3600 + +m[2] * 60 + +m[3] : null;
-      };
-      const out = [];
-      for (const line of txt.split('\n')) {
-        const i = line.indexOf('-->');
-        if (i < 0) continue;
-        const a = ts(line.slice(0, i));
-        const b = ts(line.slice(i + 3).trim().split(/\s+/)[0]);
-        if (a != null && b != null) out.push([a, b]);
-      }
-      return out;
-    };
-
-    const tl = {
-      el: document.getElementById('calibTl'),
-      refClips: document.getElementById('tlRefClips'),
-      curClips: document.getElementById('tlCurClips'),
-      refLane: document.getElementById('tlRefLane'),
-      curLane: document.getElementById('tlCurLane'),
-      axis: document.getElementById('tlAxis'),
-      tip: document.getElementById('tlTip'),
-      spanLabel: document.getElementById('tlSpanLabel'),
-      span: 40,          // 窗口时长（秒）
-      center: 0,         // 窗口中心，播放器时间轴上的秒
-      steps: [10, 20, 40, 80, 160],
-    };
-
-    const mkHead = lane => {
-      const el = document.createElement('i');
-      el.className = 'tl-play';
-      lane.appendChild(el);
-      return el;
-    };
-    tl.headRef = mkHead(tl.refLane);
-    tl.headCur = mkHead(tl.curLane);
-
-    const mkCue = (a, b, start, span) => {
-      const el = document.createElement('i');
-      el.className = 'tl-cue';
-      el.style.left = ((a - start) / span * 100) + '%';
-      el.style.width = (Math.max(b - a, 0.08) / span * 100) + '%';
-      return el;
-    };
-    const mkEmpty = txt => {
-      const el = document.createElement('span');
-      el.className = 'tl-empty';
-      el.textContent = txt;
-      return el;
-    };
-
-    // 窗口别越过片头/片尾：片头附近显示 -0:20 这种时刻没有意义
-    const tlStart = () => {
-      const span = tl.span;
-      let start = Math.max(0, tl.center - span / 2);
-      const dur = art && art.video ? art.video.duration : 0;
-      if (dur > 0) start = Math.min(start, Math.max(0, dur - span));
-      return start;
-    };
-
-    const tlPaintAxis = () => {
-      const start = tlStart();
-      const frag = document.createDocumentFragment();
-      for (let i = 0; i <= 4; i++) {
-        const el = document.createElement('span');
-        el.className = 'tl-tick';
-        el.style.left = (i * 25) + '%';
-        el.textContent = tlClock(start + i * tl.span / 4);
-        frag.appendChild(el);
-      }
-      tl.axis.replaceChildren(frag);
-    };
-
-    const tlPaintHead = () => {
-      const p = (art.video.currentTime - tlStart()) / tl.span;
-      const on = p >= 0 && p <= 1;
-      for (const h of [tl.headRef, tl.headCur]) {
-        h.style.display = on ? '' : 'none';
-        if (on) h.style.left = (p * 100) + '%';
-      }
-    };
-
-    const tlPaint = () => {
-      if (calibBody.hidden || !art || !art.video) return;
-      const span = tl.span, start = tlStart();
-
-      // 基准轨固定不动。偏移量只作用于当前轨——两条一起挪就没有「对齐」可言了。
-      const refFrag = document.createDocumentFragment();
-      for (const [a0, b0] of refCues) {
-        const a = a0 + subBase, b = b0 + subBase;
-        if (b < start || a > start + span) continue;
-        refFrag.appendChild(mkCue(a, b, start, span));
-      }
-      tl.refClips.replaceChildren(refFrag.childNodes.length
-        ? refFrag : mkEmpty('这段没有基准字幕'));
-
-      // 当前轨：Artplayer 的 cue 时间已经含 subBase 和全部偏移，直接用
-      let cues = [];
-      try { cues = art.subtitle.cues || []; } catch (e) { cues = []; }
-      const curFrag = document.createDocumentFragment();
-      for (const c of cues) {
-        if (c.endTime < start || c.startTime > start + span) continue;
-        curFrag.appendChild(mkCue(c.startTime, c.endTime, start, span));
-      }
-      tl.curClips.replaceChildren(curFrag.childNodes.length
-        ? curFrag : mkEmpty('这段没有字幕'));
-
-      tlPaintAxis();
-      tlPaintHead();
-    };
-
-    const tlRefresh = async () => {
-      if (calibBody.hidden) return;
-      if (refTrackURL) {
-        if (refCueCache.has(refTrackURL)) {
-          refCues = refCueCache.get(refTrackURL);
+    fetch('/api/live/' + ID + '?start=' + Math.max(0, at).toFixed(2))
+      .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
+      .then(function(d){
+        live = {token: d.token, start: d.start || 0, total: d.total || 0};
+        clearNotice();
+        if (window.Hls && window.Hls.isSupported()) {
+          hls = new Hls({maxBufferLength: 24, backBufferLength: 12});
+          hls.loadSource(d.url);
+          hls.attachMedia(v);
+          hls.on(Hls.Events.ERROR, function(_e, data){
+            if (data && data.fatal) toast('转码流出错了，试试拖动一下进度。');
+          });
+        } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+          v.src = d.url;
         } else {
-          try {
-            const u = refTrackURL + (refTrackURL.includes('?') ? '&' : '?') + 'fmt=vtt';
-            const txt = await fetch(u).then(r => r.text());
-            refCues = parseVttCues(txt);
-            refCueCache.set(refTrackURL, refCues);
-          } catch (e) { refCues = []; }
+          toast('这个浏览器不支持 HLS。');
         }
-      } else {
-        refCues = [];
-      }
-      tlPaint();
-    };
-
-    const tlRecenter = () => {
-      if (art && art.video) tl.center = art.video.currentTime;
-    };
-
-    // 拖当前轨 = 整体平移 = 改偏移。拖动过程只挪 DOM（transform），
-    // 松手才真正套上去——applyOffset 要遍历上千条 cue，逐帧算会卡。
-    let tlDrag = null;
-    tl.curLane.addEventListener('pointerdown', ev => {
-      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
-      const rect = tl.curLane.getBoundingClientRect();
-      tlDrag = {
-        x0: ev.clientX,
-        w: rect.width || 1,
-        total0: totalOffset(),
-        moved: false,
-        at: tlStart() + (ev.clientX - rect.left) / (rect.width || 1) * tl.span,
-      };
-      tl.el.classList.add('dragging');
-      try { tl.curLane.setPointerCapture(ev.pointerId); } catch (e) {}
-      ev.preventDefault();
-    });
-
-    tl.curLane.addEventListener('pointermove', ev => {
-      if (!tlDrag) return;
-      let dx = ev.clientX - tlDrag.x0;
-      if (!tlDrag.moved && Math.abs(dx) < 3) return;
-      tlDrag.moved = true;
-      const v = tlDrag.total0 + dx / tlDrag.w * tl.span;
-      // 偏移归零就是两条轨咬合（自动估算值本来就是让它们重合的那个量）。
-      // 拖动过程中不做视觉吸附，块突然跳一下反而怪；只在这里给个提示。
-      const snapped = Math.abs(v) < 0.1;
-      tlDrag.last = v;
-      tl.curClips.style.transform = 'translateX(' + dx + 'px)';
-      tl.tip.textContent = snapped ? '已对齐' : (v > 0 ? '+' : '') + v.toFixed(2) + 's';
-      tl.tip.classList.toggle('on', snapped);
-    });
-
-    const tlEndDrag = ev => {
-      if (!tlDrag) return;
-      const d = tlDrag;
-      tlDrag = null;
-      tl.el.classList.remove('dragging');
-      tl.curClips.style.transform = '';
-      try { tl.curLane.releasePointerCapture(ev.pointerId); } catch (e) {}
-      if (d.moved) {
-        let v = d.last != null ? d.last : d.total0 + (ev.clientX - d.x0) / d.w * tl.span;
-        // 松手时贴到零点：手很难刚好停在咬合的那一两个像素上
-        if (Math.abs(v) < 0.1) v = 0;
-        setTotal(v);
-      } else if (d.at >= 0 && d.at <= (art.video.duration || 0)) {
-        // 没拖动就是点击：跳到点到的那个时刻，方便听一句对一下
-        art.video.currentTime = d.at;
-        tlRecenter();
-        tlPaint();
-      }
-      tl.tip.textContent = '拖动下轨对齐';
-      tl.tip.classList.remove('on');
-    };
-    tl.curLane.addEventListener('pointerup', tlEndDrag);
-    tl.curLane.addEventListener('pointercancel', tlEndDrag);
-
-    const tlZoom = dir => {
-      const i = tl.steps.indexOf(tl.span);
-      const ni = Math.min(tl.steps.length - 1, Math.max(0, (i < 0 ? 2 : i) + dir));
-      tl.span = tl.steps[ni];
-      tl.spanLabel.textContent = tl.span + 's';
-      tlPaint();
-    };
-    document.getElementById('tlZoomIn').addEventListener('click', () => tlZoom(-1));
-    document.getElementById('tlZoomOut').addEventListener('click', () => tlZoom(1));
-
-    const fillRefOptions = () => {
-      calibRefSel.innerHTML = '';
-      [{ url: '', label: '自动（内嵌优先）' }]
-        .concat(SUBS.map(s => ({ url: s.url, label: s.label })))
-        .forEach(o => {
-          const el = document.createElement('option');
-          el.value = o.url;
-          el.textContent = o.label;
-          calibRefSel.appendChild(el);
-        });
-      calibRefSel.value = subRef;
-      // 只有一条字幕就没有参照物，基准轨那一行收掉
-      calibRefRow.hidden = SUBS.length < 2;
-    };
-
-    calibEl.hidden = false;
-    fillRefOptions();
-    syncCalibUI();
-
-    calibHead.addEventListener('click', () => {
-      const open = calibBody.hidden;
-      calibBody.hidden = !open;
-      calibEl.toggleAttribute('data-open', open);
-      calibHead.setAttribute('aria-expanded', String(open));
-      if (open) { syncCalibUI(); refreshCue(); tlRecenter(); tlRefresh(); }
-    });
-
-    calibEl.querySelectorAll('.calib-adj button').forEach(b => {
-      b.addEventListener('click', () => setTotal(totalOffset() + Number(b.dataset.step)));
-    });
-
-    // 拖动即时生效（不能等 change，否则要松手才动，边拖边对不上画面）。
-    // 焦点若还留在输入框里，syncCalibUI 会故意跳过它，这里补一次强制同步。
-    calibRange.addEventListener('input', () => {
-      setTotal(Number(calibRange.value));
-      calibNum.value = totalOffset().toFixed(2);
-    });
-
-    // 输入框：回车/失焦才解析，否则打到一半的 "-" 会被当成 0；顺手认全角符号
-    const commitNum = () => {
-      const raw = calibNum.value
-        .replace(/＋/g, '+').replace(/[－—–−]/g, '-').replace(',', '.').trim();
-      const v = Number(raw);
-      if (Number.isFinite(v)) setTotal(v); else syncCalibUI();
-    };
-    calibNum.addEventListener('change', commitNum);
-    calibNum.addEventListener('focus', () => { typing = true; calibNum.select(); });
-    // 失焦时先落值再重画：输完 "1.5" 松手，显示要规范成 "1.50"
-    calibNum.addEventListener('blur', () => { typing = false; commitNum(); syncCalibUI(); });
-    calibNum.addEventListener('keydown', ev => {
-      if (ev.key === 'Enter') { ev.preventDefault(); commitNum(); calibNum.blur(); return; }
-      // ↑↓ 微调：0.05 秒，按住 Shift 是 0.5 秒
-      if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
-        ev.preventDefault();
-        setTotal(totalOffset() + (ev.shiftKey ? 0.5 : 0.05) * (ev.key === 'ArrowUp' ? 1 : -1));
-      }
-    });
-
-    calibRefSel.addEventListener('change', () => setSubRef(calibRefSel.value));
-    calibReset.addEventListener('click', () => setTotal(autoSubOffset));
-
-    let cueTick = 0;
-    art.on('video:timeupdate', () => {
-      if (calibBody.hidden) return;
-      const now = Date.now();
-      if (now - cueTick < 200) return;
-      cueTick = now;
-      refreshCue();
-      if (Math.abs(art.video.currentTime - tl.center) > tl.span * 0.45) {
-        tlRecenter();
-        tlPaint();
-      } else {
-        tlPaintHead();
-      }
-    });
-    art.on('video:seeked', () => { refreshCue(); tlRecenter(); tlPaint(); });
-    art.on('subtitleLoad', () => { refreshCue(); tlPaint(); });
-
-
-    // 偏移由服务端按「基准轨」算好（逐条在基准轨里找时间最近的 cue，取差值中位数），
-    // 异步取，不拖慢首屏。两层偏移是相加关系：autoSubOffset 每条轨各自一份，
-    // subOffset 是滑块的全局微调。
-    const loadOffsets = () => {
-      const q = subRef ? '?ref=' + encodeURIComponent(subRef) : '';
-      return fetch('/api/suboffset/' + ITEM + q).then(r => r.json()).then(j => {
-        subOffsets = (j && j.offsets) || {};
-        // 存的基准轨已经没了（字幕删了/改过名）：服务端回落成自动挑选，本地也跟着清，
-        // 否则每次进来都白请求一次，面板上还挂着一个不存在的名字。
-        if (j && j.auto && subRef) { subRef = ''; fillRefOptions(); saveSubState(); }
-        autoSubOffset = subOffsets[(SUBS[curSubIdx] || {}).url] || 0;
-        // 换基准轨时把用户眼前的那个偏移量原样保住：服务端对两套参照系
-        // 各自取整到 0.1 秒，用「自动值之差」折算会漂掉百毫秒。
-        if (keepTotal !== null) {
-          subOffset = round2(keepTotal - autoSubOffset);
-          keepTotal = null;
-          saveSubState();
-        }
-        applyOffset(subBase + totalSubOffset());
-        refTrackURL = (j && j.ref) || '';
-        syncCalibUI();
-        tlRefresh();
-        return j;
-      }).catch(()=>{});
-    };
-    loadOffsets();
-
-    // 换基准轨只是换参照物，不该让画面里的字幕当场跳一下。新基准在旧参照系里的
-    // 偏移量折算进手动量（m' = m + a_b），这样每条轨的绝对位置都没变。
-    const setSubRef = url => {
-      if (url === subRef) return;
-      keepTotal = totalOffset();   // 换参照物不改变绝对位置
-      subRef = url;
-      if (calibRefSel.value !== url) calibRefSel.value = url;
-      saveSubState();
-      loadOffsets();
-    };
-
-    art.setting.add({
-      html: '字幕',
-      name: 'subtitle-toggle',
-      switch: subOn,
-      onSwitch(item){
-        subOn = !item.switch;
-        item.switch = subOn;
-        setSubVisible(subOn);
-        saveSubState();
-        return subOn;
-      },
-    });
-
-    if (SUBS.length > 1) {
-      art.setting.add({
-        html: '字幕语言',
-        width: 220,
-        tooltip: SUBS[curSubIdx].label,
-        selector: SUBS.map((s, i) => ({html: s.label, url: s.url, default: i === curSubIdx})),
-        onSelect(item){
-          curSubIdx = SUBS.findIndex(s => s.url === item.url);
-          if (curSubIdx < 0) curSubIdx = 0;
-          // 只换这条轨自己的自动偏移；滑块里的微调是「整体对齐修正」，
-          // 对所有轨都成立，不能跟着换语言清掉。
-          autoSubOffset = subOffsets[item.url] || 0;
-          saveSubState();
-          syncCalibUI();          // 自动值变了，面板读数要跟着走
-          art.subtitle.switch(subURL(item.url), subArgs(item.html)).catch(()=>{});
-          return item.html;
-        },
+        if (autoplay) v.play().catch(function(){ syncPlayIcon(); });
+        else syncPlayIcon();
+      })
+      .catch(function(e){
+        notice.innerHTML = '';
+        var b = document.createElement('b');
+        b.textContent = '实时转码起不来：';
+        notice.appendChild(b);
+        notice.appendChild(document.createTextNode(e.message || '未知错误'));
+        notice.hidden = false;
+        liveFailed = true;
+        if (wasAudio) useAudio(v.currentTime); else useDirect(v.currentTime);
       });
+  }
 
-      // 校准与偏移都挪到播放器下方的独立区域了（见 .calib），
-      // 设置面板里只留「能不能调字幕」这一层。
-    }
-
-    art.setting.add({
-      html: '字幕大小',
-      name: 'subtitle-size',
-      tooltip: subSize + 'px',
-      range: [subSize, 12, 44, 1],
-      onChange(item){
-        const px = Math.round(item.range[0]);
-        applySubSize(px);
-        localStorage.setItem(SUB_SIZE_KEY, px);
-        return px + 'px';
-      },
-    });
-
-    // 控制栏入口：播到一半想调时不用滚回页面下方。点一下就是「展开 + 滚到可见」，
-    // 全屏时它就在控制栏上，用完关掉继续看。
-    if (art.controls && art.controls.add) {
-      art.controls.add({
-        name: 'subcal',
-        position: 'right',
-        index: 30,
-        html: '<i class="art-icon"><svg width="22" height="22" viewBox="0 0 24 24"'
-            + ' fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"'
-            + ' stroke-linejoin="round"><rect x="3" y="5" width="18" height="13" rx="2.5"/>'
-            + '<path d="M7 12.5h10M7 15.5h6"/></svg></i>',
-        tooltip: '字幕校准',
-        click(){
-          // 全屏时面板在播放器下方、被全屏区盖住，先退出来再展开
-          const fsOn = art.fullscreen || art.fullscreenWeb;
-          if (fsOn) {
-            art.fullscreen = false;
-            art.fullscreenWeb = false;
-          }
-          const go = () => {
-            if (calibBody.hidden) calibHead.click();
-            calibEl.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-          };
-          if (fsOn) setTimeout(go, 320); else go();
-        },
-      });
+  /* ── 播放控制 ───────────────────────────────────────────────── */
+  function syncPlayIcon(){
+    var paused = v.paused;
+    playBtn.innerHTML = paused ? ICON.play : ICON.pause;
+    playBtn.setAttribute('aria-label', paused ? '播放' : '暂停');
+    bigplay.hidden = !paused;
+    if (!paused) {
+      wake();
+      if (mode === 'audio' && a.paused) a.play().catch(function(){});
+      if (mode === 'live' && live) fetch('/api/live/' + ID + '?ctl=resume&token=' + encodeURIComponent(live.token)).catch(function(){});
+    } else {
+      // 暂停时也把位置存下来，退出页面就丢不了
+      save();
+      if (mode === 'audio' && !a.paused) a.pause();
+      if (mode === 'live' && live) fetch('/api/live/' + ID + '?ctl=pause&token=' + encodeURIComponent(live.token)).catch(function(){});
     }
   }
 
-  // 播放方式不做成选项：能直接播就直连，音轨解不了就预转码优先、没有才实时转码，
-  // 由 pickMode 按优先级决定（预转码播完不占 CPU，没理由让人去选更费性能的那个）。
-  // 需要强行换路时用 ?mode=live|pre|native。
+  function toggle(){
+    if (v.paused) {
+      v.play().catch(function(e){ toast('浏览器拦下了自动播放，再点一次。'); });
+      if (mode === 'audio') a.play().catch(function(){});
+    } else {
+      v.pause();
+      if (mode === 'audio') a.pause();
+    }
+  }
 
-  /* 进度上报：播放中节流 10s，暂停/播完立刻存；离页用 sendBeacon */
-  art.on('video:timeupdate', () => {
-    const now = Date.now();
-    if (now - lastSave > 10000) { lastSave = now; saveProgress(); }
+  function seekTo(sec){
+    var d = durSec();
+    sec = Math.max(0, Math.min(sec, d > 0 ? d - 0.3 : sec));
+    if (mode === 'live') {
+      var wasPlaying = !v.paused;
+      startLive(sec, wasPlaying);
+      return;
+    }
+    v.currentTime = sec;
+    if (mode === 'audio') { try { a.currentTime = sec; } catch (e) {} }
+    paint();
+  }
+
+  function paint(){
+    var d = durSec(), c = curSec();
+    var p = d > 0 ? Math.min(1000, c / d * 1000) : 0;
+    seek.value = p;
+    seekfill.style.width = (p / 10) + '%';
+    curEl.textContent = fmt(c);
+    durEl.textContent = fmt(d);
+    renderCue(c);
+  }
+
+  function volApply(){
+    var val = +volEl.value;
+    v.volume = val / 100;
+    a.volume = val / 100;
+    v.muted = (mode === 'audio') ? true : (val === 0);
+    volBtn.innerHTML = (val === 0 || (mode === 'audio' && a.muted)) ? ICON.mute : ICON.vol;
+    if (mode === 'audio') a.muted = (val === 0);
+  }
+
+  /* ── 字幕：取 VTT、解析、自己画 ─────────────────────────────── */
+  function parseVTT(text){
+    var out = [], blocks = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n\n');
+    for (var i = 0; i < blocks.length; i++) {
+      var lines = blocks[i].split('\n');
+      var idx = -1;
+      for (var j = 0; j < lines.length; j++) {
+        if (lines[j].indexOf('-->') >= 0) { idx = j; break; }
+      }
+      if (idx < 0) continue;
+      var m = lines[idx].match(/(\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3}\s*-->\s*(\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{1,3}/);
+      if (!m) continue;
+      var parts = lines[idx].split('-->');
+      var s = vttSec(parts[0]), e = vttSec(parts[1]);
+      if (!isFinite(s) || !isFinite(e)) continue;
+      var txt = lines.slice(idx + 1).join('\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
+        .trim();
+      if (txt) out.push({s: s, e: e, t: txt});
+    }
+    return out;
+  }
+  function vttSec(s){
+    var m = s.trim().match(/(?:(\d+):)?(\d+):(\d+(?:[.,]\d+)?)/);
+    if (!m) return NaN;
+    var h = m[1] ? +m[1] : 0;
+    return h * 3600 + (+m[2]) * 60 + parseFloat(String(m[3]).replace(',', '.'));
+  }
+  function renderCue(t){
+    if (!cues.length) { if (cueEl.textContent) cueEl.textContent = ''; return; }
+    var buf = [];
+    for (var i = 0; i < cues.length; i++) {
+      var c = cues[i];
+      if (t >= c.s - off && t <= c.e - off) buf.push(c.t);
+    }
+    var next = buf.join('\n');
+    if (next !== cueEl.textContent) cueEl.textContent = next;
+  }
+
+  function setSub(url, label){
+    if (!url) {
+      cues = []; cueEl.textContent = '';
+      document.getElementById('subState').textContent = '字幕已关闭。';
+      document.getElementById('offSec').hidden = true;
+      ccBtn.classList.remove('on');
+      ccBtn.setAttribute('aria-pressed', 'false');
+      return;
+    }
+    document.getElementById('subState').textContent = '正在载入「' + (label || '字幕') + '」…';
+    var u = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'fmt=vtt';
+    fetch(u).then(function(r){
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    }).then(function(t){
+      cues = parseVTT(t);
+      ccBtn.classList.add('on');
+      ccBtn.setAttribute('aria-pressed', 'true');
+      document.getElementById('subState').textContent = cues.length
+        ? '「' + (label || '字幕') + '」共 ' + cues.length + ' 条。'
+        : '这条字幕里没解析出内容（可能是图形字幕）。';
+      document.getElementById('offSec').hidden = cues.length === 0;
+      setOffset(0, true);
+      autoAlign(u, url, true);
+    }).catch(function(e){
+      document.getElementById('subState').textContent = '载入失败：' + e.message;
+    });
+  }
+
+  function setOffset(val, fromAuto){
+    off = Math.round(val * 100) / 100;
+    document.getElementById('offNum').value = off.toFixed(2);
+    document.getElementById('offRange').value = String(Math.max(-30, Math.min(30, off)));
+    renderCue(curSec());
+    if (!fromAuto && off !== 0) toast('字幕偏移 ' + (off > 0 ? '+' : '') + off.toFixed(2) + ' 秒');
+  }
+
+  function autoAlign(fetchUrl, rawUrl, silent){
+    if (!offCache) {
+      offCache = fetch('/api/suboffset/' + ID).then(function(r){ return r.json(); }).catch(function(){ return null; });
+    }
+    offCache.then(function(plan){
+      if (!plan || !plan.offsets) { if (!silent) toast('算不出偏移，手动调吧。'); return; }
+      var key = rawUrl || fetchUrl.replace(/[&?]fmt=vtt/, '');
+      var val = plan.offsets[key];
+      if (typeof val !== 'number') { if (!silent) toast('这条没有自动偏移可用。'); return; }
+      setOffset(val, true);
+      document.getElementById('subState').textContent += ' 已相对基准轨自动对齐 ' + (val > 0 ? '+' : '') + val.toFixed(2) + ' 秒。';
+      if (!silent) toast('已套用自动偏移 ' + (val > 0 ? '+' : '') + val.toFixed(2) + ' 秒');
+    });
+  }
+
+  /* ── 进度回写 ───────────────────────────────────────────────── */
+  function save(beacon){
+    if (!ID) return;
+    var d = Math.round(durSec() * 1000) || DUR0;
+    var p = Math.round(curSec() * 1000);
+    if (p < 1000 || !d) return;
+    if (p > d) p = d;
+    var body = JSON.stringify({item_id: ID, position_ms: p, duration_ms: d});
+    lastSave = Date.now();
+    if (beacon && navigator.sendBeacon) {
+      navigator.sendBeacon('/api/progress', new Blob([body], {type: 'application/json'}));
+      return;
+    }
+    fetch('/api/progress', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: body, keepalive: true
+    }).catch(function(){});
+  }
+
+  /* ── 交互绑定 ───────────────────────────────────────────────── */
+  var hideT = null;
+  function wake(){
+    stage.classList.remove('idle');
+    clearTimeout(hideT);
+    if (v.paused || drawer.classList.contains('open')) return;
+    hideT = setTimeout(function(){ stage.classList.add('idle'); }, 2800);
+  }
+
+  v.addEventListener('play', syncPlayIcon);
+  v.addEventListener('pause', syncPlayIcon);
+  v.addEventListener('loadedmetadata', function(){ paint(); });
+  v.addEventListener('timeupdate', function(){
+    if (Date.now() - lastSave > 15000 && !v.paused) save();
   });
-  art.on('video:pause', saveProgress);
-  art.on('video:ended', saveProgress);
-  window.addEventListener('pagehide', () => {
-    if (!art || !art.video || !curDur()) return;
-    navigator.sendBeacon('/api/progress', new Blob([JSON.stringify({
-      item_id: ITEM,
-      position_ms: Math.round(curPos() * 1000),
-      duration_ms: Math.round(curDur() * 1000),
-    })], {type: 'application/json'}));
+  v.addEventListener('error', function(){
+    if (mode === 'direct' && LIVE_READY && !liveFailed && !document.hidden) {
+      toast('这个容器浏览器直接播不了，改用实时转码。');
+      switchMode('live');
+    }
+  });
+  v.addEventListener('ended', function(){ save(); });
+
+  document.getElementById('bigplay').addEventListener('click', toggle);
+  playBtn.addEventListener('click', toggle);
+  stage.addEventListener('click', function(e){
+    if (e.target === stage || e.target === v) toggle();
   });
 
-  art.on('video:error', () => {
-    showHint('浏览器解码不了这个文件。请回详情页用「mpv 播放」交给本地播放器——它不挑编码。');
+  seek.addEventListener('input', function(){
+    var d = durSec();
+    if (d > 0) {
+      var t = seek.value / 1000 * d;
+      curEl.textContent = fmt(t);
+      seekfill.style.width = (seek.value / 10) + '%';
+    }
+  });
+  seek.addEventListener('change', function(){
+    var d = durSec();
+    if (d > 0) seekTo(seek.value / 1000 * d);
   });
 
-  // 顶栏：播放时鼠标（或触摸）不动 2.6s 后淡出，动了再出现
-  const bar = document.getElementById('bar');
-  let barTimer;
-  window.wakeBar = function(){
-    bar.classList.remove('hide');
-    clearTimeout(barTimer);
-    barTimer = setTimeout(() => {
-      if (art && art.video && !art.video.paused) bar.classList.add('hide');
-    }, 2600);
-  };
-  document.addEventListener('mousemove', wakeBar);
-  document.addEventListener('touchstart', wakeBar, {passive:true});
-  art.on('video:play', wakeBar);
-  art.on('video:pause', wakeBar);
-  wakeBar();
-}
+  volEl.addEventListener('input', volApply);
+  volBtn.addEventListener('click', function(){
+    if (mode === 'audio') { a.muted = !a.muted; volBtn.innerHTML = a.muted ? ICON.mute : ICON.vol; return; }
+    v.muted = !v.muted;
+    volBtn.innerHTML = v.muted ? ICON.mute : ICON.vol;
+  });
 
-/* ---------- 诊断 ---------- */
-// 手机上开不了控制台，把关键状态摊开：音轨到底有没有解码（decoded 是不是在涨）、
-// 是不是被静音、时间轴有没有推进。URL 后面加 ?diag=1 就能看到。
-window.__litemsAudio = () => ({
-  mode: mode,
-  base: base,
-  video: art && art.video ? {
-    paused: art.video.paused,
-    t: Math.round(art.video.currentTime * 100) / 100,
-    muted: art.video.muted,
-    vol: art.video.volume,
-    readyState: art.video.readyState,
-    error: art.video.error && art.video.error.code,
-  } : null,
-  audio: audioEl ? {
-    paused: audioEl.paused,
-    t: Math.round(audioEl.currentTime * 100) / 100,
-    muted: audioEl.muted,
-    vol: audioEl.volume,
-    readyState: audioEl.readyState,
-    networkState: audioEl.networkState,
-    decoded: audioEl.webkitAudioDecodedByteCount,
-    error: audioEl.error && audioEl.error.code,
-  } : null,
-  audioOn: audioOn,
-  subs: {
-    on: subOn,
-    idx: curSubIdx,
-    url: (SUBS[curSubIdx] && SUBS[curSubIdx].url) || '',
-    ref: subRef,          // 校准用的基准轨；空 = 自动（内嵌优先）
-    auto: autoSubOffset,
-    manual: subOffset,
-    total: Math.round(totalSubOffset() * 100) / 100,
-    offsets: subOffsets,
-    calibOpen: !!(document.getElementById('calibBody') && !document.getElementById('calibBody').hidden),
-  },
-});
+  ccBtn.addEventListener('click', function(){
+    var on = document.querySelector('#subOpts input[name=sub]:checked');
+    if (ccBtn.getAttribute('aria-pressed') === 'true') {
+      var was = on ? on.value : '';
+      ccBtn.dataset.last = was;
+      document.querySelector('#subOpts input[name=sub][value=""]').checked = true;
+      setSub('', '');
+    } else {
+      var pick = document.querySelector('#subOpts input[name=sub][value="' + (ccBtn.dataset.last || '') + '"]')
+        || document.querySelector('#subOpts input[name=sub]:not([value=""])');
+      if (pick) { pick.checked = true; setSub(pick.value, pick.dataset.label); }
+      else { toast('这条没有可用的字幕轨。'); }
+    }
+  });
 
-if (/[?&]diag(=1)?(&|$)/.test(location.search)) {
-  const box = document.createElement('pre');
-  box.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99;max-width:92vw;'
-    + 'margin:0;padding:8px 10px;border-radius:8px;background:rgba(0,0,0,.85);'
-    + 'color:#9fe870;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;'
-    + 'white-space:pre-wrap;pointer-events:none';
-  document.body.appendChild(box);
-  setInterval(() => {
-    box.textContent = JSON.stringify(window.__litemsAudio(), null, 1)
-      .replace(/[{}\"]/g, '').replace(/\n\s*\n/g, '\n');
-  }, 500);
-}
+  fsBtn.addEventListener('click', function(){
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    if (stage.requestFullscreen) stage.requestFullscreen().catch(function(){});
+    else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+  });
+  document.addEventListener('fullscreenchange', function(){
+    fsBtn.classList.toggle('on', !!document.fullscreenElement);
+  });
 
-boot();
+  // 抽屉
+  function openDrawer(open){
+    drawer.classList.toggle('open', open);
+    stage.classList.toggle('panel', open);
+    if (open) { stage.classList.remove('idle'); clearTimeout(hideT); }
+    else wake();
+  }
+  document.getElementById('panelBtn').addEventListener('click', function(){ openDrawer(!drawer.classList.contains('open')); });
+  document.getElementById('drawerClose').addEventListener('click', function(){ openDrawer(false); });
+
+  document.getElementById('subOpts').addEventListener('change', function(e){
+    if (e.target.name !== 'sub') return;
+    setSub(e.target.value, e.target.dataset.label || '');
+    ccBtn.dataset.last = e.target.value;
+  });
+  document.getElementById('offNum').addEventListener('change', function(){
+    var n = parseFloat(this.value);
+    setOffset(isFinite(n) ? n : 0);
+  });
+  document.getElementById('offRange').addEventListener('input', function(){
+    setOffset(parseFloat(this.value));
+  });
+  document.querySelector('.nudge').addEventListener('click', function(e){
+    var b = e.target.closest('button[data-nudge]');
+    if (!b) return;
+    setOffset(off + parseFloat(b.dataset.nudge));
+  });
+  document.getElementById('zeroBtn').addEventListener('click', function(){ setOffset(0); });
+  document.getElementById('autoBtn').addEventListener('click', function(){
+    var c = document.querySelector('#subOpts input[name=sub]:checked');
+    if (!c || !c.value) { toast('先选一条字幕。'); return; }
+    autoAlign(c.value + '&fmt=vtt', c.value, false);
+  });
+
+  // 声音模式按钮
+  document.getElementById('mDirect').addEventListener('click', function(){ switchMode('direct'); });
+  document.getElementById('mAudio').addEventListener('click', function(){ switchMode('audio'); });
+  document.getElementById('mLive').addEventListener('click', function(){ switchMode('live'); });
+  document.getElementById('mAudio').disabled = false;
+
+  // 键盘
+  document.addEventListener('keydown', function(e){
+    if (e.target && e.target.matches && e.target.matches('input,textarea,select')) return;
+    var k = e.key;
+    if (k === ' ' || k === 'k') { e.preventDefault(); toggle(); }
+    else if (k === 'ArrowRight') { e.preventDefault(); seekTo(curSec() + (e.shiftKey ? 30 : 5)); }
+    else if (k === 'ArrowLeft') { e.preventDefault(); seekTo(curSec() - (e.shiftKey ? 30 : 5)); }
+    else if (k === 'l') { seekTo(curSec() + 10); }
+    else if (k === 'j') { seekTo(curSec() - 10); }
+    else if (k === 'ArrowUp') { e.preventDefault(); volEl.value = Math.min(100, +volEl.value + 5); volApply(); }
+    else if (k === 'ArrowDown') { e.preventDefault(); volEl.value = Math.max(0, +volEl.value - 5); volApply(); }
+    else if (k === 'm') { volBtn.click(); }
+    else if (k === 'c') { ccBtn.click(); }
+    else if (k === 'f') { fsBtn.click(); }
+    else if (k === 'Escape') { openDrawer(false); }
+    wake();
+  });
+
+  ['pointermove','pointerdown','wheel'].forEach(function(ev){
+    stage.addEventListener(ev, wake, {passive: true});
+  });
+
+  window.addEventListener('pagehide', function(){ save(true); });
+  document.addEventListener('visibilitychange', function(){ if (document.hidden) save(true); });
+
+  // 音频与画面漂移校正
+  setInterval(function(){
+    if (mode !== 'audio' || v.paused) return;
+    if (Math.abs(a.currentTime - v.currentTime) > 0.3) a.currentTime = v.currentTime;
+    if (a.paused && !v.paused) a.play().catch(function(){});
+  }, 1000);
+
+  // 帧循环：字幕和进度条只在播放时跟着走
+  (function loop(){
+    if (!v.paused) { paint(); renderCue(curSec()); }
+    else renderCue(curSec());
+    requestAnimationFrame(loop);
+  })();
+
+  /* ── 开播 ───────────────────────────────────────────────────── */
+  var start = startAt();
+  if (start < 5) start = 0;
+  // 上次看到片尾：当成看完，从头开始，别让播放器一开就报结束
+  if (DUR0 > 0 && start * 1000 > DUR0 * 0.97) start = 0;
+  if (AUDIO_READY) useAudio(start);
+  else {
+    mode = 'direct';
+    v.src = '/stream/' + ID;
+    try { v.currentTime = start; } catch (e) {}
+    setBadges();
+    showAudioNotice();
+    v.play().catch(function(){
+      // 浏览器不允许自动出声：停在第一帧，等用户点
+      syncPlayIcon();
+      paint();
+    });
+  }
+  paint();
+  wake();
+})();
 </script>
 </body>
 </html>

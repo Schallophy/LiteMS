@@ -1,474 +1,298 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="margin-app" data-theme="{{.Theme}}">
+<html lang="zh-CN" data-theme="{{if eq .Theme "light"}}light{{else if eq .Theme "dark"}}dark{{else}}auto{{end}}">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="{{if eq .Theme "dark"}}#111112{{else}}#f5f4f1{{end}}">
-<meta name="helper-token" content="{{.HelperToken}}">
-<title>{{.Item.Title}} · {{.Title}}</title>
+{{template "head" .}}
+{{template "css" .}}
 <style>
-{{template "marginCSS"}}
-{{template "phCore"}}
-
-.shell{width:100%;padding:0 var(--g)}
-
-/* ── 头图 ─────────────────────────────────────────────────── */
-.hero{position:relative;display:flex;flex-direction:column;justify-content:flex-end;
-  min-height:520px;overflow:hidden}
-.bg{position:absolute;inset:0;background:var(--canvas) center 24%/cover no-repeat;
-  transform:scale(1.02)}
-/* 无背景图时的兜底渐变。必须是独立状态类：伪元素画在自身背景图之上，
-   无条件渲染会把横屏图整个盖住 */
-.bg.fallback::before{content:"";position:absolute;inset:0;
-  background:linear-gradient(160deg,
-    color-mix(in srgb,var(--ink) 9%,var(--canvas)),var(--canvas) 72%)}
-/* 没有背景图时用海报本身做大范围虚化兜底，比纯渐变有内容感 */
-.bg.blurred{filter:blur(48px) saturate(1.3);transform:scale(1.4);opacity:.72}
-/* 遮罩：上缘轻压、文字区重压、底部渐隐进画布。
-   亮色主题文字是深色，遮罩要收拢在文字栏后面——压太整张图就成雾，
-   压不够深色字又浮在亮底上。用一处偏移的椭圆只盖住文字栏。 */
-.hero{--v-a:10%;--v-b:5%;--v-c:74%;
-  --v-w:76%;--v-h:96%;--v-x:28%;--v-y:40%;
-  --v-r1:88%;--v-r2:36%;--v-r3:74%}
-.margin-app[data-theme="dark"] .hero{--v-a:36%;--v-b:20%;--v-c:78%;
-  --v-w:110%;--v-h:95%;--v-x:7%;--v-y:33%;
-  --v-r1:78%;--v-r2:34%;--v-r3:66%}
-.veil{position:absolute;inset:0;
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb,var(--canvas) var(--v-a),transparent) 0%,
-      color-mix(in srgb,var(--canvas) var(--v-b),transparent) 30%,
-      color-mix(in srgb,var(--canvas) var(--v-c),transparent) 76%,
-      var(--canvas) 100%),
-    radial-gradient(var(--v-w) var(--v-h) at var(--v-x) var(--v-y),
-      color-mix(in srgb,var(--canvas) var(--v-r1),transparent) 0%,
-      color-mix(in srgb,var(--canvas) var(--v-r2),transparent) 50%,
-      transparent var(--v-r3))}
-
-.topbar{position:absolute;inset:0 0 auto;padding-top:22px;z-index:3}
-.back{display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 16px 0 13px;
-  border-radius:var(--r-pill);font-size:13px;font-weight:500;color:var(--ink)}
-.back svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;
-  stroke-linecap:round;stroke-linejoin:round;
-  transition:transform .25s var(--ease-out)}
-.back:hover svg{transform:translateX(-2px)}
-
-/* 只设纵向内边距：横向留给 .shell，否则简写会把左右清 0，顶栏与内容错位 */
-.inner{position:relative;z-index:2;display:flex;align-items:flex-start;
-  gap:clamp(24px,3.5vw,56px);padding-top:88px;padding-bottom:52px}
-.poster{position:relative;width:248px;flex:0 0 248px;aspect-ratio:2/3;
-  border-radius:var(--r-panel);overflow:hidden;background:var(--chip);
-  box-shadow:var(--sh-lg),var(--ring)}
-.poster img{width:100%;height:100%;object-fit:cover;display:block}
-
-/* ── 槽位系统（桌面端）：每行锁高、超长截断、无内容也占位，
-   保证不同条目的每一行都落在同一水平位置 ── */
-@media(min-width:701px){
-  .eyebrow{height:16px;line-height:16px;margin-bottom:12px}
-  h1{height:46px;line-height:46px;font-size:40px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .alt{height:22px;line-height:22px;margin-top:8px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tagline{height:44px;margin-top:8px;
-    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .meta{height:24px;margin-top:16px;flex-wrap:nowrap;overflow:hidden}
-  .tags{height:24px;margin-top:14px;flex-wrap:nowrap;overflow:hidden}
-  .resume{height:34px;margin-top:16px}
-  /* 海报在槽位行内底对齐：底边与按钮行严丝合缝 */
-  .poster{align-self:flex-end}
+.crumb{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:20px 0 2px;font-size:13.5px;color:var(--ink-2);
 }
-
-.head{flex:1;min-width:0;padding-bottom:4px}
-/* 头图压在横向照片上，暗色下用更亮的软强调色才压得住底图 */
-.hero{--eyebrow:var(--accent-text)}
-.margin-app[data-theme="dark"] .hero{--eyebrow:var(--accent-soft)}
-.eyebrow{color:var(--eyebrow)}
-h1{margin:0;font:600 clamp(28px,3.4vw,40px)/1.2 var(--font-heading);
-  letter-spacing:-.012em;text-wrap:balance}
-.alt{margin:10px 0 0;font-size:14px;color:var(--muted)}
-.tagline{margin:10px 0 0;font-size:14px;line-height:1.65;color:var(--muted);max-width:56ch}
-
-.meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:20px;
-  font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
-.meta>*{position:relative}
-.meta>*+*{padding-left:14px}
-.meta>*+*::before{content:"";position:absolute;left:0;top:50%;
-  width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.45;
-  transform:translateY(-50%)}
-.meta .score{display:inline-flex;align-items:center;gap:5px;font-weight:600;
-  color:var(--accent-text)}
-.meta .score svg{width:11px;height:11px;fill:currentColor}
-.meta .done{color:var(--faint)}
-
-.tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px}
-.tag{display:inline-flex;align-items:center;height:24px;padding:0 9px;border-radius:7px;
-  font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--muted);border:1px solid var(--line-2)}
-
-/* 续播：文字在上、进度在下，读起来才是「进度」而不是一条分隔线 */
-.resume{max-width:240px;margin-top:26px}
-.resume span{display:block;margin-bottom:9px;font:500 11px/1.4 var(--font-mono);
-  letter-spacing:.08em;color:var(--faint)}
-.bar{height:3px;border-radius:99px;overflow:hidden;
-  background:color-mix(in srgb,var(--ink) 14%,transparent)}
-.bar i{display:block;height:100%;border-radius:99px;background:var(--accent);
-  transition:width .8s var(--ease-out)}
-/* 音轨转换进度：与续播条同一视觉语言 */
-.tc{max-width:320px;margin-top:16px;font-size:13px;color:var(--muted)}
-.tc .bar{margin-top:9px}
-
-.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}
-
-/* ── 正文 ─────────────────────────────────────────────────── */
-main{position:relative;z-index:1;padding:8px 0 80px}
-main .shell > * + *{padding-top:48px}
-/* 轨道必须写 minmax(0,1fr)：只写 auto 时轨道按 max-content 撑开，
-   长段落（white-space:pre-wrap）会把整页顶出横向滚动 */
-.cols{display:grid;gap:48px 72px;grid-template-columns:minmax(0,1fr)}
-.cols>section{min-width:0}
-@media(min-width:960px){
-  .cols{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
-  .cols > section:only-child{grid-column:1/-1}
-}
-h2{margin:0 0 16px;font:600 16px/1.4 var(--font-heading);
-  letter-spacing:.01em;color:var(--ink)}
-.plot{margin:0;max-width:68ch;font-size:16px;line-height:1.8;
-  color:var(--ink);white-space:pre-wrap;overflow-wrap:break-word;text-wrap:pretty}
-.plot.mute{color:var(--faint);font-size:14px;line-height:1.7}
-
-.info{display:grid;grid-template-columns:92px minmax(0,1fr);gap:14px 20px;
-  max-width:70ch;margin:0;font-size:14px;line-height:1.7}
-.info dt{margin:0;font:500 11px/1.95 var(--font-mono);letter-spacing:.1em;
-  text-transform:uppercase;color:var(--faint)}
-.info dd{margin:0;color:var(--ink)}
-.extlinks{display:flex;gap:8px;flex-wrap:wrap}
-.chip{display:inline-flex;align-items:center;height:28px;padding:0 11px;border-radius:8px;
-  font:500 12px/1 var(--font-mono);letter-spacing:.04em;color:var(--muted);
-  box-shadow:var(--ring);transition:color .18s,background .18s}
-.chip:hover{color:var(--accent-text);background:var(--chip)}
-.people{display:flex;flex-wrap:wrap;gap:8px}
-.person{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;
-  border-radius:8px;border:1px solid var(--line);font-size:13px;color:var(--ink)}
-.person i{font-style:normal;font-size:11.5px;color:var(--faint)}
-
-/* ── 字幕：编辑式行列表，不用一个个小盒子 ─────────────────── */
-.sublist{list-style:none;margin:0;padding:0;max-width:720px;
-  border-top:1px solid var(--line)}
-.subrow{display:flex;align-items:center;gap:12px;padding:13px 2px;
-  border-bottom:1px solid var(--line);font-size:14px}
-.slang{color:var(--ink)}
-.ssrc{padding:4px 7px;border-radius:5px;background:var(--chip);
-  font:500 10.5px/1 var(--font-mono);letter-spacing:.1em;color:var(--faint)}
-.scodec{font:12px/1 var(--font-mono);color:var(--faint);text-transform:uppercase}
-.sdel{margin-left:auto;height:28px;padding:0 12px;border-radius:var(--r-pill);
-  font-size:12px;color:var(--muted);box-shadow:var(--ring);
-  transition:color .18s var(--ease-out),background .18s var(--ease-out)}
-.sdel:hover{color:var(--danger);background:color-mix(in srgb,var(--danger) 10%,transparent)}
-
-.subup{display:inline-flex;align-items:center;gap:9px;margin-top:20px;height:40px;
-  padding:0 18px;border-radius:var(--r-pill);font-size:13px;color:var(--muted);
-  border:1px dashed var(--line-2);cursor:pointer;
-  transition:color .2s var(--ease-out),border-color .2s var(--ease-out),
-             background .2s var(--ease-out)}
-.subup svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;
-  stroke-linecap:round;stroke-linejoin:round}
-.subup:hover,.subup.drag{color:var(--ink);border-color:var(--accent);
-  background:color-mix(in srgb,var(--accent) 8%,transparent)}
-.subup.busy{pointer-events:none;opacity:.6}
-
-@media(max-width:900px){
-  .info{grid-template-columns:minmax(0,1fr);gap:0}
-  .info dt{padding-top:14px}
-}
-@media(max-width:700px){
-  .hero{min-height:0}
-  .inner{flex-direction:column;align-items:flex-start;padding-top:66px;padding-bottom:34px}
-  .poster{width:128px;flex-basis:auto}
-  h1{font-size:24px}
-  .topbar{padding-top:16px}
-  .actions{margin-top:24px}
-  .actions .btn{flex:1 1 auto}
-}
+.crumb a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:4px}
+.acts-line{margin:0;font-size:12.5px;color:var(--ink-3);min-height:16px}
+.note{max-width:64ch}
+.upload select{width:auto;max-width:100%}
+/* 没有背景图时，别留一条空灰带 */
+.hero.no-art{margin-top:8px}
+.hero.no-art .hero-row{margin-top:0}
+.hero.no-art .hero-text{padding-top:0}
+@media (max-width:799px){.hero.no-art .hero-text{padding-top:8px}}
+@media (min-width:920px){.crumb .set-top{display:none}}
 </style>
-{{template "themeBoot"}}
 </head>
 <body>
-<div class="hero">
-  {{if .Item.Fanart}}
-  <div class="bg" style="background-image:url('{{.Item.Fanart}}')"></div>
-  {{else if .Item.Poster}}
-  <div class="bg blurred" style="background-image:url('{{.Item.Poster}}')"></div>
-  {{else}}
-  <div class="bg fallback"></div>
-  {{end}}
-  <div class="veil"></div>
-  <div class="topbar"><div class="shell">
-    <a class="back glass" href="/">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-      返回
-    </a>
-  </div></div>
-
-  <div class="shell inner">
-    {{if .Item.Poster}}
-    <div class="poster"><img src="{{.Item.Poster}}" alt="{{.Item.Title}}"></div>
-    {{else}}
-    <div class="poster ph"></div>
-    {{end}}
-
-    <div class="head">
-      <p class="eyebrow">{{if eq .Item.Kind "movie"}}影片{{else}}剧集{{end}}{{with .Item.Year}} · {{.}}{{end}}</p>
-      <h1>{{.Item.Title}}</h1>
-      <!-- 槽位行：高度固定（桌面端），无内容也占位，保证逐行对齐 -->
-      <p class="alt">{{if and .Item.OriginalTitle (ne .Item.OriginalTitle .Item.Title)}}{{.Item.OriginalTitle}}{{end}}</p>
-      <p class="tagline">{{with .Detail}}{{with .Tagline}}{{.}}{{end}}{{end}}</p>
-
-      <div class="meta">
-        {{with .Item.Rating}}<span class="score"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>{{printf "%.1f" .}}</span>{{end}}
-        {{with .Item.RuntimeMin}}<span>{{.}} 分钟</span>{{end}}
-        {{if eq .Item.Kind "episode"}}<span>第 {{.Item.Season}} 季 · 第 {{.Item.Episode}} 集</span>{{end}}
-        {{with .Detail}}{{with .Votes}}<span>{{$.Detail.RatingSrc}} {{.}} 人评过</span>{{end}}{{end}}
-        {{if .Item.Finished}}<span class="done">已看完</span>{{end}}
-      </div>
-      <div class="tags">
-        {{with .Detail}}{{range .Genres}}<span class="tag">{{.}}</span>{{end}}{{end}}
-      </div>
-
-      {{if .Item.PositionMS}}
-      <div class="resume">
-        <span>已看 {{duration .Item.PositionMS}} / {{duration .Item.DurationMS}}</span>
-        <div class="bar"><i style="width:{{pct .Item.PositionMS .Item.DurationMS}}"></i></div>
-      </div>
-      {{else}}
-      <div class="resume"></div>
-      {{end}}
-
-      <div class="actions">
-        <a class="btn btn-primary" href="/play/{{.Item.ID}}">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-          {{if .Item.PositionMS}}继续播放{{else}}播放{{end}}
-        </a>
-        <button class="btn btn-ghost" id="play">mpv 播放</button>
-        {{if .AudioHint}}<button class="btn btn-ghost" id="tcbtn">转换音轨</button>{{end}}
-      </div>
-      {{if .AudioHint}}
-      <div class="tc" id="tcbox" hidden>
-        <span id="tcmsg"></span>
-        <div class="bar"><i id="tcbar" style="width:0%"></i></div>
-      </div>
-      {{end}}
+<div class="shell">
+  <aside class="rail">
+    <div class="rail-top">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="wordmark">{{.Title}}</span>
     </div>
-  </div>
+    <a class="rail-set" href="/settings">设置</a>
+  </aside>
+
+  <main class="main">
+    <nav class="crumb">
+      <a href="/">← 片库</a>
+      <a class="set-top" href="/settings">设置</a>
+    </nav>
+
+    <article>
+      <section class="hero{{if not .Item.Fanart}} no-art{{end}}">
+        {{if .Item.Fanart}}
+        <div class="hero-art">
+          <img src="{{.Item.Fanart}}" alt="" decoding="async">
+        </div>
+        {{end}}
+        <div class="hero-row">
+          <div class="hero-poster">
+            {{if .Item.Poster}}<img src="{{.Item.Poster}}" alt="{{.Item.Title}} 的海报">{{else}}<span class="ph">{{initial .Item.Title}}</span>{{end}}
+          </div>
+
+          <div class="hero-text">
+            <h1>{{.Item.Title}}</h1>
+            {{if .Item.OriginalTitle}}<p class="orig">{{.Item.OriginalTitle}}</p>{{end}}
+
+            <ul class="facts">
+              {{if .Item.Year}}<li>{{.Item.Year}}</li>{{end}}
+              {{if eq .Item.Kind "episode"}}<li>S{{printf "%02d" .Item.Season}}E{{printf "%02d" .Item.Episode}}</li>{{end}}
+              {{if .Item.RuntimeMin}}<li>{{.Item.RuntimeMin}} 分钟</li>{{end}}
+              {{with .Detail}}{{if $.Item.Rating}}<li class="rating"><b>{{printf "%.1f" $.Item.Rating}}</b>&nbsp;{{.RatingSrc}}{{if .Votes}}<span style="color:var(--ink-3)">&nbsp;{{.Votes}} 人</span>{{end}}</li>{{end}}{{end}}
+              {{if not .Detail}}{{if .Item.Rating}}<li class="rating"><b>{{printf "%.1f" .Item.Rating}}</b></li>{{end}}{{end}}
+            </ul>
+
+            {{with .Detail}}{{if .Tagline}}<p class="tagline">{{.Tagline}}</p>{{end}}{{end}}
+
+            <div class="acts">
+              {{if and (gt .Item.PositionMS 0) (not .Item.Finished)}}
+              <a class="btn" href="/play/{{.Item.ID}}">从 {{duration .Item.PositionMS}} 继续</a>
+              <a class="btn quiet" href="/play/{{.Item.ID}}?t=0">从头播放</a>
+              {{else}}
+              <a class="btn" href="/play/{{.Item.ID}}">播放</a>
+              {{end}}
+              <button class="btn ghost" type="button" id="launchBtn">在电脑上播放</button>
+              <button class="btn quiet" type="button" id="cmdBtn">复制播放命令</button>
+            </div>
+            <p class="acts-line" id="actLine"></p>
+            <div id="cmdBox" hidden>
+              <pre class="probe" id="cmdText" style="white-space:pre-wrap"></pre>
+            </div>
+
+            {{if and (gt .Item.PositionMS 0) (not .Item.Finished)}}
+            <div class="hero-bar"><span style="width:{{pct .Item.PositionMS .Item.DurationMS}}"></span></div>
+            {{end}}
+
+            {{if .AudioHint}}
+            <p class="note warn">
+              {{if eq .AudioHint "bad"}}文件名显示这条音轨（DTS / TrueHD / PCM 一类）浏览器多半解不出来，直接播可能没声音。{{else}}这条音轨是 AC3 / EAC3，部分浏览器不带解码器，播的时候可能没声音。{{end}}
+              播放页可以转成 AAC 音轨，或者改用实时转码。
+            </p>
+            {{end}}
+          </div>
+        </div>
+      </section>
+
+      <div class="detail-body">
+        <div class="col">
+          <section>
+            <h2>简介</h2>
+            {{if .Item.Overview}}<p class="ov">{{.Item.Overview}}</p>{{else}}<p class="ov" style="color:var(--ink-3)">这条还没有简介。NFO 里补上 &lt;plot&gt;，或者重刮一次就有了。</p>{{end}}
+          </section>
+
+          {{with .Detail}}
+          {{if .Cast}}
+          <section>
+            <h2>主演</h2>
+            <ul class="cast">
+              {{range .Cast}}<li><span>{{.Name}}</span>{{if .Role}}<span class="r">{{.Role}}</span>{{end}}</li>{{end}}
+            </ul>
+          </section>
+          {{end}}
+          {{end}}
+        </div>
+
+        <aside class="col">
+          <section>
+            <h2>档案</h2>
+            <dl class="meta">
+              {{with .Detail}}
+                {{if .Genres}}<div><dt>类型</dt><dd>{{range $i, $g := .Genres}}{{if $i}} / {{end}}{{$g}}{{end}}</dd></div>{{end}}
+                {{if .Countries}}<div><dt>国家</dt><dd>{{range $i, $c := .Countries}}{{if $i}} / {{end}}{{$c}}{{end}}</dd></div>{{end}}
+                {{if .Directors}}<div><dt>导演</dt><dd>{{range $i, $d := .Directors}}{{if $i}} / {{end}}{{$d}}{{end}}</dd></div>{{end}}
+                {{if .Writers}}<div><dt>编剧</dt><dd>{{range $i, $w := .Writers}}{{if $i}} / {{end}}{{$w}}{{end}}</dd></div>{{end}}
+                {{if .AirDate}}<div><dt>播出</dt><dd>{{.AirDate}}</dd></div>{{end}}
+                {{if .HasTmdb}}<div><dt>TMDB</dt><dd><a href="https://www.themoviedb.org/{{if eq $.Item.Kind "episode"}}tv{{else}}movie{{end}}/{{.TmdbID}}" target="_blank" rel="noopener noreferrer">{{.TmdbID}}</a></dd></div>{{end}}
+                {{if .HasImdb}}<div><dt>IMDb</dt><dd><a href="https://www.imdb.com/title/{{.ImdbID}}/" target="_blank" rel="noopener noreferrer">{{.ImdbID}}</a></dd></div>{{end}}
+              {{else}}
+                <div><dt>年份</dt><dd>{{if .Item.Year}}{{.Item.Year}}{{else}}未知{{end}}</dd></div>
+              {{end}}
+              <div><dt>状态</dt><dd>{{if .Item.Finished}}看完了{{else if gt .Item.PositionMS 0}}看到 {{duration .Item.PositionMS}}{{else}}没开始{{end}}</dd></div>
+            </dl>
+          </section>
+
+          <section>
+            <h2>字幕</h2>
+            <ul class="subs" id="subList">
+              {{range .Subs}}
+              <li data-file="{{.File}}">
+                <span class="lab">{{.Label}}</span>
+                <span class="tag">{{if eq .Src "embed"}}内嵌{{else if eq .Src "imported"}}导入{{else}}外挂{{end}}</span>
+                <span class="acts">
+                  {{if .URL}}<a class="dl" href="{{.URL}}" download>下载</a>{{else}}<span class="tag">图形</span>{{end}}
+                  {{if and (eq .Src "imported") .File}}<button class="dl" type="button" data-del="{{.File}}" style="background:none;border:0;padding:0;cursor:pointer">删除</button>{{end}}
+                </span>
+              </li>
+              {{else}}
+              <li><span class="lab" style="color:var(--ink-3)">没有字幕轨</span></li>
+              {{end}}
+            </ul>
+            <form class="upload" id="subForm" data-id="{{.Item.ID}}">
+              <input type="file" name="file" accept=".srt,.ass,.ssa,.vtt" required aria-label="字幕文件">
+              <select name="lang" aria-label="字幕语言">
+                <option value="">语言按文件名判断</option>
+                <option value="chs">简体中文</option>
+                <option value="cht">繁體中文</option>
+                <option value="eng">English</option>
+                <option value="jpn">日本語</option>
+              </select>
+              <button class="btn ghost" type="submit" style="padding:7px 12px;font-size:12.5px">上传</button>
+            </form>
+            <p class="fld-note" id="subMsg"></p>
+          </section>
+        </aside>
+      </div>
+    </article>
+  </main>
 </div>
 
-<main>
-  <div class="shell">
-    <div class="cols">
-      <section>
-        <h2>剧情简介</h2>
-        {{if .Item.Overview}}
-        <p class="plot">{{.Item.Overview}}</p>
-        {{else}}
-        <p class="plot mute">还没有简介。运行 <code>litems scrape</code> 刮削后会自动补上。</p>
-        {{end}}
-      </section>
-
-      {{if .Detail}}
-      {{if or .Detail.Directors .Detail.Writers .Detail.Countries .Detail.AirDate .Detail.HasTmdb .Detail.HasImdb}}
-      <section>
-        <h2>详细信息</h2>
-        <dl class="info">
-          {{with .Detail.Directors}}<dt>导演</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
-          {{with .Detail.Writers}}<dt>编剧</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
-          {{with .Detail.Countries}}<dt>国家/地区</dt><dd>{{range $i, $v := .}}{{if $i}}、{{end}}{{$v}}{{end}}</dd>{{end}}
-          {{with .Detail.AirDate}}<dt>播出日期</dt><dd>{{.}}</dd>{{end}}
-          {{if or .Detail.HasTmdb .Detail.HasImdb}}<dt>外部链接</dt><dd><span class="extlinks">
-            {{if .Detail.HasTmdb}}<a class="chip" target="_blank" rel="noopener noreferrer"
-               href="https://www.themoviedb.org/{{if eq .Item.Kind "movie"}}movie{{else}}tv{{end}}/{{.Detail.TmdbID}}">TMDB ↗</a>{{end}}
-            {{if .Detail.HasImdb}}<a class="chip" target="_blank" rel="noopener noreferrer"
-               href="https://www.imdb.com/title/{{.Detail.ImdbID}}/">IMDb ↗</a>{{end}}
-          </span></dd>{{end}}
-        </dl>
-      </section>
-      {{end}}
-      {{end}}
-    </div>
-
-    {{if .Detail}}
-    {{if .Detail.Cast}}
-    <section>
-      <h2>主演</h2>
-      <div class="people">
-        {{range .Detail.Cast}}<span class="person">{{.Name}}{{with .Role}}<i>饰 {{.}}</i>{{end}}</span>{{end}}
-      </div>
-    </section>
-    {{end}}
-    {{end}}
-
-    <section>
-      <h2>字幕</h2>
-      {{if .Subs}}
-      <ul class="sublist">
-        {{range .Subs}}
-        <li class="subrow">
-          <span class="slang">{{.Label}}</span>
-          <span class="ssrc">{{if eq .Src "embed"}}内嵌{{else if eq .Src "imported"}}导入{{else}}外挂{{end}}</span>
-          {{with .Codec}}<span class="scodec">{{.}}</span>{{end}}
-          {{if eq .Src "imported"}}<button class="sdel" data-file="{{.File}}" title="删除这份字幕">删除</button>{{end}}
-        </li>
-        {{end}}
-      </ul>
-      {{else}}
-      <p class="plot mute">还没有字幕。可以导入 .srt / .ass / .ssa / .vtt 文件。</p>
-      {{end}}
-      <label class="subup" id="subUp">
-        <input type="file" id="subFile" accept=".srt,.ass,.ssa,.vtt" multiple hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>
-        导入字幕（也可把文件拖到这里）
-      </label>
-    </section>
-
-  </div>
-</main>
-
-<div class="toast" id="toast"></div>
 <script>
-const ITEM = "{{.Item.ID}}";
-const HELPER = "http://127.0.0.1:{{.HelperPort}}";
-const TOKEN = document.querySelector('meta[name=helper-token]').content;
-const toastEl = document.getElementById('toast');
-let toastTimer;
-function toast(msg){
-  toastEl.textContent = msg; toastEl.classList.add('on');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>toastEl.classList.remove('on'), 3200);
-}
-document.getElementById('play').addEventListener('click', async ()=>{
-  try{
-    const res = await fetch(HELPER + '/play', {
-      method:'POST',
-      mode:'cors',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({id: ITEM, token: TOKEN, start: 0})
+(function(){
+  var ITEM = "{{.Item.ID}}";
+  var PORT = "{{.HelperPort}}";
+  var TOKEN = "{{.HelperToken}}";
+  var START = Math.floor({{if gt .Item.PositionMS 0}}{{.Item.PositionMS}}{{else}}0{{end}} / 1000);
+  var line = document.getElementById('actLine');
+
+  function say(t){ if (line) line.textContent = t || ''; }
+
+  // 在电脑上播放：POST 到本机 helper（Termux 同机或局域网内开着 helper 的机器）
+  var lb = document.getElementById('launchBtn');
+  if (lb) lb.addEventListener('click', function(){
+    if (!TOKEN) { say('配置里没设 [launch].token，helper 没启用。'); return; }
+    say('正在唤起本机播放器…');
+    lb.disabled = true;
+    fetch('http://localhost:' + PORT + '/play', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: ITEM, start: START, token: TOKEN, lang: ''})
+    }).then(function(r){
+      if (r.status === 204) { say('已经在电脑上打开播放器。'); return; }
+      return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
+    }).catch(function(e){
+      say('没连上本机播放器（helper 未运行？）。可以改用「复制播放命令」。');
+      console.warn(e);
+    }).then(function(){ lb.disabled = false; });
+  });
+
+  // 复制播放命令：http 页面没有 clipboard API，退回到选中复制
+  var cb = document.getElementById('cmdBtn');
+  if (cb) cb.addEventListener('click', function(){
+    say('正在取命令…');
+    fetch('/api/cmd/' + ITEM).then(function(r){ return r.json(); }).then(function(d){
+      var cmd = d.command || '';
+      var box = document.getElementById('cmdBox');
+      var pre = document.getElementById('cmdText');
+      pre.textContent = cmd;
+      box.hidden = false;
+      var ok = false;
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = cmd;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (e) { ok = false; }
+      say(ok ? '命令已复制。' : '命令已展开，手动复制即可。');
+      if (d.has_auth) say(say.textContent + ' 注意：URL 里带了账号密码。');
+    }).catch(function(){ say('取命令失败。'); });
+  });
+
+  // 字幕：上传 / 删除，都以后端返回的清单为准重画
+  function tagText(s){ return s === 'embed' ? '内嵌' : (s === 'imported' ? '导入' : '外挂'); }
+
+  function render(subs){
+    var ul = document.getElementById('subList');
+    ul.innerHTML = '';
+    if (!subs || !subs.length) {
+      var li = document.createElement('li');
+      var sp = document.createElement('span');
+      sp.className = 'lab';
+      sp.style.color = 'var(--ink-3)';
+      sp.textContent = '没有字幕轨';
+      li.appendChild(sp);
+      ul.appendChild(li);
+      return;
+    }
+    subs.forEach(function(s){
+      var li = document.createElement('li');
+      var lab = document.createElement('span');
+      lab.className = 'lab'; lab.textContent = s.label;
+      var tg = document.createElement('span');
+      tg.className = 'tag'; tg.textContent = tagText(s.src);
+      li.appendChild(lab); li.appendChild(tg);
+      var acts = document.createElement('span');
+      acts.className = 'acts';
+      if (s.url) {
+        var dl = document.createElement('a');
+        dl.className = 'dl'; dl.href = s.url; dl.textContent = '下载';
+        dl.setAttribute('download','');
+        acts.appendChild(dl);
+      }
+      if (s.src === 'imported' && s.file) {
+        var del = document.createElement('button');
+        del.type = 'button'; del.className = 'dl'; del.textContent = '删除';
+        del.style.cssText = 'background:none;border:0;padding:0;cursor:pointer';
+        del.addEventListener('click', function(){
+          if (!confirm('删除这条导入的字幕？')) return;
+          fetch('/api/sub/' + ITEM + '?file=' + encodeURIComponent(s.file), {method:'DELETE'})
+            .then(function(r){ return r.json(); })
+            .then(function(d){ render(d.subs); msg('删掉了。'); });
+        });
+        acts.appendChild(del);
+      }
+      li.appendChild(acts);
+      ul.appendChild(li);
     });
-    if(res.status === 204){ toast('已交给本地播放器'); return; }
-    toast('播放器返回 ' + res.status);
-  }catch(e){
-    toast('没连上本地 helper，请先运行 litems launch');
   }
-});
 
-/* ---------- 音轨转换（详情页发起，转好网页播放自动用转码版） ---------- */
-const tcbtn = document.getElementById('tcbtn');
-const tcbox = document.getElementById('tcbox');
-const tcmsg = document.getElementById('tcmsg');
-const tcbar = document.getElementById('tcbar');
-let tcTimer = null;
-let tcState = 'none';   // 上一次查询到的状态，决定点击是「转换」还是「重转」
-
-function tcRender(j){
-  if (!tcbtn) return;
-  tcState = j.state;
-  switch(j.state){
-    case 'running':
-      tcbtn.disabled = true; tcbtn.textContent = '转换中…';
-      tcbox.hidden = false;
-      tcbar.style.width = (j.progress > 0 ? Math.round(j.progress*100) : 0) + '%';
-      tcmsg.textContent = j.progress > 0
-        ? '正在转换音轨（视频不重编码）' + Math.round(j.progress*100) + '%'
-        : '正在转换音轨（视频不重编码）…';
-      if (!tcTimer) tcTimer = setInterval(tcPoll, 2000);
-      break;
-    case 'done':
-      // 留一个重转入口：音轨参数改过之后（比如声道数）要靠它把旧产物换掉
-      tcbtn.disabled = false; tcbtn.textContent = '音轨已转换 · 重转';
-      tcbox.hidden = true;
-      clearInterval(tcTimer); tcTimer = null;
-      break;
-    case 'error':
-      tcbtn.disabled = false; tcbtn.textContent = '重试转换';
-      tcbox.hidden = false; tcbar.style.width = '0%';
-      tcmsg.textContent = '转换失败：' + (j.error || '未知错误');
-      clearInterval(tcTimer); tcTimer = null;
-      break;
-    default:
-      tcbtn.disabled = false; tcbtn.textContent = '转换音轨';
-      tcbox.hidden = true;
-      clearInterval(tcTimer); tcTimer = null;
+  function msg(t, bad){
+    var m = document.getElementById('subMsg');
+    if (!m) return;
+    m.textContent = t || '';
+    m.style.color = bad ? 'var(--burn)' : 'var(--ink-3)';
   }
-}
-async function tcPoll(){
-  try { const r = await fetch('/api/transcode/' + ITEM); tcRender(await r.json()); }
-  catch(e) { /* 网络抖动下一轮再试 */ }
-}
-if (tcbtn) {
-  tcPoll();
-  tcbtn.addEventListener('click', async ()=>{
-    try{
-      const force = tcState === 'done';
-      if (force && !confirm('重新转换会清掉现有音轨缓存，转换期间网页播放先走实时转码。继续？')) return;
-      const r = await fetch('/api/transcode/' + ITEM + (force ? '?force=1' : ''), {method:'POST'});
-      if (r.status === 409) {
-        const j = await r.json().catch(()=>({}));
-        toast(j.error || '已有转码任务在进行');
-        return;
-      }
-      tcRender(await r.json());
-    }catch(e){ toast('请求失败：' + e.message); }
+
+  var form = document.getElementById('subForm');
+  if (form) form.addEventListener('submit', function(e){
+    e.preventDefault();
+    var fd = new FormData(form);
+    msg('上传中…');
+    fetch('/api/sub/' + ITEM, {method:'POST', body: fd})
+      .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
+      .then(function(d){ render(d.subs); msg('已加入「' + d.file + '」。播放页可以选它。'); form.reset(); })
+      .catch(function(err){ msg('上传失败：' + err.message, true); });
   });
-}
 
-/* ---------- 字幕导入 / 删除 ---------- */
-const subUp = document.getElementById('subUp');
-const subFile = document.getElementById('subFile');
-let subBusy = false;
-
-async function uploadSubs(files){
-  if (subBusy) return;
-  const list = Array.from(files).filter(f => /\.(srt|ass|ssa|vtt)$/i.test(f.name));
-  if (!list.length) { toast('只支持 .srt / .ass / .ssa / .vtt'); return; }
-  subBusy = true;
-  subUp.classList.add('busy');
-  let ok = 0;
-  for (const f of list){
-    const fd = new FormData();
-    fd.append('file', f);
-    try{
-      const r = await fetch('/api/sub/' + ITEM, {method:'POST', body: fd});
-      if (r.ok) ok++;
-      else {
-        const j = await r.json().catch(()=>({}));
-        toast(f.name + ' 导入失败：' + (j.error || r.status));
-      }
-    }catch(e){ toast(f.name + ' 导入失败：' + e.message); }
-  }
-  subBusy = false;
-  subUp.classList.remove('busy');
-  if (ok) location.reload();
-}
-
-if (subFile){
-  subFile.addEventListener('change', () => { uploadSubs(subFile.files); subFile.value = ''; });
-  ['dragenter','dragover'].forEach(ev => subUp.addEventListener(ev, e => {
-    e.preventDefault(); subUp.classList.add('drag');
-  }));
-  ['dragleave','drop'].forEach(ev => subUp.addEventListener(ev, e => {
-    e.preventDefault(); subUp.classList.remove('drag');
-  }));
-  subUp.addEventListener('drop', e => { if (e.dataTransfer?.files?.length) uploadSubs(e.dataTransfer.files); });
-}
-
-document.querySelectorAll('.sdel').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const name = btn.dataset.file;
-    if (!name || !confirm('删除字幕「' + name + '」？')) return;
-    try{
-      const r = await fetch('/api/sub/' + ITEM + '?file=' + encodeURIComponent(name), {method:'DELETE'});
-      if (r.ok) location.reload();
-      else toast('删除失败：' + r.status);
-    }catch(e){ toast('删除失败：' + e.message); }
+  document.getElementById('subList').addEventListener('click', function(e){
+    var b = e.target.closest('button[data-del]');
+    if (!b) return;
+    if (!confirm('删除这条导入的字幕？')) return;
+    fetch('/api/sub/' + ITEM + '?file=' + encodeURIComponent(b.dataset.del), {method:'DELETE'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ render(d.subs); msg('删掉了。'); });
   });
-});
+})();
 </script>
 </body>
 </html>

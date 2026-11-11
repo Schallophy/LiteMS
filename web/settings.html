@@ -1,288 +1,141 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="margin-app" data-theme="{{.Theme}}">
+<html lang="zh-CN" data-theme="{{if eq .Theme "light"}}light{{else if eq .Theme "dark"}}dark{{else}}auto{{end}}">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="{{if eq .Theme "dark"}}#111112{{else}}#f5f4f1{{end}}">
-<title>设置 · {{.Title}}</title>
-<style>
-{{template "marginCSS"}}
-
-.back{margin-left:auto;display:inline-flex;align-items:center;height:36px;padding:0 16px;
-  border-radius:var(--r-pill);font-size:13px;color:var(--muted);box-shadow:var(--ring);
-  transition:color .2s var(--ease-out),background .2s var(--ease-out)}
-.back:hover{color:var(--ink);background:var(--chip)}
-
-main{padding:0 var(--g) 88px}
-.wrap{max-width:920px;margin:0 auto}
-.page-head{padding:40px 0 26px}
-.page-head h1{margin:11px 0 0;font:600 clamp(28px,3.4vw,36px)/1.15 var(--font-heading);
-  letter-spacing:-.015em}
-.lead{margin:13px 0 0;max-width:60ch;font-size:14px;line-height:1.75;color:var(--muted)}
-
-/* 分区：编号 + 内容两栏，只用发丝线分隔，不用卡片盒子 */
-.sec{display:grid;grid-template-columns:52px minmax(0,1fr);gap:0 20px;
-  padding:32px 0 8px;border-top:1px solid var(--line)}
-.sec-no{padding-top:3px;font:500 11px/1 var(--font-mono);letter-spacing:.1em;
-  color:var(--faint)}
-.sec h2{margin:0 0 20px;font:600 16px/1.4 var(--font-heading);letter-spacing:.01em}
-
-/* 结果提示：浮在视口底部，不参与文档流——保存/测试后页面不会被顶下去。
-   沿用共享层的 .toast（fixed + translate + 淡入），这里只改形状与错误色。 */
-.toast{border-radius:var(--r-panel);max-width:min(560px,calc(100vw - 32px));
-  padding:12px 18px;line-height:1.7;text-align:left}
-/* 服务端直出时就已经带 .on，补一段入场动画，不然是「啪」地出现 */
-.toast.on{animation:tip-in .32s var(--ease-out) both}
-@keyframes tip-in{from{opacity:0;transform:translate(-50%,10px)}}
-.toast.err{color:var(--danger);
-  background:color-mix(in srgb,var(--danger) 12%,var(--surface));
-  box-shadow:var(--ring),var(--sh-md)}
-.toast.err.on{pointer-events:auto;cursor:pointer}
-
-label{display:block;margin-bottom:20px}
-.lbl{display:block;margin-bottom:8px;font-size:12.5px;color:var(--muted)}
-input[type=text],input[type=password],select,textarea{
-  width:100%;padding:0 14px;height:42px;border-radius:10px;
-  font:inherit;font-size:14px;color:var(--ink);background:var(--chip);
-  border:1px solid transparent;outline:none;
-  transition:background .2s var(--ease-out),border-color .2s var(--ease-out),
-             box-shadow .2s var(--ease-out)}
-textarea{height:auto;padding:12px 14px;line-height:1.7;resize:vertical}
-input::placeholder,textarea::placeholder{color:var(--faint)}
-input:focus,select:focus,textarea:focus{background:var(--surface);
-  border-color:var(--line-2);box-shadow:var(--ring),var(--sh-sm)}
-label.check{display:flex;align-items:flex-start;gap:10px;margin:16px 0 22px;
-  font-size:13.5px;line-height:1.6;color:var(--muted);cursor:pointer}
-label.check input{width:16px;height:16px;margin:3px 0 0;flex:none;
-  accent-color:var(--accent);cursor:pointer}
-/* 弹层里的选项：color-scheme 覆盖大多数浏览器，这里兜底 Firefox */
-select option{background:var(--surface);color:var(--ink)}
-select{appearance:none;-webkit-appearance:none;cursor:pointer;
-  background-image:linear-gradient(45deg,transparent 50%,var(--faint) 50%),
-                   linear-gradient(135deg,var(--faint) 50%,transparent 50%);
-  background-position:calc(100% - 19px) 19px,calc(100% - 14px) 19px;
-  background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:40px}
-.hint{margin:-8px 0 20px;max-width:520px;font-size:12.5px;line-height:1.8;color:var(--faint)}
-.hint a{color:var(--accent-text);
-  border-bottom:1px solid color-mix(in srgb,var(--accent) 40%,transparent)}
-.hint b{color:var(--muted);font-weight:600}
-
-.actions{display:flex;flex-wrap:wrap;gap:10px;padding:26px 0 10px;margin-top:8px;
-  border-top:1px solid var(--line)}
-
-.probe{margin:24px 0 0;padding:16px 18px;border-radius:var(--r-panel);overflow:auto;
-  background:color-mix(in srgb,var(--ink) 5%,var(--surface));color:var(--muted);
-  box-shadow:var(--ring);
-  font:12.5px/1.8 var(--font-mono);white-space:pre-wrap}
-
-.meta{margin-top:26px;padding-top:24px;border-top:1px solid var(--line);
-  font-size:12.5px;line-height:2;color:var(--faint)}
-.meta .warn{color:var(--warn);font-weight:500}
-
-@media(max-width:600px){
-  .sec{grid-template-columns:1fr;gap:0}
-  .sec-no{margin-bottom:9px;padding-top:0}
-  .actions .btn{flex:1 1 auto}
-}
-</style>
-{{template "themeBoot"}}
+{{template "head" .}}
+{{template "css" .}}
 </head>
 <body>
-<header class="top">
-  <a class="brand" href="/">
-    <span class="mark" aria-hidden="true"></span>
-    <b>{{.Title}}</b>
-  </a>
-  <a class="back" href="/">返回媒体库</a>
-</header>
-
-<main>
-<div class="wrap">
-  <header class="page-head">
-    <p class="eyebrow">SETTINGS</p>
-    <h1>设置</h1>
-    <p class="lead">刮削用的 API 凭据只保存在本机配置文件里，不会发往任何第三方。</p>
-  </header>
-
-  {{if .Error}}
-  <div class="toast err on" id="tip" role="alert" title="点击关闭">{{.Error}}</div>
-  {{else if .Message}}
-  <div class="toast on" id="tip" role="status">{{.Message}}</div>
-  {{end}}
-
-  <form method="post" action="/settings" autocomplete="off">
-    <input type="hidden" name="token" value="{{.Token}}">
-
-    <section class="sec">
-      <div class="sec-no">01</div>
-      <div class="sec-body">
-        <h2>媒体库</h2>
-        <label>
-          <span class="lbl">媒体根目录</span>
-          <input type="text" name="lib_root" value="{{.LibraryRoot}}" spellcheck="false"
-                 placeholder="~/Media">
-        </label>
-        <label>
-          <span class="lbl">额外目录（可选，一行一个）</span>
-          <textarea name="lib_extra" rows="3" spellcheck="false"
-                    placeholder="/storage/1A2B-3C4D/Movies">{{.LibraryExtra}}</textarea>
-        </label>
-        <label class="check">
-          <input type="checkbox" name="lib_symlinks" {{if .LibraryLinks}}checked{{end}}>
-          <span>跟随指向文件的符号链接（下载做种 + 库里放链接时需要）</span>
-        </label>
-        <label>
-          <span class="lbl">下载目录（可选）</span>
-          <input type="text" name="dl_dir" value="{{.DownloadDir}}" spellcheck="false"
-                 placeholder="~/Downloads，留空不启用">
-        </label>
-        <label>
-          <span class="lbl">镜像方式</span>
-          <select name="dl_mode">
-            <option value="symlink" {{if ne .DownloadMode "copy"}}selected{{end}}>符号链接（零拷贝，推荐）</option>
-            <option value="copy" {{if eq .DownloadMode "copy"}}selected{{end}}>完整副本（双倍空间，下载目录随时会被清空时用）</option>
-          </select>
-        </label>
-        <p class="hint">
-          填了下载目录后，serve 每分钟检查一次：出现新内容就镜像进库（落在媒体根的
-          <code>Downloads/</code> 子目录）、自动扫描并刮削，下载工具侧<b>无需任何配置</b>。
-          下载目录不能与媒体根互相包含；符号链接模式下删除种子会自动清掉对应链接。
-        </p>
-        <p class="hint">
-          媒体根请放在 <code>$HOME</code> 下的 ext4，不要放 <code>/storage/emulated/0</code>（FUSE 会拖慢扫描并让数据库上锁失败）。
-          修改媒体根需要<b>重启服务</b>才会生效；重启时会自动重新扫描并把缺图的条目补刮一遍。
-        </p>
-      </div>
-    </section>
-
-    <section class="sec">
-      <div class="sec-no">02</div>
-      <div class="sec-body">
-        <h2>数据源</h2>
-        <label>
-          <span class="lbl">刮削后端</span>
-          <select name="provider">
-            <option value="tmdb" {{if eq .Provider "tmdb"}}selected{{end}}>TMDB（推荐，中文与剧集最全）</option>
-            <option value="omdb" {{if eq .Provider "omdb"}}selected{{end}}>OMDb（兜底，无中文简介）</option>
-          </select>
-        </label>
-        <label>
-          <span class="lbl">元数据语言</span>
-          <input type="text" name="language" value="{{.Language}}" placeholder="zh-CN">
-        </label>
-        <p class="hint">语言影响标题与简介。中文缺失时会按字段回落到 <code>en-US</code>，不需要改这里。</p>
-      </div>
-    </section>
-
-    <section class="sec">
-      <div class="sec-no">03</div>
-      <div class="sec-body">
-        <h2>TMDB 凭据</h2>
-        <label>
-          <span class="lbl">API Read Access Token（v4，推荐）</span>
-          <input type="password" name="tmdb_token" spellcheck="false"
-                 placeholder="{{if .TMDBMasked}}已配置 {{.TMDBMasked}} — 留空不修改{{else}}eyJhbGciOiJIUzI1NiJ9…{{end}}">
-        </label>
-        <label>
-          <span class="lbl">API Key（v3，可选）</span>
-          <input type="password" name="tmdb_key" spellcheck="false"
-                 placeholder="{{if .TMDBKeyMask}}已配置 {{.TMDBKeyMask}} — 留空不修改{{else}}32 位十六进制串{{end}}">
-        </label>
-        <p class="hint">
-          在 <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org → 设置 → API</a>
-          申请，免费、当场生成。填 v4 token 就够了，v3 只是给不方便设请求头的客户端用。
-        </p>
-      </div>
-    </section>
-
-    <section class="sec">
-      <div class="sec-no">04</div>
-      <div class="sec-body">
-        <h2>OMDb 凭据（可选）</h2>
-        <label>
-          <span class="lbl">API Key</span>
-          <input type="password" name="omdb_key" spellcheck="false"
-                 placeholder="{{if .OMDBMasked}}已配置 {{.OMDBMasked}} — 留空不修改{{else}}仅在后端切到 omdb 时需要{{end}}">
-        </label>
-        <p class="hint">OMDb 免费档每天 1000 次，没有中文简介、没有背景图，只在新片匹配失败时当兜底。</p>
-      </div>
-    </section>
-
-    <section class="sec">
-      <div class="sec-no">05</div>
-      <div class="sec-body">
-        <h2>外观</h2>
-        <label>
-          <span class="lbl">主题</span>
-          <select name="page_theme">
-            <option value="auto" {{if eq .Theme "auto"}}selected{{end}}>跟随系统</option>
-            <option value="light" {{if eq .Theme "light"}}selected{{end}}>浅色</option>
-            <option value="dark" {{if eq .Theme "dark"}}selected{{end}}>深色</option>
-          </select>
-        </label>
-        <p class="hint">
-          「跟随系统」按浏览器的深色偏好现算：系统切成深色，页面立刻跟着变，不用刷新。
-          选浅色或深色就是钉死某一套配色。保存后立即生效。
-        </p>
-      </div>
-    </section>
-
-    <div class="actions">
-      <button class="btn btn-primary" type="submit" name="action" value="save">保存</button>
-      <button class="btn btn-ghost" type="submit" name="action" value="test">测试连接</button>
+<div class="shell">
+  <aside class="rail">
+    <div class="rail-top">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="wordmark">{{.Title}}</span>
     </div>
-  </form>
+    <a class="rail-set" href="/settings" aria-current="page">设置</a>
+  </aside>
 
-  {{if .Probe}}<pre class="probe">{{.Probe}}</pre>{{end}}
+  <main class="main">
+    <nav class="crumb" style="padding:20px 0 2px;font-size:13.5px;color:var(--ink-2)">
+      <a href="/" style="color:inherit">← 片库</a>
+    </nav>
 
-  <div class="meta">
-    配置文件 <code>{{.ConfigPath}}</code>
-    （{{if .ConfigExists}}已存在{{else}}尚不存在，保存时创建{{end}}，权限 600）
-    <br>
-    保存只影响之后启动的 <code>litems scrape</code>；浏览与播放不受影响，也不需要重启服务。
-    {{if not .AuthOn}}
-    <br>
-    <span class="warn">当前未启用 Basic Auth —— 局域网内任何人都能打开本页并修改凭据。</span>
-    {{end}}
-  </div>
+    <header class="set-head">
+      <h1>设置</h1>
+      <p>改动写回 config.toml，只替换下面这些键，注释和别的配置项原样保留。</p>
+    </header>
+
+    <form class="set-form" method="post" action="/settings">
+      <input type="hidden" name="token" value="{{.Token}}">
+
+      {{if .Error}}<p class="msg err">{{.Error}}</p>{{end}}
+      {{if .Message}}<p class="msg">{{.Message}}</p>{{end}}
+      {{if .Probe}}<pre class="probe">{{.Probe}}</pre>{{end}}
+
+      <section class="sec">
+        <h2>外观</h2>
+        <p class="hint">选择走片颜色的一套皮。跟随系统时，系统切深浅色页面会实时跟着变。</p>
+        <div class="row">
+          <span class="rl">主题</span>
+          <div class="seg">
+            <label><input type="radio" name="page_theme" value="auto"{{if eq .Theme "auto"}} checked{{end}}><span>跟随系统</span></label>
+            <label><input type="radio" name="page_theme" value="dark"{{if eq .Theme "dark"}} checked{{end}}><span>暗</span></label>
+            <label><input type="radio" name="page_theme" value="light"{{if eq .Theme "light"}} checked{{end}}><span>亮</span></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="sec">
+        <h2>刮削</h2>
+        <p class="hint">片名、海报、简介从哪来。密钥只在页面上露出首尾几位，留空表示不修改。</p>
+
+        <div class="row">
+          <span class="rl">数据源</span>
+          <div class="seg">
+            <label><input type="radio" name="provider" value="tmdb"{{if eq .Provider "tmdb"}} checked{{end}}><span>TMDB</span></label>
+            <label><input type="radio" name="provider" value="omdb"{{if eq .Provider "omdb"}} checked{{end}}><span>OMDb</span></label>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="language">语言</label>
+          <div>
+            <input type="text" id="language" name="language" value="{{.Language}}" placeholder="zh-CN" autocomplete="off" spellcheck="false">
+            <p class="fld-note">TMDB 用 zh-CN / en-US 这样的写法。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="tmdb_token">TMDB 读取令牌</label>
+          <div>
+            <input type="password" id="tmdb_token" name="tmdb_token" placeholder="{{if .TMDBMasked}}{{.TMDBMasked}}（留空不改）{{else}}还没填{{end}}" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="tmdb_key">TMDB API Key</label>
+          <div>
+            <input type="password" id="tmdb_key" name="tmdb_key" placeholder="{{if .TMDBKeyMask}}{{.TMDBKeyMask}}（留空不改）{{else}}还没填{{end}}" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="omdb_key">OMDb Key</label>
+          <div>
+            <input type="password" id="omdb_key" name="omdb_key" placeholder="{{if .OMDBMasked}}{{.OMDBMasked}}（留空不改）{{else}}还没填{{end}}" autocomplete="off" spellcheck="false">
+            <p class="fld-note">用 OMDb 当数据源时才需要。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="sec">
+        <h2>媒体库</h2>
+        <p class="hint">这些改动在重启服务后生效——重启时会自动镜像、重新扫描并补刮。</p>
+
+        <div class="row">
+          <label for="lib_root">媒体根</label>
+          <div>
+            <input type="text" id="lib_root" name="lib_root" value="{{.LibraryRoot}}" required spellcheck="false">
+            <p class="fld-note">绝对路径，或以 ~ 开头。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="lib_extra">额外根</label>
+          <div>
+            <textarea id="lib_extra" name="lib_extra" spellcheck="false" placeholder="/storage/emulated/0/Movies">{{.LibraryExtra}}</textarea>
+            <p class="fld-note">一行一个。空行忽略。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <span class="rl">符号链接</span>
+          <label class="check"><input type="checkbox" name="lib_symlinks"{{if .LibraryLinks}} checked{{end}}> 跟随文件级软链接</label>
+        </div>
+
+        <div class="row">
+          <label for="dl_dir">下载目录</label>
+          <div>
+            <input type="text" id="dl_dir" name="dl_dir" value="{{.DownloadDir}}" spellcheck="false">
+            <p class="fld-note">留空表示不镜像。不能和媒体根互相包含。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <span class="rl">镜像方式</span>
+          <div class="seg">
+            <label><input type="radio" name="dl_mode" value="symlink"{{if eq .DownloadMode "symlink"}} checked{{end}}><span>软链接</span></label>
+            <label><input type="radio" name="dl_mode" value="copy"{{if eq .DownloadMode "copy"}} checked{{end}}><span>复制</span></label>
+          </div>
+        </div>
+      </section>
+
+      <div class="set-foot">
+        <button class="btn" type="submit" name="action" value="save">保存</button>
+        <button class="btn ghost" type="submit" name="action" value="test">测试连接</button>
+        <span class="pathline">{{.ConfigPath}}{{if not .ConfigExists}}（文件还不存在，保存时创建）{{end}}{{if .AuthOn}} · 已启用 Basic Auth{{end}}</span>
+      </div>
+    </form>
+  </main>
 </div>
-</main>
-
-<script>
-/* 表单是整页 POST 回来的：浏览器会从头渲染并停在页面顶部，点「测试连接」时
-   人还在底部的按钮上，回来就丢了位置。提交前把滚动位置记进 sessionStorage，
-   回来再还原。只在这页真的有结果提示时还原——从别处进设置页不会跳到旧位置。 */
-const tipEl = document.getElementById('tip');
-const formEl = document.querySelector('form');
-const SCROLL_KEY = 'litems.settings.scroll';
-
-formEl.addEventListener('submit', () => {
-  try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (e) {}
-});
-
-if (tipEl) {
-  let y = null;
-  try {
-    y = sessionStorage.getItem(SCROLL_KEY);
-    sessionStorage.removeItem(SCROLL_KEY);
-  } catch (e) {}
-  if (y !== null) {
-    // 等布局稳定再滚：文档没图片，load 后一帧一定拿得到最终高度
-    const restore = () => requestAnimationFrame(() => window.scrollTo(0, Number(y) || 0));
-    if (document.readyState === 'complete') restore();
-    else addEventListener('load', restore);
-  }
-
-  const close = () => {
-    tipEl.classList.remove('on');
-    setTimeout(() => tipEl.remove(), 400);
-  };
-  if (tipEl.classList.contains('err')) {
-    tipEl.addEventListener('click', close);   // 错误常驻，点一下关掉
-  } else {
-    setTimeout(close, 5000);                  // 成功 5 秒自动淡出
-  }
-}
-</script>
 </body>
 </html>

@@ -1,276 +1,244 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="margin-app" data-theme="{{.Theme}}">
+<html lang="zh-CN" data-theme="{{if eq .Theme "light"}}light{{else if eq .Theme "dark"}}dark{{else}}auto{{end}}">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="{{if eq .Theme "dark"}}#111112{{else}}#f5f4f1{{end}}">
-<title>{{.Title}}</title>
-<style>
-{{template "marginCSS"}}
-{{template "phCore"}}
-
-/* ── 页头（编辑式：等宽眉标 + 无衬线标题）──────────────────── */
-main{padding:0 var(--g) 72px}
-.bar{padding:34px 0 24px}
-.bar h1{margin:9px 0 0;font:600 clamp(24px,2.8vw,30px)/1.2 var(--font-heading);
-  letter-spacing:-.012em}
-
-@media(max-width:760px){
-  .top{flex-wrap:wrap;height:auto;gap:12px;padding-top:10px;padding-bottom:10px}
-  .search{order:3;flex:1 1 100%;max-width:none;height:40px}
-  .et{order:1}
-  .ico{order:2}
-  .bar{padding:24px 0 18px}
-  .grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:24px 14px}
-  .cap h3{font-size:13px}
-}
-@media(max-width:560px){
-  /* 不给固定列数：auto-fill 到这一档自然落成 2 列，海报不至于缩成邮票 */
-  .cap{padding-top:9px}
-  .cap h3{font-size:12.5px}
-  .cap p{font-size:11px;gap:5px}
-  .badge{top:6px;right:6px;padding:2px 6px 2px 5px;font-size:10px}
-  .top{gap:10px}
-  .et-btn{padding:0 11px;font-size:12.5px}
-}
-/* 只有 420 以下才真的放不下「品牌名 + tab + 齿轮」，这时留图标即可 */
-@media(max-width:430px){
-  .brand b{display:none}
-}
-</style>
-{{template "themeBoot"}}
+{{template "head" .}}
+{{template "css" .}}
 </head>
 <body>
-<header class="top">
-  <a class="brand" href="/" aria-label="{{.Title}}">
-    <span class="mark" aria-hidden="true"></span>
-    <b>{{.Title}}</b>
-  </a>
-  <form class="search" method="get" action="/" role="search">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
-    <input type="search" name="q" value="{{.Query}}" placeholder="搜索片名、原名、拼音" autocomplete="off" aria-label="搜索">
-    {{if .Kind}}<input type="hidden" name="kind" value="{{.Kind}}">{{end}}
-  </form>
-  <nav class="et" id="et" aria-label="分类">
-    <span class="et-thumb" id="thumb" aria-hidden="true"></span>
-    <a class="et-btn" href="/" data-base="/" {{if not .Kind}}aria-current="page"{{end}}>全部</a>
-    <a class="et-btn" href="/?kind=movie" data-base="/?kind=movie" {{if eq .Kind "movie"}}aria-current="page"{{end}}>电影</a>
-    <a class="et-btn" href="/?kind=episode" data-base="/?kind=episode" {{if eq .Kind "episode"}}aria-current="page"{{end}}>剧集</a>
-  </nav>
-  <a class="ico" href="/settings" title="设置" aria-label="设置">
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 7h9M18 7h2M4 17h4M12 17h8"/>
-      <circle cx="15.5" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/>
-    </svg>
-  </a>
-</header>
+<div class="shell">
+  <aside class="rail">
+    <div class="rail-top">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="wordmark">{{.Title}}</span>
+    </div>
+    <a class="rail-set" href="/settings">设置</a>
+  </aside>
 
-<main id="main">
-  {{if .Items}}
-  <div class="bar">
-    <p class="eyebrow">{{if .Query}}SEARCH{{else if eq .Kind "movie"}}MOVIES{{else if eq .Kind "episode"}}SERIES{{else}}LIBRARY{{end}} · {{.Total}}</p>
-    <h1>{{if .Query}}「{{.Query}}」{{else if eq .Kind "movie"}}电影{{else if eq .Kind "episode"}}剧集{{else}}全部影片{{end}}</h1>
-  </div>
-  <div class="grid">
-    {{range .Items}}
-    <a class="card" href="/item/{{.ID}}">
-      <div class="art">
-        {{if .Poster}}
-          <img src="{{.Poster}}" alt="{{.Title}}" loading="lazy" decoding="async">
-        {{else}}
-          <div class="ph"></div>
-        {{end}}
-        <div class="scrim"></div>
-        {{with .Rating}}<div class="badge"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>{{printf "%.1f" .}}</div>{{end}}
-        {{if .DurationMS}}<div class="prog"><i style="width:{{pct .PositionMS .DurationMS}}"></i></div>{{end}}
-        <div class="play"></div>
+  <main class="main">
+    <form class="bar" method="get" action="/" role="search">
+      <span class="brand"><i aria-hidden="true"></i>{{.Title}}</span>
+      <label class="search">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4 4"/></svg>
+        <span class="sr">搜索</span>
+        <input type="search" name="q" value="{{.Query}}" placeholder="片名、原名或拼音" autocomplete="off" spellcheck="false">
+      </label>
+      {{if .Kind}}<input type="hidden" name="kind" value="{{.Kind}}">{{end}}
+      {{if .Sort}}<input type="hidden" name="sort" value="{{.Sort}}">{{end}}
+
+      <nav class="filters" aria-label="类型">
+        <a href="/?{{if .Query}}q={{.Query}}&{{end}}{{if .Sort}}sort={{.Sort}}{{end}}"{{if not .Kind}} aria-current="page"{{end}}>全部</a>
+        <a href="/?{{if .Query}}q={{.Query}}&{{end}}kind=movie{{if .Sort}}&sort={{.Sort}}{{end}}"{{if eq .Kind "movie"}} aria-current="page"{{end}}>电影</a>
+        <a href="/?{{if .Query}}q={{.Query}}&{{end}}kind=episode{{if .Sort}}&sort={{.Sort}}{{end}}"{{if eq .Kind "episode"}} aria-current="page"{{end}}>剧集</a>
+      </nav>
+
+      <div class="sort">
+        <label class="sr" for="sortsel">排序</label>
+        <select id="sortsel" data-q="{{.Query}}" data-kind="{{.Kind}}">
+          <option value=""{{if not .Sort}} selected{{end}}>最近添加</option>
+          <option value="title"{{if eq .Sort "title"}} selected{{end}}>按标题</option>
+          <option value="year"{{if eq .Sort "year"}} selected{{end}}>按年份</option>
+          <option value="rating"{{if eq .Sort "rating"}} selected{{end}}>按评分</option>
+        </select>
       </div>
-      <div class="cap">
-        <h3>{{.Title}}</h3>
-        <p>
-          {{with .Year}}<span>{{.}}</span>{{end}}
-          {{if eq .Kind "episode"}}<span class="dot"></span><span>S{{.Season}}E{{.Episode}}</span>{{end}}
-          {{if .Finished}}<span class="dot"></span><span>已看完</span>{{end}}
-          {{if and (eq .Year 0) (ne .Kind "episode")}}<span>未识别</span>{{end}}
-        </p>
-      </div>
-    </a>
+      <a class="set-inline" href="/settings">设置</a>
+    </form>
+
+    {{if and (not .Query) (not .Kind) (not .Sort) (eq .Page 1)}}
+    <div id="resumeSlot" hidden></div>
+    <div id="stripSlot" hidden></div>
     {{end}}
-  </div>
-  {{if or (gt .Page 1) .NextPage}}
-  <div class="pager">
-    {{if gt .Page 1}}<a href="/?page={{.PrevPage}}{{if .Query}}&q={{.Query}}{{end}}{{if .Kind}}&kind={{.Kind}}{{end}}">上一页</a>{{end}}
-    <span>{{.Page}}</span>
-    {{if .NextPage}}<a href="/?page={{.NextPage}}{{if .Query}}&q={{.Query}}{{end}}{{if .Kind}}&kind={{.Kind}}{{end}}">下一页</a>{{end}}
-  </div>
-  {{end}}
-  {{else}}
-  <div class="bar">
-    <p class="eyebrow">{{if .Query}}SEARCH{{else}}LIBRARY{{end}} · 0</p>
-    <h1>{{if .Query}}没有匹配「{{.Query}}」{{else}}媒体库还是空的{{end}}</h1>
-  </div>
-  <div class="empty">
-    <p>{{if .Query}}换个关键词，或切到「全部」看看。{{else}}运行 <code>litems scan</code> 建立索引，或在设置里指定媒体根目录。{{end}}</p>
-  </div>
-  {{end}}
-</main>
+
+    <div class="sheet">
+      <p>{{if .Query}}“{{.Query}}”的条目{{else if eq .Kind "movie"}}电影{{else if eq .Kind "episode"}}剧集{{else}}全部条目{{end}}</p>
+      <p class="n">{{.Total}} 部</p>
+    </div>
+
+    {{if .Items}}
+    <ol class="grid">
+      {{range .Items}}
+      <li>
+        <figure class="frame">
+          <a class="poster" href="/item/{{.ID}}" tabindex="-1" aria-hidden="true">
+            {{if .Poster}}<img src="{{.Poster}}" alt="" loading="lazy" decoding="async">{{else}}<span class="ph">{{initial .Title}}</span>{{end}}
+            {{if and (gt .PositionMS 0) (not .Finished)}}<span class="burn" style="width:{{pct .PositionMS .DurationMS}}"></span>{{end}}
+          </a>
+          <figcaption>
+            <a class="t" href="/item/{{.ID}}">{{.Title}}</a>
+            <p class="m">
+              {{if .Year}}<span>{{.Year}}</span>{{end}}
+              {{if eq .Kind "episode"}}<span>S{{printf "%02d" .Season}}E{{printf "%02d" .Episode}}</span>{{end}}
+              {{if and (gt .PositionMS 0) (not .Finished)}}<span class="w">看到 {{duration .PositionMS}}</span>{{else if .RuntimeMin}}<span>{{.RuntimeMin}} 分</span>{{end}}
+            </p>
+          </figcaption>
+        </figure>
+      </li>
+      {{end}}
+    </ol>
+    {{else}}
+    <div class="empty">
+      <p class="e-t">这里还没有片</p>
+      <p>{{if .Query}}没有匹配“{{.Query}}”的条目。换个关键词，或者清空筛选看全部。{{else}}媒体库里还没有扫描到条目。放几部片子进去，跑一次 litems scan。{{end}}</p>
+      <a class="btn ghost" href="/">看全部条目</a>
+    </div>
+    {{end}}
+
+    {{if .Items}}
+    <nav class="pager" aria-label="翻页">
+      {{if gt .Page 1}}
+      <a href="/?page={{.PrevPage}}{{if .Query}}&q={{.Query}}{{end}}{{if .Kind}}&kind={{.Kind}}{{end}}{{if .Sort}}&sort={{.Sort}}{{end}}">上一页</a>
+      {{else}}<span class="off">上一页</span>{{end}}
+      <span class="at">第 {{.Page}} 页 · 共 {{.Total}} 部</span>
+      {{if gt .NextPage 0}}
+      <a href="/?page={{.NextPage}}{{if .Query}}&q={{.Query}}{{end}}{{if .Kind}}&kind={{.Kind}}{{end}}{{if .Sort}}&sort={{.Sort}}{{end}}">下一页</a>
+      {{else}}<span class="off">下一页</span>{{end}}
+    </nav>
+    {{end}}
+  </main>
+</div>
 
 <script>
-/* ── tab 胶囊指示条：只动 translate / width，不触发重排 ───────── */
 (function(){
-  const et = document.getElementById('et');
-  const thumb = document.getElementById('thumb');
-  if (!et || !thumb) return;
-  function place(){
-    const on = et.querySelector('.et-btn[aria-current]');
-    if (!on) { thumb.removeAttribute('data-on'); return; }
-    thumb.style.width = on.offsetWidth + 'px';
-    // 不要减 .et 的 padding：offsetLeft 已经是相对 .et 内边距盒的偏移（含 4px padding），
-    // 而 thumb 的 left:0 也落在内边距盒边缘，两者同一基准，减 4 会把指示条左移 4px，
-    // 视觉上就是文字在胶囊里偏右。
-    thumb.style.translate = on.offsetLeft + 'px 0';
-    thumb.setAttribute('data-on', '');
+  // 排序切换：保留当前搜索与类型筛选
+  var sel = document.getElementById('sortsel');
+  if (sel) sel.addEventListener('change', function(){
+    var p = new URLSearchParams();
+    if (sel.dataset.q) p.set('q', sel.dataset.q);
+    if (sel.dataset.kind) p.set('kind', sel.dataset.kind);
+    if (sel.value) p.set('sort', sel.value);
+    location.href = '/' + (p.toString() ? '?' + p.toString() : '');
+  });
+
+  // "/" 聚焦搜索
+  var box = document.querySelector('.search input');
+  document.addEventListener('keydown', function(e){
+    if (e.key === '/' && document.activeElement !== box) { e.preventDefault(); box.focus(); }
+  });
+
+  function el(tag, cls, text){
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
   }
-  // 字体异步就绪后宽度会变，等 fonts.ready 再量一次
-  place();
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(place);
-  addEventListener('resize', place);
+  function fmt(ms){
+    if (!ms || ms < 0) return '0:00';
+    var s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60;
+    var mm = (h ? String(m).padStart(2,'0') : String(m));
+    return (h ? h + ':' + mm : mm) + ':' + String(ss).padStart(2,'0');
+  }
+  function poster(it){
+    var a = el('a', 'poster');
+    a.href = '/item/' + it.id;
+    a.tabIndex = -1;
+    a.setAttribute('aria-hidden', 'true');
+    if (it.poster) {
+      var img = el('img');
+      img.src = it.poster; img.alt = ''; img.loading = 'lazy';
+      a.appendChild(img);
+    } else {
+      a.appendChild(el('span', 'ph', (it.title || '?').slice(0,1)));
+    }
+    if (it.position_ms > 0 && !it.finished && it.duration_ms > 0) {
+      var b = el('span', 'burn');
+      b.style.width = Math.min(100, Math.round(it.position_ms * 100 / it.duration_ms)) + '%';
+      a.appendChild(b);
+    }
+    return a;
+  }
+
+  fetch('/api/continue', {headers: {'Accept':'application/json'}})
+    .then(function(r){ return r.ok ? r.json() : {items: []}; })
+    .then(function(d){
+      var slot = document.getElementById('resumeSlot');
+      if (!slot) return;   // 搜索 / 筛选 / 翻页时不抢版面
+      var items = (d.items || []).filter(function(it){ return it.position_ms > 0 && !it.finished; });
+      if (!items.length) return;
+      var top = items[0];
+
+      // ── 继续观看：首页唯一的高光，走片线入场时从 0 画到当前位置
+      var sec = el('section', 'resume');
+      var art = el('a', 'resume-art');
+      art.href = '/play/' + top.id;
+      art.tabIndex = -1;
+      art.setAttribute('aria-hidden', 'true');
+      if (top.fanart || top.poster) {
+        var im = el('img');
+        im.src = top.fanart || top.poster;
+        im.alt = ''; im.decoding = 'async';
+        art.appendChild(im);
+      }
+      sec.appendChild(art);
+
+      var body = el('div', 'resume-body');
+      body.appendChild(el('p', 'resume-kicker', '继续观看'));
+      var h = el('h2');
+      var link = el('a', null, top.title);
+      link.href = '/item/' + top.id;
+      h.appendChild(link);
+      body.appendChild(h);
+
+      var sub = el('p', 'resume-sub');
+      var bits = [];
+      if (top.year) bits.push(top.year);
+      if (top.kind === 'episode' && top.episode) bits.push('S' + String(top.season||1).padStart(2,'0') + 'E' + String(top.episode).padStart(2,'0'));
+      bits.push('看到 ' + fmt(top.position_ms) + ' / ' + fmt(top.duration_ms));
+      sub.textContent = bits.join(' · ');
+      body.appendChild(sub);
+
+      if (top.overview) {
+        var ov = el('p', 'resume-ov', top.overview);
+        body.appendChild(ov);
+      }
+
+      var acts = el('div', 'resume-acts');
+      var go = el('a', 'btn', '从 ' + fmt(top.position_ms) + ' 继续');
+      go.href = '/play/' + top.id;
+      acts.appendChild(go);
+      var restart = el('a', 'btn quiet', '从头播放');
+      restart.href = '/play/' + top.id + '?t=0';
+      acts.appendChild(restart);
+      body.appendChild(acts);
+      sec.appendChild(body);
+
+      var bar = el('div', 'resume-bar');
+      var fill = el('span');
+      bar.appendChild(fill);
+      sec.appendChild(bar);
+
+      var slot = document.getElementById('resumeSlot');
+      slot.appendChild(sec);
+      slot.hidden = false;
+      var p = top.duration_ms > 0 ? Math.min(100, top.position_ms * 100 / top.duration_ms) : 0;
+      requestAnimationFrame(function(){ fill.style.width = p.toFixed(2) + '%'; });
+
+      // ── 接着看：其余未看完的
+      var rest = items.slice(1, 9);
+      if (!rest.length) return;
+      var wrap = el('div', 'strip-wrap');
+      wrap.appendChild(el('p', 'strip-h', '接着看'));
+      var ul = el('ul', 'strip');
+      rest.forEach(function(it){
+        var li = el('li');
+        var fig = el('figure', 'frame');
+        fig.appendChild(poster(it));
+        var cap = el('figcaption');
+        var t = el('a', 't', it.title);
+        t.href = '/item/' + it.id;
+        cap.appendChild(t);
+        var m = el('p', 'm');
+        m.appendChild(el('span', 'w', '看到 ' + fmt(it.position_ms)));
+        cap.appendChild(m);
+        fig.appendChild(cap);
+        li.appendChild(fig);
+        ul.appendChild(li);
+      });
+      wrap.appendChild(ul);
+      var ss = document.getElementById('stripSlot');
+      ss.appendChild(wrap);
+      ss.hidden = false;
+    })
+    .catch(function(){ /* 离线或接口失败时首页照样能浏览 */ });
 })();
-
-/* ── 实时搜索 ──────────────────────────────────────────────
-   输入即搜（180ms 防抖）：请求 /api/items，用同一套 DTO 在客户端重建卡片。
-   搜索键在服务端已做「去空格/标点、忽略大小写」折叠，所以 lala / lalaland /
-   La La Land 都能命中。回车仍走整页 GET（保留 SSR 与分页）。 */
-const KIND = "{{.Kind}}";
-const form = document.querySelector('.search');
-const input = form.querySelector('input[name=q]');
-const mainEl = document.getElementById('main');
-const segLinks = Array.from(document.querySelectorAll('.et-btn'));
-const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.6 7.2.9-5.3 5 1.4 7.1-6.4-3.5-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>';
-
-let timer = null, seq = 0;
-
-function el(tag, cls, text){
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-}
-
-function heading(total, q){
-  const box = el('div', 'bar');
-  const kicker = q ? 'SEARCH' : KIND === 'movie' ? 'MOVIES' : KIND === 'episode' ? 'SERIES' : 'LIBRARY';
-  box.appendChild(el('p', 'eyebrow', kicker + ' · ' + total));
-  box.appendChild(el('h1', null, q ? '「' + q + '」'
-    : KIND === 'movie' ? '电影' : KIND === 'episode' ? '剧集' : '全部影片'));
-  return box;
-}
-
-function makeCard(it){
-  const a = el('a', 'card');
-  a.href = '/item/' + it.id;
-
-  const art = el('div', 'art');
-  if (it.poster){
-    const img = el('img');
-    img.src = it.poster; img.alt = it.title;
-    img.loading = 'lazy'; img.decoding = 'async';
-    art.appendChild(img);
-  } else {
-    art.appendChild(el('div', 'ph'));
-  }
-  art.appendChild(el('div', 'scrim'));
-  if (it.rating){
-    const b = el('div', 'badge');
-    b.innerHTML = STAR;
-    b.appendChild(document.createTextNode(it.rating.toFixed(1)));
-    art.appendChild(b);
-  }
-  if (it.duration_ms){
-    const p = el('div', 'prog'), i = el('i');
-    i.style.width = Math.min(100, it.position_ms / it.duration_ms * 100).toFixed(1) + '%';
-    p.appendChild(i);
-    art.appendChild(p);
-  }
-  art.appendChild(el('div', 'play'));
-  a.appendChild(art);
-
-  const cap = el('div', 'cap');
-  cap.appendChild(el('h3', null, it.title));
-  const meta = el('p');
-  if (it.year) meta.appendChild(el('span', null, String(it.year)));
-  if (it.kind === 'episode'){
-    meta.appendChild(el('span', 'dot'));
-    meta.appendChild(el('span', null, 'S' + it.season + 'E' + it.episode));
-  }
-  if (it.finished){
-    meta.appendChild(el('span', 'dot'));
-    meta.appendChild(el('span', null, '已看完'));
-  }
-  if (!it.year && it.kind !== 'episode') meta.appendChild(el('span', null, '未识别'));
-  cap.appendChild(meta);
-  a.appendChild(cap);
-  return a;
-}
-
-function render(payload, q){
-  const frag = document.createDocumentFragment();
-  if (payload.items && payload.items.length){
-    frag.appendChild(heading(payload.total, q));
-    const grid = el('div', 'grid');
-    for (const it of payload.items) grid.appendChild(makeCard(it));
-    frag.appendChild(grid);
-  } else {
-    frag.appendChild(heading(0, q));
-    const box = el('div', 'empty');
-    box.appendChild(el('p', null, q
-      ? '换个关键词，或切到「全部」看看。'
-      : '运行 litems scan 建立索引，或在设置里指定媒体根目录。'));
-    frag.appendChild(box);
-  }
-  mainEl.replaceChildren(frag);
-}
-
-async function live(q){
-  const my = ++seq;                      // 丢弃过期响应，避免乱序覆盖
-  const u = new URL('/api/items', location.origin);
-  if (q) u.searchParams.set('q', q);
-  if (KIND) u.searchParams.set('kind', KIND);
-  u.searchParams.set('limit', '200');
-  try{
-    const r = await fetch(u);
-    if (!r.ok) return;
-    const j = await r.json();
-    if (my !== seq) return;
-    render(j, q);
-  }catch(e){ /* 网络抖动保留旧结果 */ }
-}
-
-function syncURL(q){
-  const u = new URL('/', location.origin);
-  if (q) u.searchParams.set('q', q);
-  if (KIND) u.searchParams.set('kind', KIND);
-  history.replaceState(null, '', u.pathname + u.search);
-}
-
-function syncSegLinks(q){
-  for (const a of segLinks){
-    const u = new URL(a.dataset.base || '/', location.origin);
-    if (q) u.searchParams.set('q', q);
-    a.href = u.pathname + u.search;
-  }
-}
-
-input.addEventListener('input', () => {
-  const q = input.value.trim();
-  clearTimeout(timer);
-  timer = setTimeout(() => {
-    syncURL(q);
-    syncSegLinks(q);
-    live(q);
-  }, 180);
-});
-syncSegLinks(input.value.trim());
 </script>
 </body>
 </html>
