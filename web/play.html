@@ -92,6 +92,49 @@ main{padding:84px var(--g) 48px}
   .calib-range,.calib-split,.calib-foot,#calibCueRow{grid-column:1/-1}
 }
 .calib-body[hidden]{display:none}
+
+/* ── 对齐视图：两条轨并排画同一段时间，当前轨可整体拖动 ──
+   字幕对不对齐，看两块颜色能不能咬合，比盯数字直观得多。 */
+.calib-tl{grid-column:1/-1;display:flex;flex-direction:column;gap:10px;
+  padding:12px 14px 10px;border-radius:var(--r-panel);background:var(--chip)}
+.tl-bar{display:flex;align-items:center;gap:10px}
+.tl-title{font:500 11px/1 var(--font-mono);letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint);flex:0 0 auto}
+.tl-tip{margin-left:auto;font:500 11.5px/1.3 var(--font-mono);color:var(--faint);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-tip.on{color:var(--accent-text);font-weight:600}
+.tl-tip b{color:var(--accent-text);font-weight:600}
+.tl-zoom{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.tl-zoom button{width:22px;height:22px;border-radius:6px;background:var(--surface);
+  color:var(--muted);font:600 13px/1 var(--font-mono);
+  box-shadow:var(--ring);transition:color .16s}
+.tl-zoom button:hover{color:var(--ink)}
+.tl-zoom span{min-width:32px;text-align:center;
+  font:500 11px/1 var(--font-mono);color:var(--faint)}
+
+.tl-grid{display:grid;grid-template-columns:44px minmax(0,1fr);
+  row-gap:5px;align-items:center}
+.tl-label{font:500 11px/1 var(--font-mono);color:var(--faint);letter-spacing:.06em;
+  white-space:nowrap;overflow:hidden}
+.tl-lane{position:relative;height:28px;border-radius:6px;
+  background:color-mix(in srgb,var(--ink) 7%,transparent);
+  overflow:hidden;touch-action:none}
+.tl-clips{position:absolute;inset:0;will-change:transform}
+.tl-cue{position:absolute;top:5px;bottom:5px;min-width:2px;border-radius:3px;
+  background:color-mix(in srgb,var(--ink) 34%,transparent)}
+#tlCurLane .tl-cue{background:color-mix(in srgb,var(--accent-soft) 82%,transparent)}
+.tl-drag{cursor:grab}
+.tl-drag:active,.calib-tl.dragging .tl-drag{cursor:grabbing}
+.calib-tl.dragging #tlCurLane .tl-cue{opacity:.75}
+.tl-play{position:absolute;top:0;bottom:0;width:1px;
+  background:var(--ink);pointer-events:none;z-index:2;
+  box-shadow:0 0 3px rgb(0 0 0/.5)}
+.tl-axis{position:relative;height:13px}
+.tl-tick{position:absolute;top:0;transform:translateX(-50%);
+  font:500 9.5px/1 var(--font-mono);color:var(--faint);white-space:nowrap}
+.tl-empty{position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;font-size:11px;color:var(--faint)}
+
 .calib-row{display:flex;align-items:center;gap:14px}
 .calib-lab{flex:0 0 50px;font:500 11px/1 var(--font-mono);letter-spacing:.13em;
   text-transform:uppercase;color:var(--faint)}
@@ -192,6 +235,28 @@ main{padding:84px var(--g) 48px}
       </button>
 
       <div class="calib-body" id="calibBody" hidden>
+        <div class="calib-tl" id="calibTl">
+          <div class="tl-bar">
+            <span class="tl-title">对齐视图</span>
+            <span class="tl-tip" id="tlTip">拖动下轨对齐</span>
+            <span class="tl-zoom">
+              <button type="button" id="tlZoomOut" aria-label="缩小时间范围">−</button>
+              <span id="tlSpanLabel">40s</span>
+              <button type="button" id="tlZoomIn" aria-label="放大时间范围">+</button>
+            </span>
+          </div>
+          <div class="tl-grid">
+            <span class="tl-label" id="tlRefLabel">基准</span>
+            <div class="tl-lane" id="tlRefLane"><div class="tl-clips" id="tlRefClips"></div></div>
+            <span class="tl-label">当前</span>
+            <div class="tl-lane tl-drag" id="tlCurLane">
+              <div class="tl-clips" id="tlCurClips"></div>
+            </div>
+            <span class="tl-label"></span>
+            <div class="tl-axis" id="tlAxis"></div>
+          </div>
+        </div>
+
         <div class="calib-row" id="calibRefRow">
           <label class="calib-lab" for="calibRef">基准轨</label>
           <select id="calibRef" class="calib-sel"></select>
@@ -802,6 +867,7 @@ async function boot(){
       saveSubState();
       applyOffset(subBase + totalSubOffset());
       syncCalibUI();
+      tlPaint();
     };
 
     // "01:23.45"——精细调整要看毫秒，clock() 只到秒
@@ -824,6 +890,224 @@ async function boot(){
           + String(c.text || '').replace(/\s*\n\s*/g, ' ').slice(0, 80)
         : '这一时刻没有字幕';
     };
+
+    /* ── 对齐视图 ──
+       上下两条轨画同一段时间：上面是基准轨（不动），下面是当前轨（可整体拖）。
+       两块颜色咬在一起就是对上了，比盯数字直观。 */
+    let refTrackURL = '';      // 服务端实际用作基准的字幕 URL
+    let refCues = [];          // 基准轨的 cue 区间（字幕文件里的原始时间）
+    const refCueCache = new Map();
+
+    const tlClock = s => {
+      s = Math.max(0, s || 0);
+      const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+      return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0'))
+        + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+    };
+
+    // 只认时间戳行就够了：内嵌轨抽出来的也是标准 WebVTT
+    const parseVttCues = txt => {
+      const ts = str => {
+        const m = /^(?:(\d+):)?(\d{1,2}):(\d{2}(?:\.\d+)?)$/.exec(String(str).trim().replace(',', '.'));
+        return m ? (+m[1] || 0) * 3600 + +m[2] * 60 + +m[3] : null;
+      };
+      const out = [];
+      for (const line of txt.split('\n')) {
+        const i = line.indexOf('-->');
+        if (i < 0) continue;
+        const a = ts(line.slice(0, i));
+        const b = ts(line.slice(i + 3).trim().split(/\s+/)[0]);
+        if (a != null && b != null) out.push([a, b]);
+      }
+      return out;
+    };
+
+    const tl = {
+      el: document.getElementById('calibTl'),
+      refClips: document.getElementById('tlRefClips'),
+      curClips: document.getElementById('tlCurClips'),
+      refLane: document.getElementById('tlRefLane'),
+      curLane: document.getElementById('tlCurLane'),
+      axis: document.getElementById('tlAxis'),
+      tip: document.getElementById('tlTip'),
+      spanLabel: document.getElementById('tlSpanLabel'),
+      span: 40,          // 窗口时长（秒）
+      center: 0,         // 窗口中心，播放器时间轴上的秒
+      steps: [10, 20, 40, 80, 160],
+    };
+
+    const mkHead = lane => {
+      const el = document.createElement('i');
+      el.className = 'tl-play';
+      lane.appendChild(el);
+      return el;
+    };
+    tl.headRef = mkHead(tl.refLane);
+    tl.headCur = mkHead(tl.curLane);
+
+    const mkCue = (a, b, start, span) => {
+      const el = document.createElement('i');
+      el.className = 'tl-cue';
+      el.style.left = ((a - start) / span * 100) + '%';
+      el.style.width = (Math.max(b - a, 0.08) / span * 100) + '%';
+      return el;
+    };
+    const mkEmpty = txt => {
+      const el = document.createElement('span');
+      el.className = 'tl-empty';
+      el.textContent = txt;
+      return el;
+    };
+
+    // 窗口别越过片头/片尾：片头附近显示 -0:20 这种时刻没有意义
+    const tlStart = () => {
+      const span = tl.span;
+      let start = Math.max(0, tl.center - span / 2);
+      const dur = art && art.video ? art.video.duration : 0;
+      if (dur > 0) start = Math.min(start, Math.max(0, dur - span));
+      return start;
+    };
+
+    const tlPaintAxis = () => {
+      const start = tlStart();
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i <= 4; i++) {
+        const el = document.createElement('span');
+        el.className = 'tl-tick';
+        el.style.left = (i * 25) + '%';
+        el.textContent = tlClock(start + i * tl.span / 4);
+        frag.appendChild(el);
+      }
+      tl.axis.replaceChildren(frag);
+    };
+
+    const tlPaintHead = () => {
+      const p = (art.video.currentTime - tlStart()) / tl.span;
+      const on = p >= 0 && p <= 1;
+      for (const h of [tl.headRef, tl.headCur]) {
+        h.style.display = on ? '' : 'none';
+        if (on) h.style.left = (p * 100) + '%';
+      }
+    };
+
+    const tlPaint = () => {
+      if (calibBody.hidden || !art || !art.video) return;
+      const span = tl.span, start = tlStart();
+
+      // 基准轨固定不动。偏移量只作用于当前轨——两条一起挪就没有「对齐」可言了。
+      const refFrag = document.createDocumentFragment();
+      for (const [a0, b0] of refCues) {
+        const a = a0 + subBase, b = b0 + subBase;
+        if (b < start || a > start + span) continue;
+        refFrag.appendChild(mkCue(a, b, start, span));
+      }
+      tl.refClips.replaceChildren(refFrag.childNodes.length
+        ? refFrag : mkEmpty('这段没有基准字幕'));
+
+      // 当前轨：Artplayer 的 cue 时间已经含 subBase 和全部偏移，直接用
+      let cues = [];
+      try { cues = art.subtitle.cues || []; } catch (e) { cues = []; }
+      const curFrag = document.createDocumentFragment();
+      for (const c of cues) {
+        if (c.endTime < start || c.startTime > start + span) continue;
+        curFrag.appendChild(mkCue(c.startTime, c.endTime, start, span));
+      }
+      tl.curClips.replaceChildren(curFrag.childNodes.length
+        ? curFrag : mkEmpty('这段没有字幕'));
+
+      tlPaintAxis();
+      tlPaintHead();
+    };
+
+    const tlRefresh = async () => {
+      if (calibBody.hidden) return;
+      if (refTrackURL) {
+        if (refCueCache.has(refTrackURL)) {
+          refCues = refCueCache.get(refTrackURL);
+        } else {
+          try {
+            const u = refTrackURL + (refTrackURL.includes('?') ? '&' : '?') + 'fmt=vtt';
+            const txt = await fetch(u).then(r => r.text());
+            refCues = parseVttCues(txt);
+            refCueCache.set(refTrackURL, refCues);
+          } catch (e) { refCues = []; }
+        }
+      } else {
+        refCues = [];
+      }
+      tlPaint();
+    };
+
+    const tlRecenter = () => {
+      if (art && art.video) tl.center = art.video.currentTime;
+    };
+
+    // 拖当前轨 = 整体平移 = 改偏移。拖动过程只挪 DOM（transform），
+    // 松手才真正套上去——applyOffset 要遍历上千条 cue，逐帧算会卡。
+    let tlDrag = null;
+    tl.curLane.addEventListener('pointerdown', ev => {
+      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+      const rect = tl.curLane.getBoundingClientRect();
+      tlDrag = {
+        x0: ev.clientX,
+        w: rect.width || 1,
+        total0: totalOffset(),
+        moved: false,
+        at: tlStart() + (ev.clientX - rect.left) / (rect.width || 1) * tl.span,
+      };
+      tl.el.classList.add('dragging');
+      try { tl.curLane.setPointerCapture(ev.pointerId); } catch (e) {}
+      ev.preventDefault();
+    });
+
+    tl.curLane.addEventListener('pointermove', ev => {
+      if (!tlDrag) return;
+      let dx = ev.clientX - tlDrag.x0;
+      if (!tlDrag.moved && Math.abs(dx) < 3) return;
+      tlDrag.moved = true;
+      const v = tlDrag.total0 + dx / tlDrag.w * tl.span;
+      // 偏移归零就是两条轨咬合（自动估算值本来就是让它们重合的那个量）。
+      // 拖动过程中不做视觉吸附，块突然跳一下反而怪；只在这里给个提示。
+      const snapped = Math.abs(v) < 0.1;
+      tlDrag.last = v;
+      tl.curClips.style.transform = 'translateX(' + dx + 'px)';
+      tl.tip.textContent = snapped ? '已对齐' : (v > 0 ? '+' : '') + v.toFixed(2) + 's';
+      tl.tip.classList.toggle('on', snapped);
+    });
+
+    const tlEndDrag = ev => {
+      if (!tlDrag) return;
+      const d = tlDrag;
+      tlDrag = null;
+      tl.el.classList.remove('dragging');
+      tl.curClips.style.transform = '';
+      try { tl.curLane.releasePointerCapture(ev.pointerId); } catch (e) {}
+      if (d.moved) {
+        let v = d.last != null ? d.last : d.total0 + (ev.clientX - d.x0) / d.w * tl.span;
+        // 松手时贴到零点：手很难刚好停在咬合的那一两个像素上
+        if (Math.abs(v) < 0.1) v = 0;
+        setTotal(v);
+      } else if (d.at >= 0 && d.at <= (art.video.duration || 0)) {
+        // 没拖动就是点击：跳到点到的那个时刻，方便听一句对一下
+        art.video.currentTime = d.at;
+        tlRecenter();
+        tlPaint();
+      }
+      tl.tip.textContent = '拖动下轨对齐';
+      tl.tip.classList.remove('on');
+    };
+    tl.curLane.addEventListener('pointerup', tlEndDrag);
+    tl.curLane.addEventListener('pointercancel', tlEndDrag);
+
+    const tlZoom = dir => {
+      const i = tl.steps.indexOf(tl.span);
+      const ni = Math.min(tl.steps.length - 1, Math.max(0, (i < 0 ? 2 : i) + dir));
+      tl.span = tl.steps[ni];
+      tl.spanLabel.textContent = tl.span + 's';
+      tlPaint();
+    };
+    document.getElementById('tlZoomIn').addEventListener('click', () => tlZoom(-1));
+    document.getElementById('tlZoomOut').addEventListener('click', () => tlZoom(1));
 
     const fillRefOptions = () => {
       calibRefSel.innerHTML = '';
@@ -849,7 +1133,7 @@ async function boot(){
       calibBody.hidden = !open;
       calibEl.toggleAttribute('data-open', open);
       calibHead.setAttribute('aria-expanded', String(open));
-      if (open) { syncCalibUI(); refreshCue(); }
+      if (open) { syncCalibUI(); refreshCue(); tlRecenter(); tlRefresh(); }
     });
 
     calibEl.querySelectorAll('.calib-adj button').forEach(b => {
@@ -888,13 +1172,20 @@ async function boot(){
 
     let cueTick = 0;
     art.on('video:timeupdate', () => {
+      if (calibBody.hidden) return;
       const now = Date.now();
       if (now - cueTick < 200) return;
       cueTick = now;
       refreshCue();
+      if (Math.abs(art.video.currentTime - tl.center) > tl.span * 0.45) {
+        tlRecenter();
+        tlPaint();
+      } else {
+        tlPaintHead();
+      }
     });
-    art.on('video:seeked', refreshCue);
-    art.on('subtitleLoad', refreshCue);
+    art.on('video:seeked', () => { refreshCue(); tlRecenter(); tlPaint(); });
+    art.on('subtitleLoad', () => { refreshCue(); tlPaint(); });
 
 
     // 偏移由服务端按「基准轨」算好（逐条在基准轨里找时间最近的 cue，取差值中位数），
@@ -916,7 +1207,9 @@ async function boot(){
           saveSubState();
         }
         applyOffset(subBase + totalSubOffset());
+        refTrackURL = (j && j.ref) || '';
         syncCalibUI();
+        tlRefresh();
         return j;
       }).catch(()=>{});
     };
@@ -1084,7 +1377,7 @@ window.__litemsAudio = () => ({
     ref: subRef,          // 校准用的基准轨；空 = 自动（内嵌优先）
     auto: autoSubOffset,
     manual: subOffset,
-    total: totalSubOffset(),
+    total: Math.round(totalSubOffset() * 100) / 100,
     offsets: subOffsets,
     calibOpen: !!(document.getElementById('calibBody') && !document.getElementById('calibBody').hidden),
   },
