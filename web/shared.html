@@ -280,6 +280,14 @@ button{font:inherit;color:inherit}
 .btn.quiet:hover{color:var(--ink);text-decoration-color:var(--ink);opacity:1}
 .btn[disabled]{opacity:.4;pointer-events:none}
 
+/* ── 页面顶部的一条细导航 ─────────────────────────────────── */
+.crumb{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:20px 0 2px;font-size:13.5px;color:var(--ink-2);
+}
+.crumb a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:4px}
+@media (min-width:920px){.crumb .set-top{display:none}}
+
 /* ── 详情页 ───────────────────────────────────────────────── */
 .hero-art{
   position:relative;aspect-ratio:21/9;max-height:46vh;overflow:hidden;background:var(--surface-2);

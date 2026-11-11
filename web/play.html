@@ -460,6 +460,28 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     notice.hidden = false;
   }
 
+  // 画面这条路走不通时，给一个明确的出口
+  function offerLive(msg){
+    notice.innerHTML = '';
+    var b = document.createElement('b');
+    b.textContent = msg;
+    notice.appendChild(b);
+    var wrap = document.createElement('div');
+    wrap.className = 'nb';
+    if (LIVE_READY) {
+      var lv = document.createElement('button');
+      lv.type = 'button'; lv.className = 'primary'; lv.textContent = '改用实时转码';
+      lv.addEventListener('click', function(){ switchMode('live'); });
+      wrap.appendChild(lv);
+    }
+    var ig = document.createElement('button');
+    ig.type = 'button'; ig.textContent = '知道了';
+    ig.addEventListener('click', clearNotice);
+    wrap.appendChild(ig);
+    notice.appendChild(wrap);
+    notice.hidden = false;
+  }
+
   function useDirect(at){
     mode = 'direct';
     teardownLive();
@@ -778,9 +800,12 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     if (Date.now() - lastSave > 15000 && !v.paused) save();
   });
   v.addEventListener('error', function(){
-    if (mode === 'direct' && LIVE_READY && !liveFailed && !document.hidden) {
+    if (document.hidden || liveFailed || mode === 'live') return;
+    if (mode === 'direct' && LIVE_READY) {
       toast('这个容器浏览器直接播不了，改用实时转码。');
       switchMode('live');
+    } else if (mode === 'audio') {
+      offerLive('画面这条路解不开，声音还在。');
     }
   });
   v.addEventListener('ended', function(){ save(); });
