@@ -162,50 +162,72 @@ func medianOffset(target, ref []float64) float64 {
 	return math.Round(m*10) / 10
 }
 
-// subOffsetsFor 给条目下每条非参考字幕算一个默认偏移，按 URL 索引。
-// 结果进程内缓存——解字幕文本不贵，但没必要每次播放页都重算。
-func (s *Server) subOffsetsFor(it Item) map[string]float64 {
-	out := map[string]float64{}
-	subs := s.subsFor(it)
-	refIdx := -1
-	for i, d := range subs {
-		if d.Src == "embed" && d.URL != "" {
-			refIdx = i
-			break
-		}
-	}
-	if refIdx < 0 {
+// SubRefPlan 是一次偏移估算的输入与结果，直接当 /api/suboffset 的响应体。
+type SubRefPlan struct {
+	Ref     string             `json:"ref"`            // 实际用作基准的字幕 URL；空表示没找到可用基准
+	Auto    bool               `json:"auto,omitempty"` // 用户指定的基准不可用，已回落成自动挑选
+	Offsets map[string]float64 `json:"offsets"`        // 字幕 URL -> 相对基准的偏移秒数
+}
+
+// pickSubRef 选基准轨下标，第二个返回值表示「用户指定的那条没找到，用了自动」。
+// 没指定时内嵌轨优先：它和视频在同一个容器里、共用一条时间基，对齐最可靠；
+// 没有内嵌轨再用第一条网页能播的字幕。
+func pickSubRef(subs []SubDTO, refURL string) (idx int, fellBack bool) {
+	if refURL != "" {
 		for i, d := range subs {
-			if d.URL != "" {
-				refIdx = i
-				break
+			if d.URL != "" && d.URL == refURL {
+				return i, false
 			}
 		}
 	}
-	if refIdx < 0 {
-		return out
+	for i, d := range subs {
+		if d.Src == "embed" && d.URL != "" {
+			return i, refURL != ""
+		}
 	}
+	for i, d := range subs {
+		if d.URL != "" {
+			return i, refURL != ""
+		}
+	}
+	return -1, refURL != ""
+}
+
+// subOffsetsFor 给条目下每条非基准字幕算一个相对偏移，按 URL 索引。
+// refURL 是用户指定的基准轨；为空或指向一条已不存在的字幕时按内嵌轨自动挑。
+// 结果进程内缓存——解字幕文本不贵，但没必要每次播放页都重算。
+func (s *Server) subOffsetsFor(it Item, refURL string) SubRefPlan {
+	plan := SubRefPlan{Offsets: map[string]float64{}}
+	subs := s.subsFor(it)
+	refIdx, fellBack := pickSubRef(subs, refURL)
+	plan.Auto = fellBack
+	if refIdx < 0 {
+		return plan
+	}
+	plan.Ref = subs[refIdx].URL
 	ref := s.subStarts(it, subs[refIdx])
 	if len(ref) == 0 {
-		return out
+		return plan
 	}
 	for i, d := range subs {
 		if i == refIdx || d.URL == "" {
 			continue
 		}
-		key := it.ID + "|" + d.URL
+		// 缓存键带上基准轨：同一条字幕换个参照物就是另一套数，不能串
+		key := it.ID + "|" + d.URL + "@" + plan.Ref
 		if v, ok := s.subOff.Load(key); ok {
-			out[d.URL] = v.(float64)
+			plan.Offsets[d.URL] = v.(float64)
 			continue
 		}
 		off := medianOffset(s.subStarts(it, d), ref)
 		s.subOff.Store(key, off)
-		out[d.URL] = off
+		plan.Offsets[d.URL] = off
 	}
-	return out
+	return plan
 }
 
-// handleSubOffset 返回每条字幕相对内嵌参考轨估出的默认偏移（秒）。
+// handleSubOffset 返回每条字幕相对基准轨的偏移（秒）。
+// ?ref=<字幕URL> 指定基准轨（校准用）；不带就自动挑内嵌轨。
 // 播放页拿到后先套上，用户再想微调才用滑块，不用从 0 开始试。
 func (s *Server) handleSubOffset(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(r.URL.Path, "/api/suboffset/")
@@ -218,7 +240,7 @@ func (s *Server) handleSubOffset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"offsets": s.subOffsetsFor(*it)})
+	writeJSON(w, http.StatusOK, s.subOffsetsFor(*it, strings.TrimSpace(r.URL.Query().Get("ref"))))
 }
 
 // subExts 允许导入/识别的外挂字幕格式。

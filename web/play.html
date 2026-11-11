@@ -195,14 +195,17 @@ let autoSubOffset = 0;
 let subOffset = 0;
 let subOn = true;
 let curSubIdx = 0;
-let subOffsets = {};   // 服务端估的默认偏移：字幕 URL -> 秒
+let subOffsets = {};   // 服务端估的偏移：字幕 URL -> 秒（相对下面这条基准轨）
+let subRef = '';       // 基准轨 URL：校准时的参照物，空 = 自动（内嵌轨优先）
 const totalSubOffset = () => autoSubOffset + subOffset;
 
 /* 续看恢复：字幕设置按条目存 localStorage。
    字号是跨条目的设备偏好（litems.subtitle.size），这里管的是会随片子变的几项：
-   开关、选中的语言、手动微调偏移。key 里带 ITEM，所以每部片各记各的。
+   开关、选中的语言、手动微调偏移、校准用的基准轨。key 里带 ITEM，所以每部片各记各的。
    选中语言存 URL 而不是下标：字幕列表增删后下标会漂，URL 才是稳定标识。 */
 const SUB_STATE_KEY = 'litems.subtitle.' + ITEM;
+// 手动微调上限（秒）。校准换基准时要把进位折算进滑块，10 秒在偏移大的片源上会被夹掉。
+const SUB_OFF_MAX = 20;
 const fmtSubOffset = v => (v > 0 ? '+' : '') + (Math.round(v * 10) / 10) + 's';
 
 function readSubState(){
@@ -213,7 +216,8 @@ function readSubState(){
     return {
       on: typeof j.on === 'boolean' ? j.on : true,
       url: typeof j.url === 'string' ? j.url : '',
-      offset: Number.isFinite(off) ? Math.min(10, Math.max(-10, off)) : 0,
+      offset: Number.isFinite(off) ? Math.min(SUB_OFF_MAX, Math.max(-SUB_OFF_MAX, off)) : 0,
+      ref: typeof j.ref === 'string' ? j.ref : '',
     };
   } catch (e) { return null; }
 }
@@ -223,9 +227,11 @@ if (savedSub && SUBS.length){
   subOn = savedSub.on;
   const i = SUBS.findIndex(s => s.url === savedSub.url);
   // 存的那个字幕文件没了（重命名/重新刮削）就回落到第一条，偏移也不该沿用——
-  // 它是按旧字幕调出来的，套到新字幕上只会更不准。
+  // 它是按旧字幕调出来的，套到新字幕上只会更不准。基准轨跟着一起丢：
+  // 参照物没了，之前那套偏移就没有意义了。
   curSubIdx = i >= 0 ? i : 0;
   subOffset = i >= 0 ? savedSub.offset : 0;
+  subRef = i >= 0 ? savedSub.ref : '';
 }
 
 function saveSubState(){
@@ -234,6 +240,7 @@ function saveSubState(){
       on: subOn,
       url: (SUBS[curSubIdx] && SUBS[curSubIdx].url) || '',
       offset: subOffset,
+      ref: subRef,
     }));
   } catch (e) {}
 }
@@ -617,8 +624,9 @@ async function boot(){
   if (SUBS.length) {
     art.subtitle.switch(subURL(SUBS[curSubIdx].url), subArgs(SUBS[curSubIdx].label)).catch(()=>{});
 
-    // 换语言会把手动偏移归零，滑块也得跟着回 0，否则显示值和实际值对不上。
-    // 直接改 DOM：设置项带 data-name，Artplayer 内部 option 的拿法各版本不一样。
+    // 换语言 / 换基准轨都会改动滑块背后的值，DOM 得跟着回读，
+    // 否则显示值和实际值对不上。直接改 DOM：设置项带 data-name，
+    // Artplayer 内部 option 的拿法各版本不一样。
     const syncOffsetControl = () => {
       const box = document.querySelector('[data-name="subtitle-offset-custom"]');
       if (!box) return;
@@ -628,18 +636,34 @@ async function boot(){
       if (tip) tip.textContent = fmtSubOffset(subOffset);
     };
 
-    // 默认偏移由服务端算好（内嵌轨当参考，逐条最近邻取中位数）。这里异步取，
-    // 不拖慢首屏；两层偏移是相加关系，手动微调回来之后也照样叠加再套一次。
-    const applyAutoOffset = idx => {
-      const u = SUBS[idx] && SUBS[idx].url;
-      if (!u) return;
-      autoSubOffset = subOffsets[u] || 0;
-      applyOffset(subBase + totalSubOffset());
+    // 偏移由服务端按「基准轨」算好（逐条在基准轨里找时间最近的 cue，取差值中位数），
+    // 异步取，不拖慢首屏。两层偏移是相加关系：autoSubOffset 每条轨各自一份，
+    // subOffset 是滑块的全局微调。
+    const loadOffsets = () => {
+      const q = subRef ? '?ref=' + encodeURIComponent(subRef) : '';
+      return fetch('/api/suboffset/' + ITEM + q).then(r => r.json()).then(j => {
+        subOffsets = (j && j.offsets) || {};
+        // 存的基准轨已经没了（字幕删了/改过名）：服务端回落成自动挑选，本地也跟着清，
+        // 否则每次进来都白请求一次，面板上还挂着一个不存在的名字。
+        if (j && j.auto && subRef) { subRef = ''; saveSubState(); }
+        autoSubOffset = subOffsets[(SUBS[curSubIdx] || {}).url] || 0;
+        applyOffset(subBase + totalSubOffset());
+        return j;
+      }).catch(()=>{});
     };
-    fetch('/api/suboffset/' + ITEM).then(r => r.json()).then(j => {
-      subOffsets = (j && j.offsets) || {};
-      applyAutoOffset(curSubIdx);
-    }).catch(()=>{});
+    loadOffsets();
+
+    // 换基准轨只是换参照物，不该让画面里的字幕当场跳一下。新基准在旧参照系里的
+    // 偏移量折算进滑块（m' = m + a_b），这样每条轨的绝对位置都没变。
+    const setSubRef = url => {
+      if (url === subRef) return;
+      const carry = subOffsets[url] || 0;
+      subRef = url;
+      subOffset = Math.min(SUB_OFF_MAX, Math.max(-SUB_OFF_MAX, Math.round((subOffset + carry) * 10) / 10));
+      syncOffsetControl();
+      saveSubState();
+      loadOffsets();
+    };
 
     art.setting.add({
       html: '字幕',
@@ -663,13 +687,29 @@ async function boot(){
         onSelect(item){
           curSubIdx = SUBS.findIndex(s => s.url === item.url);
           if (curSubIdx < 0) curSubIdx = 0;
-          // 换语言就换一套偏移：每条字幕相对参考轨的偏差不一样
+          // 只换这条轨自己的自动偏移；滑块里的微调是「整体对齐修正」，
+          // 对所有轨都成立，不能跟着换语言清掉。
           autoSubOffset = subOffsets[item.url] || 0;
-          subOffset = 0;
-          syncOffsetControl();
           saveSubState();
           art.subtitle.switch(subURL(item.url), subArgs(item.html)).catch(()=>{});
           return item.html;
+        },
+      });
+
+      // 字幕校准：多轨时挑一条当尺子，其余字幕相对它整体平移。
+      // 内嵌轨通常不用选（它和视频同容器同时间基），这条主要解决
+      // 「两条外挂字幕谁都不准，或者内嵌轨不存在」的情况。
+      const refName = u => (SUBS.find(s => s.url === u) || {}).label || '自动';
+      art.setting.add({
+        html: '字幕校准',
+        name: 'subtitle-calib',
+        width: 240,
+        tooltip: subRef ? refName(subRef) : '自动',
+        selector: [{html: '自动（内嵌优先）', url: '', default: !subRef}]
+          .concat(SUBS.map(s => ({html: s.label, url: s.url, default: s.url === subRef}))),
+        onSelect(item){
+          setSubRef(item.url);
+          return item.url ? refName(item.url) : '自动';
         },
       });
     }
@@ -691,7 +731,7 @@ async function boot(){
       html: '字幕偏移',
       name: 'subtitle-offset-custom',
       tooltip: fmtSubOffset(subOffset),
-      range: [subOffset, -10, 10, 0.1],
+      range: [subOffset, -SUB_OFF_MAX, SUB_OFF_MAX, 0.1],
       onChange(item){
         subOffset = item.range[0];
         saveSubState();                            // 先落盘，别让后面的渲染异常吞掉设置
@@ -775,9 +815,10 @@ window.__litemsAudio = () => ({
     on: subOn,
     idx: curSubIdx,
     url: (SUBS[curSubIdx] && SUBS[curSubIdx].url) || '',
+    ref: subRef,          // 校准用的基准轨；空 = 自动（内嵌优先）
     auto: autoSubOffset,
     manual: subOffset,
-    // 换语言时要能把滑块读数同步归零；这里顺便暴露给诊断面板
+    offsets: subOffsets,
     offsetCtrl: !!document.querySelector('[data-name="subtitle-offset-custom"]'),
   },
 });

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,7 @@ func TestSanitizeSubName(t *testing.T) {
 	}{
 		{"film.srt", "", "film.srt", false},
 		{"film.srt", "chs", "film.chs.srt", false},
-		{"film.chs.srt", "", "film.chs.srt", false},   // 已带语言标记不重复加
+		{"film.chs.srt", "", "film.chs.srt", false},    // 已带语言标记不重复加
 		{"film.chs.srt", "cht", "film.chs.srt", false}, // 文件名优先，尊重已有的
 		{"../evil.srt", "", "evil.srt", false},         // 去掉路径
 		{"a\\b\\c.ass", "", "c.ass", false},
@@ -147,4 +148,94 @@ func atoiOr(t *testing.T, s string) int {
 		n = n*10 + int(r-'0')
 	}
 	return n
+}
+
+// 基准轨挑选：用户指定且可用就照办；指定的失效时回落自动；自动时内嵌轨优先。
+func TestPickSubRef(t *testing.T) {
+	subs := []SubDTO{
+		{Lang: "chs", Src: "sidecar", URL: "/sub/x?sub=0"},
+		{Lang: "eng", Src: "embed", URL: "/sub/x?embed=2"},
+		{Lang: "cht", Src: "sidecar", URL: "/sub/x?sub=1"},
+		{Lang: "jpn", Src: "embed"}, // 图像字幕，没 URL，不能当基准
+	}
+	cases := []struct {
+		name, ref string
+		wantIdx   int
+		wantBack  bool
+	}{
+		{"不指定就用内嵌", "", 1, false},
+		{"指定外挂", "/sub/x?sub=0", 0, false},
+		{"指定内嵌", "/sub/x?embed=2", 1, false},
+		{"指定的字幕没了", "/sub/x?imp=gone.srt", 1, true},
+		{"指向图像字幕也算失效", "/sub/x?embed=9", 1, true},
+	}
+	for _, c := range cases {
+		idx, back := pickSubRef(subs, c.ref)
+		if idx != c.wantIdx || back != c.wantBack {
+			t.Errorf("%s: pickSubRef(%q) = (%d,%v)，想要 (%d,%v)",
+				c.name, c.ref, idx, back, c.wantIdx, c.wantBack)
+		}
+	}
+
+	// 没有内嵌轨时，自动挑第一条网页能播的
+	idx, back := pickSubRef([]SubDTO{subs[0], subs[2]}, "")
+	if idx != 0 || back {
+		t.Errorf("无内嵌轨应挑第一条，got (%d,%v)", idx, back)
+	}
+	if idx, _ := pickSubRef([]SubDTO{subs[3]}, ""); idx != -1 {
+		t.Errorf("全都没 URL 应返回 -1，got %d", idx)
+	}
+}
+
+// 换基准轨后同一条字幕的偏移要换符号：B 比 A 晚 2 秒，
+// 那 B 相对 A 是 +2，A 相对 B 是 -2。
+func TestSubOffsetsWithRef(t *testing.T) {
+	dir := t.TempDir()
+	writeSRT := func(name string, start int) {
+		var b strings.Builder
+		for i := 0; i < 20; i++ { // medianOffset 要求至少 10 条
+			s, e := start+i*30, start+i*30+2
+			fmt.Fprintf(&b, "%d\n%02d:%02d:%02d,000 --> %02d:%02d:%02d,000\nline %d\n\n",
+				i+1, s/3600, s%3600/60, s%60, e/3600, e%3600/60, e%60, i+1)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSRT("a.chs.srt", 0)
+	writeSRT("b.eng.srt", 2)
+
+	s := &Server{roots: []string{dir}, cfg: &Config{}}
+	it := Item{ID: "00000000000000d1", RootIdx: 0, RelPath: "movie.mkv",
+		SubPaths: []SubEntry{{Lang: "chs", Path: "a.chs.srt"}, {Lang: "eng", Path: "b.eng.srt"}}}
+
+	urlA := "/sub/" + it.ID + "?sub=0"
+	urlB := "/sub/" + it.ID + "?sub=1"
+
+	// 没有内嵌轨 → 自动拿第一条（A）当基准，B 晚 2 秒
+	plan := s.subOffsetsFor(it, "")
+	if plan.Ref != urlA || plan.Auto {
+		t.Fatalf("自动基准应为 A，got ref=%q auto=%v", plan.Ref, plan.Auto)
+	}
+	if got := plan.Offsets[urlB]; got != 2 {
+		t.Errorf("B 相对 A 应为 +2，got %v", got)
+	}
+
+	// 用户指定 B 当基准：A 反过来变成 -2，基准轨自己不出现在结果里
+	plan = s.subOffsetsFor(it, urlB)
+	if plan.Ref != urlB {
+		t.Fatalf("基准应变成 B，got %q", plan.Ref)
+	}
+	if got := plan.Offsets[urlA]; got != -2 {
+		t.Errorf("A 相对 B 应为 -2，got %v", got)
+	}
+	if _, ok := plan.Offsets[urlB]; ok {
+		t.Errorf("基准轨自己不该有偏移")
+	}
+
+	// 指定的基准失效：回落自动挑选，并且如实告诉前端（auto=true）
+	plan = s.subOffsetsFor(it, "/sub/"+it.ID+"?imp=gone.srt")
+	if plan.Ref != urlA || !plan.Auto {
+		t.Errorf("失效基准应回落 A 且标 auto，got ref=%q auto=%v", plan.Ref, plan.Auto)
+	}
 }
