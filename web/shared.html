@@ -296,6 +296,7 @@ button{font:inherit;color:inherit}
 .hero{
   position:relative;overflow:hidden;isolation:isolate;
   display:flex;align-items:flex-end;
+  aspect-ratio:16/9;max-height:100svh;
   min-height:clamp(300px,48vh,470px);
   margin:0 calc(-1 * var(--gut)) 0;
   padding:clamp(28px,4.4vw,56px) var(--gut) clamp(24px,3.2vw,40px);
@@ -310,7 +311,7 @@ button{font:inherit;color:inherit}
 .hero::before{
   content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
   background:
-    linear-gradient(to top,#0F1215 0px,rgba(15,18,21,.94) 118px,rgba(15,18,21,.66) 262px,rgba(15,18,21,.14) 396px,rgba(15,18,21,0) 520px),
+    linear-gradient(to top,#0F1215 0px,rgba(15,18,21,.94) 112px,rgba(15,18,21,.62) 236px,rgba(15,18,21,.12) 342px,rgba(15,18,21,0) 432px),
     linear-gradient(96deg,rgba(15,18,21,.80) 0%,rgba(15,18,21,.38) 34%,rgba(15,18,21,.06) 56%,rgba(15,18,21,0) 74%);
 }
 .hero.no-art::before{display:none}
