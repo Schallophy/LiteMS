@@ -4,7 +4,6 @@
 {{template "head" .}}
 {{template "css" .}}
 <style>
-.acts-line{margin:0;font-size:12.5px;color:var(--ink-3);min-height:16px}
 .note{max-width:64ch}
 .upload select{width:auto;max-width:100%}
 </style>
@@ -56,12 +55,6 @@
               {{else}}
               <a class="btn" href="/play/{{.Item.ID}}">播放</a>
               {{end}}
-              <button class="btn ghost" type="button" id="launchBtn">在电脑上播放</button>
-              <button class="btn quiet" type="button" id="cmdBtn">复制播放命令</button>
-            </div>
-            <p class="acts-line" id="actLine"></p>
-            <div id="cmdBox" hidden>
-              <pre class="probe" id="cmdText" style="white-space:pre-wrap"></pre>
             </div>
 
             {{if and (gt .Item.PositionMS 0) (not .Item.Finished)}}
@@ -154,57 +147,6 @@
 <script>
 (function(){
   var ITEM = "{{.Item.ID}}";
-  var PORT = "{{.HelperPort}}";
-  var TOKEN = "{{.HelperToken}}";
-  var START = Math.floor({{if gt .Item.PositionMS 0}}{{.Item.PositionMS}}{{else}}0{{end}} / 1000);
-  var line = document.getElementById('actLine');
-
-  function say(t){ if (line) line.textContent = t || ''; }
-
-  // 在电脑上播放：POST 到本机 helper（Termux 同机或局域网内开着 helper 的机器）
-  var lb = document.getElementById('launchBtn');
-  if (lb) lb.addEventListener('click', function(){
-    if (!TOKEN) { say('配置里没设 [launch].token，helper 没启用。'); return; }
-    say('正在唤起本机播放器…');
-    lb.disabled = true;
-    fetch('http://localhost:' + PORT + '/play', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({id: ITEM, start: START, token: TOKEN, lang: ''})
-    }).then(function(r){
-      if (r.status === 204) { say('已经在电脑上打开播放器。'); return; }
-      return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
-    }).catch(function(e){
-      say('没连上本机播放器（helper 未运行？）。可以改用「复制播放命令」。');
-      console.warn(e);
-    }).then(function(){ lb.disabled = false; });
-  });
-
-  // 复制播放命令：http 页面没有 clipboard API，退回到选中复制
-  var cb = document.getElementById('cmdBtn');
-  if (cb) cb.addEventListener('click', function(){
-    say('正在取命令…');
-    fetch('/api/cmd/' + ITEM).then(function(r){ return r.json(); }).then(function(d){
-      var cmd = d.command || '';
-      var box = document.getElementById('cmdBox');
-      var pre = document.getElementById('cmdText');
-      pre.textContent = cmd;
-      box.hidden = false;
-      var ok = false;
-      try {
-        var ta = document.createElement('textarea');
-        ta.value = cmd;
-        ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        ok = document.execCommand('copy');
-        document.body.removeChild(ta);
-      } catch (e) { ok = false; }
-      say(ok ? '命令已复制。' : '命令已展开，手动复制即可。');
-      if (d.has_auth) say(say.textContent + ' 注意：URL 里带了账号密码。');
-    }).catch(function(){ say('取命令失败。'); });
-  });
-
   // 字幕：上传 / 删除，都以后端返回的清单为准重画
   function tagText(s){ return s === 'embed' ? '内嵌' : (s === 'imported' ? '导入' : '外挂'); }
 

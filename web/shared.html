@@ -352,62 +352,30 @@ button{font:inherit;color:inherit}
 .hero-poster img{width:100%;height:100%;object-fit:cover;display:block}
 .hero-text{min-width:0;max-width:min(48ch,620px)}
 .hero.no-art .hero-text{max-width:62ch}
-/* 只有真铺了照片（≥920px，文字压在图上），才切成「图上的浅色字」那一套。
-   窄屏剧照单独成条、文字回到主题色，所以这些规则只管桌面 */
+/* 只有真铺了照片（≥920px，文字压在图上），才切成「图上的浅色字」那一套 */
 @media (min-width:920px){
   .hero:not(.no-art) .hero-text{color:#EDEAE3}
   .hero:not(.no-art) .hero-text h1{color:#EDEAE3;text-shadow:0 1px 18px rgba(0,0,0,.55)}
   .hero:not(.no-art) .orig,
   .hero:not(.no-art) .facts,
-  .hero:not(.no-art) .tagline,
-  .hero:not(.no-art) .acts-line{text-shadow:0 1px 6px rgba(0,0,0,.55)}
+  .hero:not(.no-art) .tagline{text-shadow:0 1px 6px rgba(0,0,0,.55)}
   .hero:not(.no-art) .orig{color:rgba(237,234,227,.62)}
   .hero:not(.no-art) .facts{color:rgba(237,234,227,.76)}
   .hero:not(.no-art) .facts .rating{color:#EDEAE3}
   .hero:not(.no-art) .facts .v{color:rgba(237,234,227,.52)}
   .hero:not(.no-art) .tagline{color:rgba(237,234,227,.82)}
-  .hero:not(.no-art) .acts-line{color:rgba(237,234,227,.52)}
   .hero:not(.no-art) .hero-bar{background:rgba(237,234,227,.18)}
-  .hero:not(.no-art) .btn.ghost{
-    background:rgba(15,18,21,.42);border-color:rgba(237,234,227,.26);color:#EDEAE3;
-  }
-  .hero:not(.no-art) .btn.ghost:hover{background:rgba(15,18,21,.62);border-color:rgba(237,234,227,.72);opacity:1}
   .hero:not(.no-art) .btn.quiet{color:rgba(237,234,227,.74);text-decoration-color:rgba(237,234,227,.28)}
   .hero:not(.no-art) .btn.quiet:hover{color:#EDEAE3;text-decoration-color:#EDEAE3}
 }
 /* 窄屏：剧照单独成一条，全宽按 16:9 出，整张都在；文字回到页面底色上 */
 @media (max-width:919px){
-  .hero{display:block;min-height:0;padding:0}
+  .hero{display:block;aspect-ratio:auto;height:auto;min-height:0;padding:0}
   .hero::before{display:none}
   .hero-bg{position:static;z-index:auto;aspect-ratio:16/9;overflow:hidden}
   .hero-bg img{filter:none}
   .hero-inner{padding:16px var(--gut) 0;align-items:start}
   .hero-poster{outline-color:var(--line)}
-}
-.hero-text h1{color:#EDEAE3;text-shadow:0 1px 18px rgba(0,0,0,.55)}
-.hero:not(.no-art) .orig,
-.hero:not(.no-art) .facts,
-.hero:not(.no-art) .tagline,
-.hero:not(.no-art) .acts-line{text-shadow:0 1px 6px rgba(0,0,0,.55)}
-.hero:not(.no-art) .orig{color:rgba(237,234,227,.62)}
-.hero:not(.no-art) .facts{color:rgba(237,234,227,.76)}
-.hero:not(.no-art) .facts .rating{color:#EDEAE3}
-.hero:not(.no-art) .facts .v{color:rgba(237,234,227,.52)}
-.hero:not(.no-art) .tagline{color:rgba(237,234,227,.82)}
-.hero:not(.no-art) .acts-line{color:rgba(237,234,227,.52)}
-.hero:not(.no-art) .hero-bar{background:rgba(237,234,227,.18)}
-.hero:not(.no-art) .btn.ghost{
-  background:rgba(15,18,21,.42);border-color:rgba(237,234,227,.26);color:#EDEAE3;
-}
-.hero:not(.no-art) .btn.ghost:hover{background:rgba(15,18,21,.62);border-color:rgba(237,234,227,.72);opacity:1}
-.hero:not(.no-art) .btn.quiet{color:rgba(237,234,227,.74);text-decoration-color:rgba(237,234,227,.28)}
-.hero:not(.no-art) .btn.quiet:hover{color:#EDEAE3;text-decoration-color:#EDEAE3}
-@media (max-width:919px){
-  .hero{min-height:0}
-  .hero::before{
-    background:linear-gradient(to top,#0F1215 0%,rgba(15,18,21,.94) 30%,rgba(15,18,21,.80) 54%,rgba(15,18,21,.56) 78%,rgba(15,18,21,.44) 100%);
-  }
-  .hero-inner{align-items:start}
 }
 .hero-text h1{
   margin:0;font-family:var(--serif);font-weight:400;
