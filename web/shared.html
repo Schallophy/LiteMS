@@ -22,8 +22,6 @@
   --serif:"Songti SC","Noto Serif SC","Source Han Serif SC","Source Han Serif CN","SimSun",Georgia,serif;
   --sans:system-ui,-apple-system,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Noto Sans SC","Segoe UI",sans-serif;
   --gut:clamp(18px,4vw,48px);
-  /* 详情页条带按 16:9 铺满窗口宽，比视口高出的部分 = 卡片要抬升的量 */
-  --lift:max(0px, calc(100vw / 1.778 - 100svh));
   --ease:cubic-bezier(.22,.61,.36,1);
 }
 
@@ -318,14 +316,13 @@ button{font:inherit;color:inherit}
 .hero{
   position:relative;overflow:hidden;isolation:isolate;
   display:flex;align-items:flex-end;
-  aspect-ratio:16/9;
-  min-height:clamp(300px,48vh,470px);
+  height:min(calc(100vw / 1.778), 100svh);
   margin:0 calc(-1 * var(--gut)) 0;
-  padding:clamp(28px,4.4vw,56px) var(--gut) calc(clamp(24px,3.2vw,40px) + var(--lift));
+  padding:clamp(28px,4.4vw,56px) var(--gut) clamp(24px,3.2vw,40px);
 }
 .hero-bg{position:absolute;inset:0;z-index:-2}
 .hero-bg img{
-  width:100%;height:100%;object-fit:cover;object-position:center 22%;
+  width:100%;height:100%;object-fit:cover;object-position:center top;
   display:block;filter:brightness(.84) saturate(.97);
 }
 /* 照片里没有「浅色模式」：这块的遮罩和文字一律按暗底处理，不跟主题走。
@@ -333,7 +330,7 @@ button{font:inherit;color:inherit}
 .hero::before{
   content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
   background:
-    linear-gradient(to top,#0F1215 var(--lift),rgba(15,18,21,.94) calc(112px + var(--lift)),rgba(15,18,21,.62) calc(236px + var(--lift)),rgba(15,18,21,.12) calc(342px + var(--lift)),rgba(15,18,21,0) calc(432px + var(--lift))),
+    linear-gradient(to top,#0F1215 0px,rgba(15,18,21,.94) 112px,rgba(15,18,21,.62) 236px,rgba(15,18,21,.12) 342px,rgba(15,18,21,0) 432px),
     linear-gradient(96deg,rgba(15,18,21,.80) 0%,rgba(15,18,21,.38) 34%,rgba(15,18,21,.06) 56%,rgba(15,18,21,0) 74%);
 }
 .hero.no-art::before{display:none}
@@ -399,7 +396,7 @@ button{font:inherit;color:inherit}
 
 .detail-body{
   display:grid;grid-template-columns:1fr;gap:clamp(28px,4vw,56px);
-  margin:clamp(30px,4vw,52px) 0 clamp(40px,6vw,80px);
+  margin:clamp(18px,2.2vw,28px) 0 clamp(40px,6vw,80px);
 }
 @media (min-width:900px){
   .detail-body{grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)}
