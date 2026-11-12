@@ -7,17 +7,17 @@
 <body>
 <div class="shell">
   <aside class="rail">
-    <div class="rail-top">
+    <a class="rail-top" href="/" title="回到片库">
       <span class="mark" aria-hidden="true"></span>
       <span class="wordmark">{{.Title}}</span>
-    </div>
+    </a>
     <a class="rail-set" href="/settings" aria-current="page">设置</a>
   </aside>
 
   <main class="main">
-    <nav class="crumb">
-      <a href="/">← 片库</a>
-    </nav>
+    <div class="mbar">
+      <a class="brand" href="/" title="回到片库"><i aria-hidden="true"></i>{{.Title}}</a>
+    </div>
 
     <header class="set-head">
       <h1>设置</h1>

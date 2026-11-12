@@ -88,6 +88,7 @@ button{font:inherit;color:inherit}
     color:var(--ink-3);padding:8px 0;
   }
   .rail-set:hover{color:var(--ink)}
+.rail-top:hover .wordmark,.rail-top:focus-visible .wordmark{color:var(--ink)}
   .main{margin:0;max-width:none}
 }
 
@@ -280,13 +281,14 @@ button{font:inherit;color:inherit}
 .btn.quiet:hover{color:var(--ink);text-decoration-color:var(--ink);opacity:1}
 .btn[disabled]{opacity:.4;pointer-events:none}
 
-/* ── 页面顶部的一条细导航 ─────────────────────────────────── */
-.crumb{
-  display:flex;align-items:center;justify-content:space-between;gap:16px;
-  padding:20px 0 2px;font-size:13.5px;color:var(--ink-2);
+/* ── 移动端的「字标 + 设置」小条（桌面用导轨） ──────────────── */
+.mbar{display:none}
+@media (max-width:919px){
+  .mbar{display:flex;align-items:center;gap:14px;padding:14px 0 6px}
+  .mbar .brand{order:0;flex:1 1 auto;align-items:center}
+  .mbar .mset{order:0;font-size:13px;color:var(--ink-3);padding:4px 0}
+  .mbar .mset:hover{color:var(--ink)}
 }
-.crumb a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:4px}
-@media (min-width:920px){.crumb .set-top{display:none}}
 
 /* ── 详情页 ───────────────────────────────────────────────── */
 /* 详情页：剧照当背景铺满一条，文字落在图里（不是图下面）。
@@ -295,7 +297,7 @@ button{font:inherit;color:inherit}
   position:relative;overflow:hidden;isolation:isolate;
   display:flex;align-items:flex-end;
   min-height:clamp(300px,48vh,470px);
-  margin:clamp(10px,1.6vw,18px) calc(-1 * var(--gut)) 0;
+  margin:0 calc(-1 * var(--gut)) 0;
   padding:clamp(28px,4.4vw,56px) var(--gut) clamp(24px,3.2vw,40px);
 }
 .hero-bg{position:absolute;inset:0;z-index:-2}
@@ -429,7 +431,7 @@ button{font:inherit;color:inherit}
 .note.warn{border-left-color:var(--burn)}
 
 /* ── 设置页 ───────────────────────────────────────────────── */
-.set-head{margin:clamp(24px,3vw,34px) 0 22px}
+.set-head{margin:clamp(28px,3.4vw,46px) 0 22px}
 .set-head h1{margin:0;font-family:var(--serif);font-weight:400;font-size:clamp(26px,3.4vw,34px)}
 .set-head p{margin:10px 0 0;font-size:13.5px;color:var(--ink-2);max-width:62ch}
 .set-form{max-width:820px}
