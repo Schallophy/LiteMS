@@ -22,6 +22,8 @@
   --serif:"Songti SC","Noto Serif SC","Source Han Serif SC","Source Han Serif CN","SimSun",Georgia,serif;
   --sans:system-ui,-apple-system,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Noto Sans SC","Segoe UI",sans-serif;
   --gut:clamp(18px,4vw,48px);
+  /* 详情页条带按 16:9 铺满窗口宽，比视口高出的部分 = 卡片要抬升的量 */
+  --lift:max(0px, calc(100vw / 1.778 - 100svh));
   --ease:cubic-bezier(.22,.61,.36,1);
 }
 
@@ -319,7 +321,7 @@ button{font:inherit;color:inherit}
   aspect-ratio:16/9;
   min-height:clamp(300px,48vh,470px);
   margin:0 calc(-1 * var(--gut)) 0;
-  padding:clamp(28px,4.4vw,56px) var(--gut) clamp(24px,3.2vw,40px);
+  padding:clamp(28px,4.4vw,56px) var(--gut) calc(clamp(24px,3.2vw,40px) + var(--lift));
 }
 .hero-bg{position:absolute;inset:0;z-index:-2}
 .hero-bg img{
@@ -331,7 +333,7 @@ button{font:inherit;color:inherit}
 .hero::before{
   content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;
   background:
-    linear-gradient(to top,#0F1215 0px,rgba(15,18,21,.94) 112px,rgba(15,18,21,.62) 236px,rgba(15,18,21,.12) 342px,rgba(15,18,21,0) 432px),
+    linear-gradient(to top,#0F1215 var(--lift),rgba(15,18,21,.94) calc(112px + var(--lift)),rgba(15,18,21,.62) calc(236px + var(--lift)),rgba(15,18,21,.12) calc(342px + var(--lift)),rgba(15,18,21,0) calc(432px + var(--lift))),
     linear-gradient(96deg,rgba(15,18,21,.80) 0%,rgba(15,18,21,.38) 34%,rgba(15,18,21,.06) 56%,rgba(15,18,21,0) 74%);
 }
 .hero.no-art::before{display:none}
