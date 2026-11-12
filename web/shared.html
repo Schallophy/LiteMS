@@ -77,6 +77,8 @@ button{font:inherit;color:inherit}
     position:sticky;top:0;height:100vh;height:100svh;padding:26px 0 22px;
     border-right:1px solid var(--line);
   }
+  /* 详情页剧照要从窗口最左沿铺起，导轨叠在图上（见 .shell.has-hero） */
+  .rail{z-index:2}
   .rail-top{display:flex;flex-direction:column;align-items:center;gap:20px;min-height:0}
   .mark{width:5px;height:5px;background:var(--burn);flex:none}
   .wordmark{
@@ -280,6 +282,24 @@ button{font:inherit;color:inherit}
 }
 .btn.quiet:hover{color:var(--ink);text-decoration-color:var(--ink);opacity:1}
 .btn[disabled]{opacity:.4;pointer-events:none}
+
+/* 详情页：剧照从窗口最左沿铺起，导轨叠在图上。
+   导轨垫一层暗底（两套主题都是浅字），跟剧照的暗底是一体的 */
+@media (min-width:920px){
+  .shell.has-hero .hero{
+    margin-left:calc(-1 * (var(--gut) + 88px));
+    padding-left:calc(var(--gut) + 88px);
+  }
+  .shell.has-hero .rail{
+    background:rgba(15,18,21,.9);
+    border-right-color:rgba(15,18,21,.9);
+  }
+  .shell.has-hero .rail .wordmark{color:rgba(237,234,227,.72)}
+  .shell.has-hero .rail .rail-set{color:rgba(237,234,227,.5)}
+  .shell.has-hero .rail-top:hover .wordmark,
+  .shell.has-hero .rail-top:focus-visible .wordmark{color:#EDEAE3}
+  .shell.has-hero .rail .rail-set:hover{color:#EDEAE3}
+}
 
 /* ── 移动端的「字标 + 设置」小条（桌面用导轨） ──────────────── */
 .mbar{display:none}
