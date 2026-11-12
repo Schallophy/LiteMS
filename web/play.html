@@ -494,7 +494,8 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     v.play().catch(function(){ syncPlayIcon(); });
   }
 
-  function useAudio(at){
+  function useAudio(at, autoplay){
+    autoplay = autoplay !== false;
     mode = 'audio';
     teardownLive();
     v.muted = true;
@@ -511,10 +512,14 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     v.addEventListener('loadedmetadata', seekBoth);
     if (v.readyState >= 1) seekBoth();
     setBadges(); clearNotice();
-    Promise.all([
-      v.play().catch(function(){}),
-      a.play().catch(function(){ toast('音轨还没准备好，稍等一下。'); })
-    ]);
+    if (autoplay) {
+      Promise.all([
+        v.play().catch(function(){}),
+        a.play().catch(function(){ toast('音轨还没准备好，稍等一下。'); })
+      ]);
+    } else {
+      syncPlayIcon();
+    }
   }
 
   function switchMode(next, at){
@@ -939,24 +944,30 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     requestAnimationFrame(loop);
   })();
 
-  /* ── 开播 ───────────────────────────────────────────────────── */
+  /* ── 开播：先停在第一帧，等用户点播放 ───────────────────────── */
   var start = startAt();
   if (start < 5) start = 0;
   // 上次看到片尾：当成看完，从头开始，别让播放器一开就报结束
   if (DUR0 > 0 && start * 1000 > DUR0 * 0.97) start = 0;
-  if (AUDIO_READY) useAudio(start);
-  else {
+
+  // 元数据就绪后再把进度定到起点，否则早期设 currentTime 会被重置
+  function seekToStartOnce(){
+    try { v.currentTime = start; } catch (e) {}
+    v.removeEventListener('loadedmetadata', seekToStartOnce);
+    paint();
+  }
+
+  if (AUDIO_READY) {
+    useAudio(start, false);
+  } else {
     mode = 'direct';
     v.src = '/stream/' + ID;
-    try { v.currentTime = start; } catch (e) {}
+    if (v.readyState >= 1) seekToStartOnce();
+    else v.addEventListener('loadedmetadata', seekToStartOnce);
     setBadges();
     showAudioNotice();
-    v.play().catch(function(){
-      // 浏览器不允许自动出声：停在第一帧，等用户点
-      syncPlayIcon();
-      paint();
-    });
   }
+  syncPlayIcon();
   volApply();
   paint();
   wake();
