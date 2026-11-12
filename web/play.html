@@ -102,9 +102,9 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 .vol{display:flex;align-items:center;gap:6px}
 .vol input[type=range]{
   -webkit-appearance:none;appearance:none;width:0;height:18px;background:none;
-  transition:width .2s var(--ease);cursor:pointer;
+  opacity:0;transition:width .2s var(--ease),opacity .2s var(--ease);cursor:pointer;
 }
-.vol:hover input[type=range],.vol input[type=range]:focus{width:78px}
+.vol:hover input[type=range],.vol input[type=range]:focus{width:78px;opacity:1}
 .vol input[type=range]::-webkit-slider-runnable-track{height:3px;background:rgba(255,255,255,.28)}
 .vol input[type=range]::-webkit-slider-thumb{
   -webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;margin-top:-3px
@@ -378,8 +378,8 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   var ICON = {
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="3.4" height="14"/><rect x="13.6" y="5" width="3.4" height="14"/></svg>',
-    vol: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 9.5h3.2L12 6v12L7.2 14.5H4z"/><path d="M15.5 9a4 4 0 010 6"/></svg>',
-    mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 9.5h3.2L12 6v12L7.2 14.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>'
+    vol: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.8 9.2h3.4L12.4 5v14L7.2 14.8H3.8z"/><path d="M15.6 9.3a4 4 0 010 5.4"/><path d="M18.1 7.2a7.4 7.4 0 010 9.6"/></svg>',
+    mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.8 9.2h3.4L12.4 5v14L7.2 14.8H3.8z"/><path d="M15.6 9.6l5 5M20.6 9.6l-5 5"/></svg>'
   };
 
   function toast(t, ms){
@@ -957,6 +957,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
       paint();
     });
   }
+  volApply();
   paint();
   wake();
 })();

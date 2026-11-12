@@ -44,7 +44,7 @@
 
           <div class="hero-text">
             <h1>{{.Item.Title}}</h1>
-            {{if .Item.OriginalTitle}}<p class="orig">{{.Item.OriginalTitle}}</p>{{end}}
+            {{if and .Item.OriginalTitle (ne .Item.OriginalTitle .Item.Title)}}<p class="orig">{{.Item.OriginalTitle}}</p>{{end}}
 
             <ul class="facts">
               {{if .Item.Year}}<li>{{.Item.Year}}</li>{{end}}
