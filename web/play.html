@@ -25,7 +25,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 }
 .cue span{
   display:inline-block;color:#fff;
-  font-size:clamp(15px,2.1vw,25px);line-height:1.5;
+  font-size:var(--cue-size,clamp(15px,2.1vw,25px));line-height:1.5;
   padding:.1em .5em;white-space:pre-line;text-wrap:balance;
   max-width:min(92vw,44em);
   text-shadow:0 1px 2px rgba(0,0,0,.95),0 0 1px rgba(0,0,0,.95),0 0 5px rgba(0,0,0,.85);
@@ -178,6 +178,19 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   -webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--ink);margin-top:-5.5px
 }
 .offrange::-moz-range-track{height:2px;background:var(--line)}
+.sizerow{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.sizerow input[type=number]{
+  width:72px;background:var(--surface);border:1px solid var(--line);color:var(--ink);
+  padding:7px 9px;font:400 13px var(--sans);border-radius:1px;font-variant-numeric:tabular-nums
+}
+.sizerow > span{font-size:12.5px;color:var(--ink-3)}
+.sizerow .sz-auto{
+  margin-left:auto;
+  border:1px solid var(--line);background:none;color:var(--ink-2);
+  padding:7px 11px;border-radius:1px;cursor:pointer;font:400 12.5px var(--sans)
+}
+.sizerow .sz-auto:hover{color:var(--ink);border-color:var(--ink)}
+.sizerow .sz-auto[aria-pressed=true]{background:var(--ink);color:#0A0C0E;border-color:var(--ink)}
 .nudge{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .nudge button{
   border:1px solid var(--line);background:none;color:var(--ink-2);
@@ -299,6 +312,17 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
         {{end}}
       </ul>
       <p class="dhint" id="subState">还没选字幕。点一条开始，会先按内嵌轨自动对齐。</p>
+    </div>
+
+    <div class="dsec">
+      <h3>字幕大小</h3>
+      <div class="sizerow">
+        <input type="number" id="sizeNum" min="12" max="44" step="1" value="20" aria-label="字幕大小（像素）">
+        <span>px</span>
+        <button class="sz-auto" type="button" id="sizeAuto" aria-pressed="true">自适应</button>
+      </div>
+      <input class="offrange" type="range" id="sizeRange" min="12" max="44" step="1" value="20" aria-label="字幕大小">
+      <p class="dhint" id="sizeState">跟随窗口宽度自动缩放。拖动或改数字可固定字号，下次打开沿用。</p>
     </div>
 
     <div class="dsec" id="offSec" hidden>
@@ -798,6 +822,45 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
       if (!silent) toast('已套用自动偏移 ' + (val > 0 ? '+' : '') + val.toFixed(2) + ' 秒');
     });
   }
+
+  /* ── 字幕大小：固定 px 或跟随窗口，选值存 localStorage ───────── */
+  var SIZE_KEY = 'litems.subtitle.size';
+  var sizeRange = document.getElementById('sizeRange');
+  var sizeNum = document.getElementById('sizeNum');
+  var sizeAuto = document.getElementById('sizeAuto');
+  var sizeState = document.getElementById('sizeState');
+
+  function applySubSize(px, persist){
+    if (px === null) {
+      cueBox.style.removeProperty('--cue-size');
+      sizeAuto.setAttribute('aria-pressed', 'true');
+      sizeState.textContent = '跟随窗口宽度自动缩放。拖动或改数字可固定字号，下次打开沿用。';
+      if (persist) { try { localStorage.removeItem(SIZE_KEY); } catch (e) {} }
+      return;
+    }
+    px = Math.max(12, Math.min(44, Math.round(px)));
+    cueBox.style.setProperty('--cue-size', px + 'px');
+    sizeRange.value = px;
+    sizeNum.value = px;
+    sizeAuto.setAttribute('aria-pressed', 'false');
+    sizeState.textContent = '固定 ' + px + 'px，其它影片也用这个字号。';
+    if (persist) { try { localStorage.setItem(SIZE_KEY, String(px)); } catch (e) {} }
+  }
+
+  sizeRange.addEventListener('input', function(){ applySubSize(+sizeRange.value, true); });
+  sizeNum.addEventListener('change', function(){
+    var n = parseInt(sizeNum.value, 10);
+    if (!isFinite(n)) { sizeNum.value = sizeRange.value; return; }
+    applySubSize(n, true);
+  });
+  sizeAuto.addEventListener('click', function(){ applySubSize(null, true); });
+
+  (function initSubSize(){
+    var saved = null;
+    try { saved = localStorage.getItem(SIZE_KEY); } catch (e) {}
+    var n = parseInt(saved, 10);
+    if (isFinite(n) && n >= 12 && n <= 44) applySubSize(n, false);
+  })();
 
   /* ── 进度回写 ───────────────────────────────────────────────── */
   function save(beacon){
