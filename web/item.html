@@ -27,7 +27,10 @@
 
     <article>
       <section class="hero{{if not .Item.Fanart}} no-art{{end}}">
-        <div class="hero-card">
+        {{if .Item.Fanart}}
+        <div class="hero-bg" aria-hidden="true"><img src="{{.Item.Fanart}}" alt="" decoding="async"></div>
+        {{end}}
+        <div class="hero-inner">
           <div class="hero-poster">
             {{if .Item.Poster}}<img src="{{.Item.Poster}}" alt="{{.Item.Title}} 的海报">{{else}}<span class="ph">{{initial .Item.Title}}</span>{{end}}
           </div>
@@ -40,7 +43,7 @@
               {{if .Item.Year}}<li>{{.Item.Year}}</li>{{end}}
               {{if eq .Item.Kind "episode"}}<li>S{{printf "%02d" .Item.Season}}E{{printf "%02d" .Item.Episode}}</li>{{end}}
               {{if .Item.RuntimeMin}}<li>{{.Item.RuntimeMin}} 分钟</li>{{end}}
-              {{with .Detail}}{{if $.Item.Rating}}<li class="rating"><b>{{printf "%.1f" $.Item.Rating}}</b>&nbsp;{{.RatingSrc}}{{if .Votes}}<span style="color:var(--ink-3)">&nbsp;{{.Votes}} 人</span>{{end}}</li>{{end}}{{end}}
+              {{with .Detail}}{{if $.Item.Rating}}<li class="rating"><b>{{printf "%.1f" $.Item.Rating}}</b>&nbsp;{{.RatingSrc}}{{if .Votes}}<span class="v">&nbsp;{{.Votes}} 人</span>{{end}}</li>{{end}}{{end}}
               {{if not .Detail}}{{if .Item.Rating}}<li class="rating"><b>{{printf "%.1f" .Item.Rating}}</b></li>{{end}}{{end}}
             </ul>
 
@@ -73,12 +76,6 @@
             {{end}}
           </div>
         </div>
-
-        {{if .Item.Fanart}}
-        <figure class="hero-still">
-          <img src="{{.Item.Fanart}}" alt="{{.Item.Title}} 的剧照" decoding="async">
-        </figure>
-        {{end}}
       </section>
 
       <div class="detail-body">
