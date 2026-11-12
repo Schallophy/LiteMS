@@ -414,6 +414,15 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   var offCache = null;
   var liveFailed = false;   // 实时转码失败过就别再自动重试，免得死循环
 
+  // 播放器偏好：按条目存完整快照，另存一份全局兜底给没看过的片
+  var PREF_KEY = 'litems.player.' + ID;
+  var LAST_KEY = 'litems.player.last';
+  var restoring = false;      // 恢复期间禁止回写，免得把默认值盖掉存档
+  var userMuted = false;      // 独立于音量值的静音状态
+  var pendingLive = false;    // 上次用实时转码：等用户点播放再起，别一进页面空转 ffmpeg
+  var pendingLiveAt = 0;
+  var prefsTimer = null;
+
   var ICON = {
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="3.4" height="14"/><rect x="13.6" y="5" width="3.4" height="14"/></svg>',
@@ -467,6 +476,72 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     return POS0 / 1000;
   }
 
+  /* ── 播放器偏好：续播时整份恢复 ───────────────────────────────
+     按条目存完整快照；全局只留音量 / 静音 / 字号这类跨片习惯，
+     字幕轨和偏移是每条片子自己的，不串到别的片。 */
+  function currentPrefs(){
+    var c = document.querySelector('#subOpts input[name=sub]:checked');
+    return {
+      vol: +volEl.value,
+      muted: userMuted,
+      mode: mode,
+      sub: c ? c.value : '',
+      subLast: ccBtn.dataset.last || '',
+      off: off,
+      size: curSize
+    };
+  }
+
+  function savePrefs(){
+    if (restoring) return;
+    clearTimeout(prefsTimer);
+    prefsTimer = setTimeout(function(){
+      var p = currentPrefs();
+      try {
+        localStorage.setItem(PREF_KEY, JSON.stringify(p));
+        localStorage.setItem(LAST_KEY, JSON.stringify({vol: p.vol, muted: p.muted, size: p.size}));
+      } catch (e) {}
+    }, 200);
+  }
+
+  function loadPrefs(){
+    var g = null, own = null, hasSize = false;
+    try {
+      g = JSON.parse(localStorage.getItem(LAST_KEY) || 'null');
+      own = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
+    } catch (e) {}
+    var p = {vol: 100, muted: false, mode: 'direct', sub: '', subLast: '', off: 0, size: null};
+    if (g && typeof g === 'object') {
+      if (typeof g.vol === 'number') p.vol = g.vol;
+      if (typeof g.muted === 'boolean') p.muted = g.muted;
+      if (g.size === null || typeof g.size === 'number') { p.size = g.size; hasSize = true; }
+    }
+    if (own && typeof own === 'object') {
+      if (typeof own.vol === 'number') p.vol = own.vol;
+      if (typeof own.muted === 'boolean') p.muted = own.muted;
+      if (typeof own.mode === 'string') p.mode = own.mode;
+      if (typeof own.sub === 'string') p.sub = own.sub;
+      if (typeof own.subLast === 'string') p.subLast = own.subLast;
+      if (typeof own.off === 'number') p.off = own.off;
+      if (own.size === null || typeof own.size === 'number') { p.size = own.size; hasSize = true; }
+    }
+    // 兼容旧版只存了字幕大小的浏览器
+    if (!hasSize) {
+      try {
+        var s = localStorage.getItem(SIZE_KEY);
+        var n = parseInt(s, 10);
+        p.size = (s && isFinite(n)) ? n : null;
+      } catch (e) {}
+    }
+    // 全局兜底只沿用音量/静音/字号这类跨片习惯；
+    // 声音模式、字幕轨、偏移只有这条片子自己的存档说了算。
+    // 没有本片存档（或旧存档没写 mode）时保留原逻辑：有 AAC 音轨就默认走它，
+    // 否则原生直连可能解不出声音。
+    var hasMode = own && typeof own.mode === 'string';
+    if (!hasMode) p.mode = AUDIO_READY ? 'audio' : 'direct';
+    return p;
+  }
+
   /* ── 声音：原生直连 / AAC 音轨 / 实时转码 ────────────────────── */
   function setBadges(){
     document.getElementById('mDirect').setAttribute('aria-pressed', mode === 'direct');
@@ -479,6 +554,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     else if (mode === 'audio') line.textContent = '画面来自原文件（静音），声音走预转码的 AAC 音轨。';
     else line.textContent = '整条流由 ffmpeg 实时转码，占用 CPU，拖动后要等几秒重新起播。';
     if (!LIVE_READY) line.textContent += ' 这台机器没装 ffmpeg，实时转码不可用。';
+    savePrefs();
   }
 
   function clearNotice(){ notice.hidden = true; notice.innerHTML = ''; }
@@ -539,9 +615,8 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     mode = 'direct';
     teardownLive();
     a.pause(); a.removeAttribute('src'); a.load();
-    v.muted = false;
     if (!v.src || !v.src.endsWith('/stream/' + ID)) v.src = '/stream/' + ID;
-    v.volume = volEl.value / 100;
+    volApply();
     if (typeof at === 'number') v.currentTime = at;
     setBadges(); showAudioNotice();
     v.play().catch(function(){ syncPlayIcon(); });
@@ -551,10 +626,9 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     autoplay = autoplay !== false;
     mode = 'audio';
     teardownLive();
-    v.muted = true;
     if (!v.src || !v.src.endsWith('/stream/' + ID)) v.src = '/stream/' + ID;
     a.src = '/audio/' + ID;
-    a.volume = volEl.value / 100;
+    volApply();
     var t = typeof at === 'number' ? at : v.currentTime;
     // 画面和音轨必须从同一个点起，否则一开播就错位
     var seekBoth = function(){
@@ -578,6 +652,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   function switchMode(next, at){
     if (next === 'audio' && !AUDIO_READY) { prepAudio(); return; }
     if (next === 'live' && !LIVE_READY) { toast('ffmpeg 未安装，实时转码不可用。'); return; }
+    pendingLive = false;   // 用户主动选了模式，别再挂着延迟转码
     var now = typeof at === 'number' ? at : curSec();
     var paused = v.paused;
     if (next === 'live') { startLive(now, !paused); }
@@ -629,8 +704,9 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     teardownLive();
     var wasAudio = mode === 'audio';
     mode = 'live';
+    pendingLive = false;
     a.pause(); a.removeAttribute('src'); a.load();
-    v.muted = false;
+    volApply();
     notice.innerHTML = '';
     var p = document.createElement('b');
     p.textContent = '正在起实时转码…';
@@ -690,6 +766,8 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 
   function toggle(){
     if (v.paused) {
+      // 续播恢复的实时转码：到用户真正点播放时再起 ffmpeg
+      if (pendingLive) { pendingLive = false; startLive(pendingLiveAt, true); return; }
       v.play().catch(function(e){ toast('浏览器拦下了自动播放，再点一次。'); });
       if (mode === 'audio') a.play().catch(function(){});
     } else {
@@ -723,11 +801,13 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 
   function volApply(){
     var val = +volEl.value;
+    var silent = userMuted || val === 0;
     v.volume = val / 100;
     a.volume = val / 100;
-    v.muted = (mode === 'audio') ? true : (val === 0);
-    volBtn.innerHTML = (val === 0 || (mode === 'audio' && a.muted)) ? ICON.mute : ICON.vol;
-    if (mode === 'audio') a.muted = (val === 0);
+    v.muted = (mode === 'audio') ? true : silent;
+    volBtn.innerHTML = silent ? ICON.mute : ICON.vol;
+    if (mode === 'audio') a.muted = silent;
+    savePrefs();
   }
 
   /* ── 字幕：取 VTT、解析、自己画 ─────────────────────────────── */
@@ -771,13 +851,14 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     if (next !== cueEl.textContent) cueEl.textContent = next;
   }
 
-  function setSub(url, label){
+  function setSub(url, label, restoreOff){
     if (!url) {
       cues = []; cueEl.textContent = '';
       document.getElementById('subState').textContent = '字幕已关闭。';
       document.getElementById('offSec').hidden = true;
       ccBtn.classList.remove('on');
       ccBtn.setAttribute('aria-pressed', 'false');
+      savePrefs();
       return;
     }
     document.getElementById('subState').textContent = '正在载入「' + (label || '字幕') + '」…';
@@ -793,8 +874,10 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
         ? '「' + (label || '字幕') + '」共 ' + cues.length + ' 条。'
         : '这条字幕里没解析出内容（可能是图形字幕）。';
       document.getElementById('offSec').hidden = cues.length === 0;
-      setOffset(0, true);
-      autoAlign(u, url, true);
+      // 恢复续播时套用上次偏移，跳过自动对齐，免得把用户调好的值覆盖掉
+      if (typeof restoreOff === 'number') setOffset(restoreOff, true);
+      else { setOffset(0, true); autoAlign(u, url, true); }
+      savePrefs();
     }).catch(function(e){
       document.getElementById('subState').textContent = '载入失败：' + e.message;
     });
@@ -806,6 +889,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     document.getElementById('offRange').value = String(Math.max(-30, Math.min(30, off)));
     renderCue(curSec());
     if (!fromAuto && off !== 0) toast('字幕偏移 ' + (off > 0 ? '+' : '') + off.toFixed(2) + ' 秒');
+    savePrefs();
   }
 
   function autoAlign(fetchUrl, rawUrl, silent){
@@ -823,28 +907,31 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     });
   }
 
-  /* ── 字幕大小：固定 px 或跟随窗口，选值存 localStorage ───────── */
-  var SIZE_KEY = 'litems.subtitle.size';
+  /* ── 字幕大小：固定 px 或跟随窗口，值并入播放器快照 ─────────── */
+  var SIZE_KEY = 'litems.subtitle.size';   // 旧版 key，保留写入以兼容旧页面
   var sizeRange = document.getElementById('sizeRange');
   var sizeNum = document.getElementById('sizeNum');
   var sizeAuto = document.getElementById('sizeAuto');
   var sizeState = document.getElementById('sizeState');
+  var curSize = null;                     // null = 自适应
 
   function applySubSize(px, persist){
     if (px === null) {
+      curSize = null;
       cueBox.style.removeProperty('--cue-size');
       sizeAuto.setAttribute('aria-pressed', 'true');
       sizeState.textContent = '跟随窗口宽度自动缩放。拖动或改数字可固定字号，下次打开沿用。';
-      if (persist) { try { localStorage.removeItem(SIZE_KEY); } catch (e) {} }
+      if (persist) { try { localStorage.removeItem(SIZE_KEY); } catch (e) {} savePrefs(); }
       return;
     }
     px = Math.max(12, Math.min(44, Math.round(px)));
+    curSize = px;
     cueBox.style.setProperty('--cue-size', px + 'px');
     sizeRange.value = px;
     sizeNum.value = px;
     sizeAuto.setAttribute('aria-pressed', 'false');
     sizeState.textContent = '固定 ' + px + 'px，其它影片也用这个字号。';
-    if (persist) { try { localStorage.setItem(SIZE_KEY, String(px)); } catch (e) {} }
+    if (persist) { try { localStorage.setItem(SIZE_KEY, String(px)); } catch (e) {} savePrefs(); }
   }
 
   sizeRange.addEventListener('input', function(){ applySubSize(+sizeRange.value, true); });
@@ -854,13 +941,6 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     applySubSize(n, true);
   });
   sizeAuto.addEventListener('click', function(){ applySubSize(null, true); });
-
-  (function initSubSize(){
-    var saved = null;
-    try { saved = localStorage.getItem(SIZE_KEY); } catch (e) {}
-    var n = parseInt(saved, 10);
-    if (isFinite(n) && n >= 12 && n <= 44) applySubSize(n, false);
-  })();
 
   /* ── 进度回写 ───────────────────────────────────────────────── */
   function save(beacon){
@@ -928,9 +1008,9 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 
   volEl.addEventListener('input', volApply);
   volBtn.addEventListener('click', function(){
-    if (mode === 'audio') { a.muted = !a.muted; volBtn.innerHTML = a.muted ? ICON.mute : ICON.vol; return; }
-    v.muted = !v.muted;
-    volBtn.innerHTML = v.muted ? ICON.mute : ICON.vol;
+    userMuted = !userMuted;
+    volApply();
+    showVol(+volEl.value);
   });
 
   ccBtn.addEventListener('click', function(){
@@ -943,7 +1023,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     } else {
       var pick = document.querySelector('#subOpts input[name=sub][value="' + (ccBtn.dataset.last || '') + '"]')
         || document.querySelector('#subOpts input[name=sub]:not([value=""])');
-      if (pick) { pick.checked = true; setSub(pick.value, pick.dataset.label); }
+      if (pick) { pick.checked = true; ccBtn.dataset.last = pick.value; setSub(pick.value, pick.dataset.label); }
       else { toast('这条没有可用的字幕轨。'); }
     }
   });
@@ -1036,7 +1116,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     requestAnimationFrame(loop);
   })();
 
-  /* ── 开播：先停在第一帧，等用户点播放 ───────────────────────── */
+  /* ── 开播：恢复上次设置，停在第一帧等用户点播放 ─────────────── */
   var start = startAt();
   if (start < 5) start = 0;
   // 上次看到片尾：当成看完，从头开始，别让播放器一开就报结束
@@ -1049,8 +1129,29 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     paint();
   }
 
-  if (AUDIO_READY) {
+  restoring = true;
+  var pref = loadPrefs();
+
+  // 音量 / 静音 / 字号
+  volEl.value = pref.vol;
+  userMuted = pref.muted;
+  applySubSize(pref.size, false);
+  setOffset(pref.off, true);   // 先落回 off 变量，字幕载入失败也不会丢
+  ccBtn.dataset.last = pref.subLast || '';
+
+  // 声音模式：实时转码不立刻起 ffmpeg，等用户点播放再接上
+  var savedMode = pref.mode;
+  if (savedMode === 'audio' && AUDIO_READY) {
     useAudio(start, false);
+  } else if (savedMode === 'live' && LIVE_READY) {
+    mode = 'live';
+    pendingLive = true;
+    pendingLiveAt = start;
+    v.src = '/stream/' + ID;
+    if (v.readyState >= 1) seekToStartOnce();
+    else v.addEventListener('loadedmetadata', seekToStartOnce);
+    setBadges();
+    document.getElementById('modeLine').textContent += ' 上次用的实时转码，点播放后接着转。';
   } else {
     mode = 'direct';
     v.src = '/stream/' + ID;
@@ -1059,10 +1160,25 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     setBadges();
     showAudioNotice();
   }
+
+  // 字幕轨：恢复选中的那条，并套用上次手动调好的偏移（跳过自动对齐）
+  if (pref.sub) {
+    var radios = document.querySelectorAll('#subOpts input[name=sub]');
+    for (var i = 0; i < radios.length; i++) {
+      if (radios[i].value !== pref.sub) continue;
+      radios[i].checked = true;
+      ccBtn.dataset.last = pref.sub;
+      setSub(pref.sub, radios[i].dataset.label || '', pref.off);
+      break;
+    }
+  }
+
   syncPlayIcon();
   volApply();
   paint();
   wake();
+  restoring = false;
+  savePrefs();   // 把兜底值固化成这条片子自己的快照
 })();
 </script>
 </body>
