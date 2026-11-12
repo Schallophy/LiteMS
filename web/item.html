@@ -7,11 +7,6 @@
 .acts-line{margin:0;font-size:12.5px;color:var(--ink-3);min-height:16px}
 .note{max-width:64ch}
 .upload select{width:auto;max-width:100%}
-/* 没有背景图时，别留一条空灰带 */
-.hero.no-art{margin-top:8px}
-.hero.no-art .hero-row{margin-top:0}
-.hero.no-art .hero-text{padding-top:0}
-@media (max-width:799px){.hero.no-art .hero-text{padding-top:8px}}
 </style>
 </head>
 <body>
@@ -32,12 +27,7 @@
 
     <article>
       <section class="hero{{if not .Item.Fanart}} no-art{{end}}">
-        {{if .Item.Fanart}}
-        <div class="hero-art">
-          <img src="{{.Item.Fanart}}" alt="" decoding="async">
-        </div>
-        {{end}}
-        <div class="hero-row">
+        <div class="hero-card">
           <div class="hero-poster">
             {{if .Item.Poster}}<img src="{{.Item.Poster}}" alt="{{.Item.Title}} 的海报">{{else}}<span class="ph">{{initial .Item.Title}}</span>{{end}}
           </div>
@@ -83,6 +73,12 @@
             {{end}}
           </div>
         </div>
+
+        {{if .Item.Fanart}}
+        <figure class="hero-still">
+          <img src="{{.Item.Fanart}}" alt="{{.Item.Title}} 的剧照" decoding="async">
+        </figure>
+        {{end}}
       </section>
 
       <div class="detail-body">

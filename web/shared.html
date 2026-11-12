@@ -289,40 +289,46 @@ button{font:inherit;color:inherit}
 @media (min-width:920px){.crumb .set-top{display:none}}
 
 /* ── 详情页 ───────────────────────────────────────────────── */
-/* 详情页横幅：宽度撑满内容栏，按 2.35:1 出图（电影遮幅），不再被 max-height 压窄 */
-.hero-art{
-  position:relative;width:100%;aspect-ratio:2.35/1;overflow:hidden;background:var(--surface-2);
+/* 详情页：左边一张目录卡（海报 + 标题 + 数据 + 按钮），右边一张装裱好的剧照。
+   剧照按 16:9 出图、contain 填框，任何比例的底图都完整显示，不再裁上下 */
+.hero{
+  display:grid;grid-template-columns:minmax(0,1fr);
+  gap:clamp(18px,2.6vw,34px);margin-top:clamp(12px,2vw,22px);
 }
-.hero-art img{width:100%;height:100%;object-fit:cover;display:block}
-.hero-art::after{
-  content:"";position:absolute;inset:0;
-  background:linear-gradient(to bottom,transparent 52%,var(--bg) 100%);opacity:.9;
+@media (min-width:920px){
+  .hero{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:center}
 }
-.hero-row{
+.hero-card{
   display:grid;grid-template-columns:104px minmax(0,1fr);
-  column-gap:16px;margin-top:-46px;position:relative;z-index:1;
+  column-gap:16px;align-items:start;min-width:0;
 }
-@media (min-width:800px){
-  .hero-row{grid-template-columns:196px minmax(0,1fr);column-gap:clamp(24px,3vw,40px);margin-top:-96px}
+@media (min-width:920px){
+  .hero-card{grid-template-columns:172px minmax(0,1fr);column-gap:clamp(20px,2.4vw,32px);align-items:center}
 }
+.hero-still{
+  margin:0;position:relative;aspect-ratio:16/9;overflow:hidden;
+  background:var(--surface-2);outline:1px solid var(--line);
+}
+.hero-still img{width:100%;height:100%;object-fit:contain;display:block}
+@media (max-width:919px){.hero-still{order:-1}}
 .hero-poster{
   position:relative;aspect-ratio:2/3;background:var(--surface-2);overflow:hidden;
-  outline:2px solid var(--bg);
+  outline:1px solid var(--line);
 }
 .hero-poster img{width:100%;height:100%;object-fit:cover;display:block}
-.hero-text{min-width:0;padding-top:clamp(52px,7vw,104px)}
-@media (max-width:799px){.hero-text{padding-top:52px}}
+.hero-text{min-width:0}
+.hero.no-art{grid-template-columns:minmax(0,1fr)}
+.hero.no-art .hero-text{max-width:62ch}
 .hero-text h1{
   margin:0;font-family:var(--serif);font-weight:400;
   font-size:clamp(25px,4.4vw,44px);line-height:1.14;letter-spacing:.01em;text-wrap:balance;
 }
 .orig{margin:8px 0 0;font-size:13.5px;color:var(--ink-3);letter-spacing:.02em}
 .facts{
-  display:flex;flex-wrap:wrap;gap:6px 14px;margin:14px 0 0;padding:0;list-style:none;
+  display:flex;flex-wrap:wrap;gap:6px 18px;margin:14px 0 0;padding:0;list-style:none;
   font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;
 }
-.facts li{display:flex;align-items:center;gap:14px}
-.facts li+li::before{content:"";width:1px;height:10px;background:var(--line)}
+.facts li{display:flex;align-items:center;gap:6px}
 .rating{color:var(--ink)}
 .rating b{font-weight:500}
 .tagline{
