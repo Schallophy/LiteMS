@@ -100,12 +100,9 @@
                 {{if .Directors}}<div><dt>导演</dt><dd>{{range $i, $d := .Directors}}{{if $i}} / {{end}}{{$d}}{{end}}</dd></div>{{end}}
                 {{if .Writers}}<div><dt>编剧</dt><dd>{{range $i, $w := .Writers}}{{if $i}} / {{end}}{{$w}}{{end}}</dd></div>{{end}}
                 {{if .AirDate}}<div><dt>播出</dt><dd>{{.AirDate}}</dd></div>{{end}}
-                {{if .HasTmdb}}<div><dt>TMDB</dt><dd><a href="https://www.themoviedb.org/{{if eq $.Item.Kind "episode"}}tv{{else}}movie{{end}}/{{.TmdbID}}" target="_blank" rel="noopener noreferrer">{{.TmdbID}}</a></dd></div>{{end}}
-                {{if .HasImdb}}<div><dt>IMDb</dt><dd><a href="https://www.imdb.com/title/{{.ImdbID}}/" target="_blank" rel="noopener noreferrer">{{.ImdbID}}</a></dd></div>{{end}}
               {{else}}
                 <div><dt>年份</dt><dd>{{if .Item.Year}}{{.Item.Year}}{{else}}未知{{end}}</dd></div>
               {{end}}
-              <div><dt>状态</dt><dd>{{if .Item.Finished}}看完了{{else if gt .Item.PositionMS 0}}看到 {{duration .Item.PositionMS}}{{else}}没开始{{end}}</dd></div>
             </dl>
           </section>
 
