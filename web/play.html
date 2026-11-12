@@ -61,12 +61,27 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   transition:opacity .28s var(--ease);
 }
 .scrub{position:relative;height:20px;display:flex;align-items:center}
+/* 灰底轨和红色已播放条都是 .scrub 的底层，range 只负责白色滑块。
+   定位层会盖在非定位元素上，所以必须给 range 抬层级并把轨道画透明，
+   否则红线会压住进度点（非 hover 时尤其明显）。 */
+.scrub::before{
+  content:"";position:absolute;left:0;right:0;top:50%;
+  height:3px;margin-top:-1.5px;background:rgba(255,255,255,.24);
+  pointer-events:none;transition:height .16s var(--ease),margin-top .16s var(--ease);
+}
+.seekfill{
+  position:absolute;left:0;top:50%;height:3px;margin-top:-1.5px;
+  background:var(--burn);pointer-events:none;width:0;
+  transition:height .16s var(--ease),margin-top .16s var(--ease);
+}
+.scrub:hover::before,.scrub:hover .seekfill{height:6px;margin-top:-3px}
 .scrub input[type=range]{
+  position:relative;z-index:1;
   -webkit-appearance:none;appearance:none;width:100%;height:20px;background:none;
   margin:0;cursor:pointer;
 }
 .scrub input[type=range]::-webkit-slider-runnable-track{
-  height:3px;background:rgba(255,255,255,.24);transition:height .16s var(--ease);
+  height:3px;background:transparent;transition:height .16s var(--ease);
 }
 .scrub input[type=range]::-webkit-slider-thumb{
   -webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:#fff;
@@ -74,14 +89,10 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 }
 .scrub input[type=range]:hover::-webkit-slider-runnable-track{height:6px}
 .scrub input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.25);margin-top:-2.5px}
-.scrub input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.24)}
-.scrub input[type=range]::-moz-range-progress{height:3px;background:var(--burn)}
+.scrub input[type=range]::-moz-range-track{height:3px;background:transparent}
+.scrub input[type=range]::-moz-range-progress{height:3px;background:transparent}
 .scrub input[type=range]::-moz-range-thumb{
   width:11px;height:11px;border:0;border-radius:50%;background:#fff;
-}
-.seekfill{
-  position:absolute;left:0;top:50%;height:3px;margin-top:-1.5px;
-  background:var(--burn);pointer-events:none;width:0;
 }
 .row{display:flex;align-items:center;gap:clamp(6px,1vw,14px);margin-top:2px}
 .ibtn{
