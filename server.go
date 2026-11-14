@@ -285,12 +285,31 @@ type ItemDTO struct {
 	DurationMS    int64    `json:"duration_ms,omitempty"`
 }
 
-// artworkExists 校验图片文件真的在盘上（>512 字节，与刮削时的判定一致）。
-func (s *Server) artworkExists(it Item, rel string) bool {
+// rootPath 返回条目所属的媒体根。配置里删掉/重排根之后，库里可能残留
+// 旧 root_idx 的条目，所有取路径的地方都必须先经过这里，不能直接下标。
+func (s *Server) rootPath(it Item) (string, bool) {
 	if it.RootIdx < 0 || it.RootIdx >= len(s.roots) {
+		return "", false
+	}
+	return s.roots[it.RootIdx], true
+}
+
+// requireRoot 对根越界的条目直接回 404，避免 handler 后续 panic。
+func (s *Server) requireRoot(w http.ResponseWriter, it Item) bool {
+	if _, ok := s.rootPath(it); !ok {
+		writeErr(w, http.StatusNotFound, "条目所属的媒体根已不在配置中")
 		return false
 	}
-	fi, err := os.Stat(filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(rel)))
+	return true
+}
+
+// artworkExists 校验图片文件真的在盘上（>512 字节，与刮削时的判定一致）。
+func (s *Server) artworkExists(it Item, rel string) bool {
+	root, ok := s.rootPath(it)
+	if !ok {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 512
 }
 
@@ -467,7 +486,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
-	full := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+	if !s.requireRoot(w, *it) {
+		return
+	}
+	full := s.itemPath(*it)
 	if _, err := os.Stat(full); err != nil {
 		writeErr(w, http.StatusNotFound, "文件已不存在")
 		return
@@ -488,8 +510,11 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
+	if !s.requireRoot(w, *it) {
+		return
+	}
 	track := trackParam(r)
-	src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+	src := s.itemPath(*it)
 	if !s.tc.Usable(id, track, src) {
 		writeErr(w, http.StatusNotFound, "还没有这条音轨的缓存")
 		return
@@ -523,6 +548,9 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
+	if !s.requireRoot(w, *it) {
+		return
+	}
 	start, _ := strconv.ParseFloat(r.URL.Query().Get("start"), 64)
 	track := trackParam(r)
 	if track > 0 {
@@ -531,7 +559,7 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+	src := s.itemPath(*it)
 
 	// ?ctl=pause|resume|ping|stop：同步 ffmpeg 的暂停/继续，暂停期间靠 ping
 	// 续命（只 touch、不 SIGCONT），切回直连时 stop 立刻收掉 ffmpeg。
@@ -606,6 +634,11 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "非法文件名")
 		return
 	}
+	// 已滑出窗口/ffmpeg 已退出时不会再出现，别每一次都空等 8 秒
+	if sess.segmentGone(name) {
+		writeErr(w, http.StatusNotFound, "分段已不存在")
+		return
+	}
 	if !waitFile(full, 8*time.Second) {
 		writeErr(w, http.StatusNotFound, "分段尚未生成")
 		return
@@ -637,6 +670,9 @@ func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
+	if !s.requireRoot(w, *it) {
+		return
+	}
 	track := trackParam(r)
 	tracks, _ := s.audioTracks(*it)
 	if track >= len(tracks) {
@@ -647,7 +683,7 @@ func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, s.tc.Status(id, track))
 	case http.MethodPost:
-		src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+		src := s.itemPath(*it)
 		force := r.URL.Query().Get("force") == "1"
 		job, err := s.tc.Start(id, track, src, force)
 		if err != nil {
@@ -822,6 +858,9 @@ func (s *Server) handleSub(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
+	if !s.requireRoot(w, *it) {
+		return
+	}
 	q := r.URL.Query()
 
 	// 导入字幕
@@ -944,6 +983,9 @@ func (s *Server) handleImage(poster bool) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, "条目不存在")
 			return
 		}
+		if !s.requireRoot(w, *it) {
+			return
+		}
 		rel := it.FanartPath
 		if poster {
 			rel = it.PosterPath
@@ -952,7 +994,8 @@ func (s *Server) handleImage(poster bool) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, "没有图片")
 			return
 		}
-		full := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(rel))
+		root, _ := s.rootPath(*it)
+		full := filepath.Join(root, filepath.FromSlash(rel))
 		w.Header().Set("Cache-Control", "public, max-age=604800")
 		http.ServeFile(w, r, full)
 	}
@@ -1064,6 +1107,10 @@ func (s *Server) handleItemPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if _, ok := s.rootPath(*it); !ok {
+		http.NotFound(w, r)
+		return
+	}
 	d := s.toDTO(*it)
 	// 提示以容器里的实际音轨为准；探测失败才退回文件名标签
 	hint := audioHint(it.RelPath, it.Container)
@@ -1107,6 +1154,10 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if _, ok := s.rootPath(*it); !ok {
+		http.NotFound(w, r)
+		return
+	}
 	d := s.toDTO(*it)
 	// 真实音轨能直接播时，文件名标签的提示就不作数了。
 	audioOK := s.nativeAudioOK(*it)
@@ -1120,7 +1171,7 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 		audioDefault = dt.N
 	}
 	// 缓存比源文件旧说明源被替换过，旧音轨不能再用（否则新画面配旧声音）
-	src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+	src := s.itemPath(*it)
 	atDTO := make([]AudioTrackDTO, 0, len(tracks))
 	for _, t := range tracks {
 		atDTO = append(atDTO, AudioTrackDTO{

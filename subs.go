@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // 字幕三源：外挂（视频旁边）、导入（.litems/subs/<id>/，用户上传）、
@@ -34,6 +36,12 @@ var subExts = map[string]bool{".srt": true, ".ass": true, ".ssa": true, ".vtt": 
 
 // maxSubBytes 单个字幕文件上限。
 const maxSubBytes = 8 << 20
+
+// embedSubTimeout 限制单次内嵌字幕抽取的等待时间。
+const embedSubTimeout = 60 * time.Second
+
+// errSubTooLarge 表示上传内容超过 maxSubBytes。
+var errSubTooLarge = errors.New("字幕文件过大（上限 8MB）")
 
 func langLabel(l string) string {
 	switch NormalizeLang(l) {
@@ -71,12 +79,21 @@ func langLabel(l string) string {
 }
 
 // subsDir 是某条目的导入字幕目录（在媒体根的 .litems 状态目录下，不进媒体库）。
+// 条目所属的媒体根被移出配置后返回空串，调用方不会越界。
 func (s *Server) subsDir(it Item) string {
-	return filepath.Join(s.roots[it.RootIdx], ".litems", "subs", it.ID)
+	root, ok := s.rootPath(it)
+	if !ok {
+		return ""
+	}
+	return filepath.Join(root, ".litems", "subs", it.ID)
 }
 
 func (s *Server) itemPath(it Item) string {
-	return filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+	root, ok := s.rootPath(it)
+	if !ok {
+		return ""
+	}
+	return filepath.Join(root, filepath.FromSlash(it.RelPath))
 }
 
 // subsFor 合并三种来源，供详情页 / 播放页 / 详情 JSON 使用。
@@ -255,11 +272,17 @@ func (s *Server) extractEmbedSub(it Item, idx int) (string, error) {
 	tmpPath := tmp.Name()
 	tmp.Close()
 
-	cmd := exec.Command("ffmpeg", "-nostdin", "-y", "-i", src,
+	// 抽取是短任务，但不能让它无限挂起（弱存储/网络挂载上 ffmpeg 可能卡死）
+	ctx, cancel := context.WithTimeout(context.Background(), embedSubTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-y", "-i", src,
 		"-map", "0:"+strconv.Itoa(idx), "-f", "webvtt", tmpPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		os.Remove(tmpPath)
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", errors.New("抽取内嵌字幕超时")
+		}
 		return "", fmt.Errorf("抽取内嵌字幕失败：%s", lastLine(out))
 	}
 	if err := os.Rename(tmpPath, cache); err != nil {
@@ -283,6 +306,11 @@ func sanitizeSubName(name, lang string) (string, error) {
 	}, name)
 	if clean == "" || clean == "." || clean == ".." {
 		return "", errors.New("文件名无效")
+	}
+	// embed-*.vtt 是内嵌字幕的抽取缓存专用前缀：导入同名文件会进列表过滤
+	// 且无法删除，直接拒绝，避免留下看不见的孤儿。
+	if strings.HasPrefix(strings.ToLower(clean), "embed-") {
+		return "", errors.New("文件名不能以 embed- 开头（内嵌字幕缓存专用）")
 	}
 	ext := filepath.Ext(clean)
 	if !subExts[strings.ToLower(ext)] {
@@ -338,10 +366,16 @@ func (s *Server) saveUploadedSub(it Item, r io.Reader, name string) (string, err
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(f, io.LimitReader(r, maxSubBytes)); err != nil {
+	n, err := io.Copy(f, io.LimitReader(r, maxSubBytes+1))
+	if err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return "", err
+	}
+	if n > maxSubBytes {
+		f.Close()
+		os.Remove(tmp)
+		return "", errSubTooLarge
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
@@ -396,6 +430,10 @@ func (s *Server) handleSubUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		final, err := s.saveUploadedSub(*it, file, name)
 		if err != nil {
+			if errors.Is(err, errSubTooLarge) {
+				writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
+				return
+			}
 			writeErr(w, http.StatusInternalServerError, "保存字幕失败："+err.Error())
 			return
 		}
