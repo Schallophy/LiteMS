@@ -63,8 +63,12 @@ func (s *Scanner) Run() (ScanStats, error) {
 	roots := s.cfg.AllRoots()
 	s.stats.Roots = len(roots)
 
-	if err := s.db.SyncRoots(roots); err != nil {
+	// ReconcileRoots 同时负责 upsert roots 表，必须在读取旧路径之前调用，
+	// 才能发现「根被删除/换址」并清掉对应条目。
+	if n, err := s.db.ReconcileRoots(roots); err != nil {
 		return s.stats, err
+	} else if n > 0 {
+		logf("媒体根有增减或换址，已清理 %d 条失效索引", n)
 	}
 	existing, err := s.db.Existing()
 	if err != nil {
@@ -180,6 +184,7 @@ func (s *Scanner) handleVideo(rootIdx int, root, path string, d fs.DirEntry, exi
 
 	// 增量判定：索引层面只看文件属性；缺元数据是刮削阶段的事
 	prev, exists := existing[key]
+	subsChanged := exists && !sameSubs(subs, prev.Subs)
 	if exists {
 		it.ScrapedAt = prev.ScrapedAt
 		it.ScrapeStatus = prev.ScrapeStatus
@@ -189,7 +194,7 @@ func (s *Scanner) handleVideo(rootIdx int, root, path string, d fs.DirEntry, exi
 					s.stats.Skipped++
 					return nil
 				}
-			} else if !NeedsReindex(prev, info.Size(), info.ModTime().Unix(), nfoMtime) {
+			} else if !NeedsReindex(prev, info.Size(), info.ModTime().Unix(), nfoMtime) && !subsChanged {
 				s.stats.Skipped++
 				if NeedsScrape(prev, info.Size(), info.ModTime().Unix(), nfoMtime) {
 					s.stats.PendingScrape++
@@ -463,7 +468,6 @@ func (s *Scanner) findSubtitles(dir, videoName string) []SubEntry {
 		return nil
 	}
 	stem := strings.TrimSuffix(videoName, filepath.Ext(videoName))
-	lowerStem := strings.ToLower(stem)
 	out := make([]SubEntry, 0, 3)
 	for _, e := range dm.entries {
 		if e.IsDir() {
@@ -474,7 +478,7 @@ func (s *Scanner) findSubtitles(dir, videoName string) []SubEntry {
 			continue
 		}
 		subStem := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
-		if !strings.HasPrefix(strings.ToLower(subStem), lowerStem) {
+		if !subMatchesVideo(subStem, stem) {
 			continue
 		}
 		lang := NormalizeLang(SubtitleLang(e.Name()))
@@ -484,6 +488,51 @@ func (s *Scanner) findSubtitles(dir, videoName string) []SubEntry {
 		return langRank(out[i].Lang, s.cfg.Scrape.SubLangs) < langRank(out[j].Lang, s.cfg.Scrape.SubLangs)
 	})
 	return out
+}
+
+// subMatchesVideo 判断字幕是否属于该视频：文件名前缀必须等于视频名，
+// 后缀只能是语言 / forced / sdh 一类标记。只做前缀匹配会把
+// "Movie.Extended.chs.srt" 同时挂到 "Movie.mkv" 上。
+func subMatchesVideo(subStem, videoStem string) bool {
+	a, b := strings.ToLower(subStem), strings.ToLower(videoStem)
+	if !strings.HasPrefix(a, b) {
+		return false
+	}
+	rest := strings.TrimLeft(a[len(b):], ".-_ []()")
+	if rest == "" {
+		return true
+	}
+	tokens := strings.FieldsFunc(rest, func(r rune) bool {
+		return r == '.' || r == '_' || r == ' ' ||
+			r == '[' || r == ']' || r == '(' || r == ')'
+	})
+	for _, t := range tokens {
+		t = strings.Trim(t, "-")
+		if t == "" || t == "forced" || t == "sdh" || t == "cc" || subLangs[t] {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// sameSubs 判断两版外挂字幕清单是否等价（顺序无关）。
+func sameSubs(a, b []SubEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]int, len(a))
+	for _, s := range a {
+		m[s.Lang+"\x00"+s.Path]++
+	}
+	for _, s := range b {
+		k := s.Lang + "\x00" + s.Path
+		if m[k] == 0 {
+			return false
+		}
+		m[k]--
+	}
+	return true
 }
 
 // langRank 按 sub_langs 的顺序给出优先级，未列出的排最后。

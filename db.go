@@ -298,6 +298,73 @@ func (d *DB) SyncRoots(roots []string) error {
 	return tx.Commit()
 }
 
+// ReconcileRoots 让索引与当前媒体根列表对齐：根被删除或换到别的路径时，
+// 其条目全部作废（ItemID 含根路径，换路径后旧 ID 没有意义），进度随外键
+// 级联删除；roots 表也截到当前长度，避免残留指向已不存在根的条目。
+// 返回被清理的条目数。
+func (d *DB) ReconcileRoots(roots []string) (int, error) {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT idx,path FROM roots`)
+	if err != nil {
+		return 0, err
+	}
+	old := map[int]string{}
+	for rows.Next() {
+		var idx int
+		var path string
+		if err := rows.Scan(&idx, &path); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		old[idx] = path
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	drop := func(idx int) (int, error) {
+		res, err := tx.Exec(`DELETE FROM items WHERE root_idx=?`, idx)
+		if err != nil {
+			return 0, err
+		}
+		n, _ := res.RowsAffected()
+		return int(n), nil
+	}
+	cleaned := 0
+	for idx, path := range old {
+		same := idx < len(roots) && filepath.Clean(filepath.ToSlash(roots[idx])) == filepath.Clean(path)
+		if same {
+			continue
+		}
+		n, err := drop(idx)
+		if err != nil {
+			return 0, err
+		}
+		cleaned += n
+	}
+	if _, err := tx.Exec(`DELETE FROM roots WHERE idx >= ?`, len(roots)); err != nil {
+		return 0, err
+	}
+	for i, r := range roots {
+		if _, err := tx.Exec(`INSERT INTO roots(idx,path) VALUES(?,?)
+			ON CONFLICT(idx) DO UPDATE SET path=excluded.path`,
+			i, filepath.Clean(filepath.ToSlash(r))); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return cleaned, nil
+}
+
 // UpsertItem 插入或更新一条记录。已刮削的元数据不会被扫描覆盖。
 func (d *DB) UpsertItem(it *Item) error {
 	subs, _ := json.Marshal(it.SubPaths)
@@ -379,11 +446,12 @@ type Snapshot struct {
 	NfoMtimeUnix int64
 	ScrapedAt    int64
 	ScrapeStatus string
+	Subs         []SubEntry
 }
 
 // Existing 返回库中已有的路径快照，key 为 "<rootIdx>:<relPath>"。
 func (d *DB) Existing() (map[string]Snapshot, error) {
-	rows, err := d.sql.Query(`SELECT root_idx,rel_path,size_bytes,mtime_unix,nfo_mtime_unix,scraped_at,scrape_status FROM items`)
+	rows, err := d.sql.Query(`SELECT root_idx,rel_path,size_bytes,mtime_unix,nfo_mtime_unix,scraped_at,scrape_status,sub_paths FROM items`)
 	if err != nil {
 		return nil, err
 	}
@@ -391,8 +459,12 @@ func (d *DB) Existing() (map[string]Snapshot, error) {
 	out := make(map[string]Snapshot, 1024)
 	for rows.Next() {
 		var s Snapshot
-		if err := rows.Scan(&s.RootIdx, &s.RelPath, &s.SizeBytes, &s.MtimeUnix, &s.NfoMtimeUnix, &s.ScrapedAt, &s.ScrapeStatus); err != nil {
+		var subs string
+		if err := rows.Scan(&s.RootIdx, &s.RelPath, &s.SizeBytes, &s.MtimeUnix, &s.NfoMtimeUnix, &s.ScrapedAt, &s.ScrapeStatus, &subs); err != nil {
 			return nil, err
+		}
+		if subs != "" {
+			_ = json.Unmarshal([]byte(subs), &s.Subs)
 		}
 		out[fmt.Sprintf("%d:%s", s.RootIdx, s.RelPath)] = s
 	}
@@ -650,7 +722,7 @@ func (d *DB) ListContinue(limit int) ([]Item, error) {
 	}
 	rows, err := d.sql.Query(`SELECT `+itemCols+` FROM items
 		WHERE id IN (SELECT item_id FROM progress WHERE finished=0 AND position_ms > 30000)
-		ORDER BY mtime_unix DESC LIMIT ?`, limit)
+		ORDER BY (SELECT updated_at FROM progress p WHERE p.item_id=items.id) DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
