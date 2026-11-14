@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -39,6 +40,7 @@ type Transcoder struct {
 	jobs     map[string]*tcJob
 	cancels  map[string]context.CancelFunc // key = tcKey(id, track)，只收运行中的任务
 	cacheDir string
+	seq      uint64 // 半成品文件名序号：取消后立刻重转时新旧任务各写各的 .part
 }
 
 // NewTranscoder 建缓存目录并清掉上次中断留下的 .part 文件。
@@ -47,7 +49,7 @@ func NewTranscoder(cacheDir string) (*Transcoder, error) {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建转码缓存目录失败: %w", err)
 	}
-	matches, _ := filepath.Glob(filepath.Join(cacheDir, "*.part"))
+	matches, _ := filepath.Glob(filepath.Join(cacheDir, "*.part*"))
 	for _, m := range matches {
 		os.Remove(m)
 	}
@@ -160,10 +162,26 @@ func (t *Transcoder) Remove(id string, track int) (cancelled, removed bool) {
 	return cancelled, removed
 }
 
-// Has 返回音轨缓存是否存在（播放页据此决定用「预转码」还是「实时转码」）。
+// Has 返回音轨缓存是否存在（管理页/状态查询用）。
 func (t *Transcoder) Has(id string, track int) bool {
 	fi, err := os.Stat(t.CachePath(id, track))
 	return err == nil && fi.Size() > 0
+}
+
+// Usable 判断缓存能否用于当前的源文件：存在，且不比源旧。
+// 转码完成时把缓存 mtime 对齐到了源文件，所以「缓存更新」就等于「内容对应
+// 同一个源」。播放页与 /audio 必须用它——只看文件在不在，源被替换后会
+// 出现新画面配旧声音。
+func (t *Transcoder) Usable(id string, track int, src string) bool {
+	cf, err := os.Stat(t.CachePath(id, track))
+	if err != nil || cf.Size() == 0 {
+		return false
+	}
+	sf, err := os.Stat(src)
+	if err != nil {
+		return false
+	}
+	return !sf.ModTime().After(cf.ModTime())
 }
 
 // Status 返回当前状态；内存里没有但缓存文件在 → done（服务重启后依然成立）。
@@ -226,7 +244,8 @@ func (t *Transcoder) Start(id string, track int, src string, force bool) (tcJob,
 		}
 	}
 	// 同一时刻只允许一个任务（手机 CPU）；被取消的任务在 run 收尾前仍算 running，
-	// 但新任务可以直接起——两者写的是不同文件，旧进程会立刻退出。
+	// 但新任务可以直接起——每个任务的 .part 带自己的序号，收尾只删自己那份，
+	// 不会误删新任务正在写的文件。
 	for jid, j := range t.jobs {
 		if j.State == "running" && jid != key {
 			return tcJob{}, errors.New("已有转码任务在进行，等它完成后再试")
@@ -243,7 +262,8 @@ func (t *Transcoder) Start(id string, track int, src string, force bool) (tcJob,
 	job := &tcJob{State: "running"}
 	t.jobs[key] = job
 	t.cancels[key] = cancel
-	go t.run(ctx, key, id, track, src, fi.ModTime(), dur, job)
+	part := fmt.Sprintf("%s.%d.part", t.CachePath(id, track), atomic.AddUint64(&t.seq, 1))
+	go t.run(ctx, key, id, track, src, fi.ModTime(), dur, job, part)
 	return *job, nil
 }
 
@@ -268,10 +288,8 @@ func (t *Transcoder) Cancel(id string, track int) bool {
 	return ok
 }
 
-func (t *Transcoder) run(ctx context.Context, key, id string, track int, src string, srcMod time.Time, durSec float64, job *tcJob) {
-	part := t.CachePath(id, track) + ".part"
+func (t *Transcoder) run(ctx context.Context, key, id string, track int, src string, srcMod time.Time, durSec float64, job *tcJob, part string) {
 	final := t.CachePath(id, track)
-	os.Remove(part)
 
 	args := []string{
 		"-y", "-nostdin",
@@ -361,8 +379,8 @@ func (t *Transcoder) finish(key string, job *tcJob, final tcJob) {
 // probeDuration 用 ffprobe 拿总时长，供进度百分比计算；拿不到就返回 0
 // （进度条显示不确定态，不影响转码本身）。
 func probeDuration(src string) float64 {
-	out, err := exec.Command("ffprobe", "-v", "error",
-		"-show_entries", "format=duration", "-of", "csv=p=0", src).Output()
+	out, err := runProbe("-v", "error",
+		"-show_entries", "format=duration", "-of", "csv=p=0", src)
 	if err != nil {
 		return 0
 	}
@@ -397,9 +415,9 @@ func parseProgress(line string, durSec float64) float64 {
 // 用 JSON 而不是 CSV：音轨带 side data 时 ffprobe 的 csv 输出会多一个逗号
 // （实测 a:1 输出 "2,"），按整数解析会误判成「没有音轨」。
 func probeChannels(src string, track int) int {
-	out, err := exec.Command("ffprobe", "-v", "error",
+	out, err := runProbe("-v", "error",
 		"-select_streams", fmt.Sprintf("a:%d", track),
-		"-show_entries", "stream=channels", "-of", "json", src).Output()
+		"-show_entries", "stream=channels", "-of", "json", src)
 	if err != nil {
 		return 0
 	}
@@ -424,8 +442,8 @@ func mediaDurationSec(src string) int {
 		return v.(int)
 	}
 	n := 0
-	out, err := exec.Command("ffprobe", "-v", "error",
-		"-show_entries", "format=duration", "-of", "csv=p=0", src).Output()
+	out, err := runProbe("-v", "error",
+		"-show_entries", "format=duration", "-of", "csv=p=0", src)
 	if err == nil {
 		if f, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64); err == nil && f > 0 {
 			n = int(f)
@@ -437,8 +455,8 @@ func mediaDurationSec(src string) int {
 
 // probeVideoCodec 取第一条视频流的编码名（hevc/h264/av1…），拿不到返回空串。
 func probeVideoCodec(src string) string {
-	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
-		"-show_entries", "stream=codec_name", "-of", "csv=p=0", src).Output()
+	out, err := runProbe("-v", "error", "-select_streams", "v:0",
+		"-show_entries", "stream=codec_name", "-of", "csv=p=0", src)
 	if err != nil {
 		return ""
 	}

@@ -262,11 +262,11 @@ func TestTranscodeCancel(t *testing.T) {
 	if got := tc.Running(); len(got) != 1 || got[0].ID != "cancel1" || got[0].Track != 0 {
 		t.Fatalf("Running = %+v, want cancel1@0", got)
 	}
-	// 等 ffmpeg 真正开始写产物，再取消
-	part := tc.CachePath("cancel1", 0) + ".part"
+	// 等 ffmpeg 真正开始写产物，再取消（半成品名带任务序号）
+	partPattern := tc.CachePath("cancel1", 0) + ".*.part"
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if _, err := os.Stat(part); err == nil {
+		if m, _ := filepath.Glob(partPattern); len(m) > 0 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -293,7 +293,7 @@ func TestTranscodeCancel(t *testing.T) {
 	if tc.Has("cancel1", 0) {
 		t.Error("取消后不该有正式缓存文件")
 	}
-	if m, _ := filepath.Glob(tc.CachePath("cancel1", 0) + ".part"); len(m) > 0 {
+	if m, _ := filepath.Glob(partPattern); len(m) > 0 {
 		t.Errorf("取消后残留 .part: %v", m)
 	}
 	if got := tc.Running(); len(got) != 0 {
@@ -306,5 +306,62 @@ func TestTranscodeCancel(t *testing.T) {
 	tc.Cancel("cancel1", 0) // 别让测试进程拖着 ffmpeg
 	if tc.Cancel("cancel1", 0) {
 		t.Error("没有任务时 Cancel 应返回 false")
+	}
+}
+
+// Usable：缓存不比源旧才可用；源被替换（mtime 变新）后旧音轨必须作废。
+func TestTranscoderUsable(t *testing.T) {
+	dir := t.TempDir()
+	tc, err := NewTranscoder(filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "0123456789abcdef"
+	src := filepath.Join(dir, "src.mkv")
+	if err := os.WriteFile(src, []byte("src"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if tc.Usable(id, 0, src) {
+		t.Error("没有缓存时 Usable 应为 false")
+	}
+	cache := tc.CachePath(id, 0)
+	if err := os.WriteFile(cache, []byte("cache"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(cache, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(src, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if !tc.Usable(id, 0, src) {
+		t.Error("缓存比源新时应可用")
+	}
+	// 源被替换：mtime 比缓存新
+	if err := os.Chtimes(src, now.Add(time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if tc.Usable(id, 0, src) {
+		t.Error("源比缓存新时不应再用旧音轨")
+	}
+}
+
+// 启动清扫要能认出带任务序号的半成品。
+func TestTranscoderCleanupParts(t *testing.T) {
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	part := filepath.Join(cacheDir, "0123456789abcdef.a1.m4a.7.part")
+	if err := os.WriteFile(part, []byte("half"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewTranscoder(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(part); err == nil {
+		t.Error("启动后残留的半成品应被清掉")
 	}
 }
