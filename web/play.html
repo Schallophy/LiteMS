@@ -21,7 +21,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 /* 字幕：自己画，才能和排版一致，也才能随手调偏移。
    位置固定，不随控制条显隐上下跳——全屏时下沉容易被系统栏/画面下沿吃掉。
    --cue-bottom 由脚本按实际画面（object-fit:contain 后的黑边）写入，
-   让字幕整块落在画面下沿之外。 */
+   让字幕整块尽量落在画面下沿之外。 */
 .cue{
   position:absolute;left:0;right:0;
   bottom:calc(var(--cue-bottom,clamp(60px,8vh,84px)) + env(safe-area-inset-bottom));
@@ -862,7 +862,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 
   /* 字幕整块落在画面之外：object-fit:contain 的画面上下黑边是对称的，
      按视频像素尺寸算出实际画面高度，把字幕块顶边压在画面下沿下面。
-     黑边放不下整块时（比如宽银幕片源）回落到 CSS 的默认位置。 */
+     黑边放不下整块时，改为整块挪到画面内、底边贴住画面下沿上方。 */
   function placeCue(){
     var W = stage.clientWidth, H = stage.clientHeight;
     var vw = v.videoWidth, vh = v.videoHeight;
@@ -871,9 +871,9 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     var bar = (H - picH) / 2;
     var textH = cueEl.offsetHeight;
     var gap = Math.min(18, Math.max(8, Math.round(H * 0.012)));
-    var b = Math.round(bar - textH - gap);
-    if (bar > 24 && b >= 8) cueBox.style.setProperty('--cue-bottom', b + 'px');
-    else cueBox.style.removeProperty('--cue-bottom');
+    var below = Math.round(bar - textH - gap);
+    var b = below >= 8 ? below : Math.round(bar + gap);
+    cueBox.style.setProperty('--cue-bottom', b + 'px');
   }
 
   function setSub(url, label, restoreOff){
