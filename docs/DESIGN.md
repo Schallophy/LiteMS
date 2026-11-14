@@ -1290,6 +1290,12 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 速率收敛，音量/静音/倍速跟随。视频流零拷贝，所以画质与网络都是原样。
 **绝不能改写原文件**（qbt 在做种，哈希一变就废）。
 
+**多音轨**：ffprobe 列出容器内全部音轨（`/api/transcode/{id}?track=N`、
+`/audio/{id}?track=N`），逐轨转码独立缓存成 `<id>.aN.m4a`（序号 0 沿用 `<id>.m4a`）；
+`<video>` 本身只播容器的默认轨，所以播放页在「声音」里列出音轨，选中非默认轨时
+自动切成「静音画面 + 该轨独立的 `<audio>`」。默认轨能被浏览器直接解码时走原生
+直连，AAC 入口对单音轨片子禁用。
+
 **实时转码（Direct Stream，Jellyfin 同款思路）**：
 `ffmpeg -ss <start> -readrate 1 -readrate_initial_burst 16 -i src -map 0:v:0 -map 0:a:0
 -c:v copy -tag:v hvc1 -c:a aac -b:a <按声道> -ac <声道> -f hls -hls_time 4
