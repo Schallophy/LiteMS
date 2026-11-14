@@ -143,6 +143,7 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/item/", s.handleItemPage)
 	mux.HandleFunc("/play/", s.handlePlayPage)
 	mux.HandleFunc("/transcodes", s.handleTranscodesPage)
+	mux.HandleFunc("/transcodes/", s.handleTranscodesPage)
 	mux.HandleFunc("/settings", s.handleSettings)
 	mux.HandleFunc("/", s.handleIndex)
 
@@ -482,8 +483,14 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "id 必须是 16 位十六进制")
 		return
 	}
+	it, err := s.db.GetItem(id)
+	if err != nil || it == nil {
+		writeErr(w, http.StatusNotFound, "条目不存在")
+		return
+	}
 	track := trackParam(r)
-	if !s.tc.Has(id, track) {
+	src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
+	if !s.tc.Usable(id, track, src) {
 		writeErr(w, http.StatusNotFound, "还没有这条音轨的缓存")
 		return
 	}
@@ -526,10 +533,25 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	}
 	src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
 
-	// ?ctl=pause|resume：观众暂停/继续时同步掐停 ffmpeg，别让实时窗口滑过播放位置
+	// ?ctl=pause|resume|ping|stop：同步 ffmpeg 的暂停/继续，暂停期间靠 ping
+	// 续命（只 touch、不 SIGCONT），切回直连时 stop 立刻收掉 ffmpeg。
 	if ctl := r.URL.Query().Get("ctl"); ctl != "" {
-		if tok := r.URL.Query().Get("token"); tok != "" {
-			s.hls.Pause(id, tok, ctl == "pause")
+		tok := r.URL.Query().Get("token")
+		var ok bool
+		switch ctl {
+		case "ping":
+			ok = s.hls.Ping(id, tok)
+		case "pause", "resume":
+			ok = s.hls.Pause(id, tok, ctl == "pause")
+		case "stop":
+			ok = s.hls.Stop(id, tok)
+		default:
+			writeErr(w, http.StatusBadRequest, "ctl 只支持 pause/resume/ping/stop")
+			return
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "转码会话不存在或已过期")
+			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -540,8 +562,13 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
-	// 等第一段出来再返回，避免播放器拿着空播放列表反复重试
-	waitFile(filepath.Join(sess.Dir, "video", "index.m3u8"), 8*time.Second)
+	// 等第一段出来再返回，避免播放器拿着空播放列表反复重试；
+	// 等不到说明 ffmpeg 起不来（源坏了、编码不支持……），别给一个死链接。
+	if !waitFile(filepath.Join(sess.Dir, "video", "index.m3u8"), 8*time.Second) {
+		s.hls.Stop(id, sess.Token)
+		writeErr(w, http.StatusServiceUnavailable, "实时转码没有产出分段，检查 ffmpeg 是否正常")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": sess.Token,
 		"start": sess.Start,
@@ -1092,12 +1119,14 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 	if dt, ok := defaultAudioTrack(tracks); ok {
 		audioDefault = dt.N
 	}
+	// 缓存比源文件旧说明源被替换过，旧音轨不能再用（否则新画面配旧声音）
+	src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
 	atDTO := make([]AudioTrackDTO, 0, len(tracks))
 	for _, t := range tracks {
 		atDTO = append(atDTO, AudioTrackDTO{
 			N: t.N, Label: audioTrackLabel(t), Lang: t.Lang, Codec: t.Codec,
 			Channels: t.Channels, OK: browserAudioOK(t.Codec),
-			Ready: s.tc.Has(id, t.N), Default: t.Default,
+			Ready: s.tc.Usable(id, t.N, src), Default: t.Default,
 		})
 	}
 	data := pageData{
@@ -1108,7 +1137,7 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 		AudioOK:      audioOK,
 		AudioTracks:  atDTO,
 		AudioDefault: audioDefault,
-		AudioReady:   s.tc.Has(id, audioDefault),
+		AudioReady:   s.tc.Usable(id, audioDefault, src),
 		LiveReady:    ffmpegReady(),
 		Subs:         s.subsFor(*it),
 	}
