@@ -652,6 +652,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   }
 
   function useDirect(at){
+    abortPrep();   // 切到直连：停掉后台还在跑的预转码
     mode = 'direct';
     teardownLive();
     a.pause(); a.removeAttribute('src'); a.load();
@@ -663,6 +664,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   }
 
   function useAudio(at, autoplay){
+    abortPrep();   // 只有真正要转的那条需要占 CPU；切到已就绪音轨时停掉其它的
     autoplay = autoplay !== false;
     mode = 'audio';
     teardownLive();

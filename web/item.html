@@ -184,8 +184,9 @@
         del.addEventListener('click', function(){
           if (!confirm('删除这条导入的字幕？')) return;
           fetch('/api/sub/' + ITEM + '?file=' + encodeURIComponent(s.file), {method:'DELETE'})
-            .then(function(r){ return r.json(); })
-            .then(function(d){ render(d.subs); msg('删掉了。'); });
+            .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
+            .then(function(d){ render(d.subs); msg('删掉了。'); })
+            .catch(function(err){ msg('删除失败：' + err.message, true); });
         });
         acts.appendChild(del);
       }
@@ -217,8 +218,9 @@
     if (!b) return;
     if (!confirm('删除这条导入的字幕？')) return;
     fetch('/api/sub/' + ITEM + '?file=' + encodeURIComponent(b.dataset.del), {method:'DELETE'})
-      .then(function(r){ return r.json(); })
-      .then(function(d){ render(d.subs); msg('删掉了。'); });
+      .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
+      .then(function(d){ render(d.subs); msg('删掉了。'); })
+      .catch(function(err){ msg('删除失败：' + err.message, true); });
   });
 })();
 </script>
