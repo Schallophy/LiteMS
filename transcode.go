@@ -164,6 +164,11 @@ func (t *Transcoder) Cancel(id string, track int) bool {
 	c, ok := t.cancels[key]
 	if ok {
 		delete(t.cancels, key)
+		// 立刻脱离 running：ffmpeg 退出前还有一小段收尾，
+		// 期间允许其它音轨的任务马上开始，不用等它。
+		if j, found := t.jobs[key]; found {
+			j.State = "cancelling"
+		}
 	}
 	t.mu.Unlock()
 	if ok {
@@ -254,11 +259,12 @@ func (t *Transcoder) finish(key string, job *tcJob, final tcJob) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	*job = final
-	// 只有当前登记的就是这次任务时才清 cancel：期间可能已经有新任务占了同一个 key
-	if cur, ok := t.jobs[key]; ok && cur == job {
-		delete(t.cancels, key)
+	// 已被同 key 的新任务接管：别覆盖它的状态，也别清它的 cancel
+	if cur, ok := t.jobs[key]; ok && cur != job {
+		return
 	}
 	t.jobs[key] = job
+	delete(t.cancels, key)
 }
 
 // probeDuration 用 ffprobe 拿总时长，供进度百分比计算；拿不到就返回 0

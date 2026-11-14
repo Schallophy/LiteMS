@@ -791,6 +791,8 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
                 if (pendingTrack === track) pendingTrack = null;
                 st.textContent = ' 已取消';
                 setTimeout(clearNotice, 1500);
+              } else if (j.state === 'cancelling') {
+                st.textContent = ' 取消中…';
               } else if (j.state === 'error') {
                 clearInterval(polling);
                 if (pendingTrack === track) pendingTrack = null;
