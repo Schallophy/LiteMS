@@ -1300,6 +1300,11 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 删掉 `.part`、绝不落正式文件，状态记为 `cancelled`；进程强杀/断电留下的 `.part`
 由启动清扫兜底。换到另一条未就绪音轨时前端会自动取消上一条任务。
 
+**管理**：`/transcodes` 列出进行中任务与已缓存音轨（片名、音轨、体积、完成时间），
+每 2 秒轮询 `GET /api/transcodes` 只更新进度；`DELETE /api/transcodes/{id}?track=N`
+打断，追加 `&purge=1` 则连同缓存文件一起删除。缓存文件是唯一事实来源，条目已被
+删除的孤儿缓存也能在这里清掉。
+
 **实时转码（Direct Stream，Jellyfin 同款思路）**：
 `ffmpeg -ss <start> -readrate 1 -readrate_initial_burst 16 -i src -map 0:v:0 -map 0:a:0
 -c:v copy -tag:v hvc1 -c:a aac -b:a <按声道> -ac <声道> -f hls -hls_time 4
@@ -1363,8 +1368,8 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 
 - 依赖：`pkg install ffmpeg`（Termux）；未安装时接口报错引导
 - 状态：只存内存 + 以文件存在为准；同一时刻只跑一个预转码任务；源更新过则重转
-- UI：**详情页**「转换音轨」按钮 + 进度条（只在 audioHint 命中时显示），播放页不见按钮；
-  已转换后按钮变成「音轨已转换 · 重转」，`POST ?force=1` 丢缓存重转（音轨参数改过时用）
+- UI：播放页「声音」面板选音轨 / 转 AAC；`/transcodes` 看进行中任务与缓存占用，
+  可打断、删除；`POST ?force=1` 丢缓存重转（音轨参数改过时用）
 - 诊断工具：`mkvprobe/` 纯 Go EBML 解析，打印容器内真实音轨 CodecID/声道/语言
 
 ---

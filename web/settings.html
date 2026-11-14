@@ -11,6 +11,7 @@
       <span class="mark" aria-hidden="true"></span>
       <span class="wordmark">{{.Title}}</span>
     </a>
+    <a class="rail-set" href="/transcodes">转码</a>
     <a class="rail-set" href="/settings" aria-current="page">设置</a>
   </aside>
 
@@ -126,6 +127,15 @@
             <label><input type="radio" name="dl_mode" value="symlink"{{if eq .DownloadMode "symlink"}} checked{{end}}><span>软链接</span></label>
             <label><input type="radio" name="dl_mode" value="copy"{{if eq .DownloadMode "copy"}} checked{{end}}><span>复制</span></label>
           </div>
+        </div>
+      </section>
+
+      <section class="sec">
+        <h2>音轨转码</h2>
+        <p class="hint">网页播放时把浏览器解不了的音轨转成 AAC，缓存按音轨各存一条，占几百 MB。可以查看占用、打断进行中的任务或删除缓存。</p>
+        <div class="row">
+          <span class="rl">缓存</span>
+          <div><a class="btn ghost" href="/transcodes">管理转码缓存</a></div>
         </div>
       </section>
 

@@ -124,6 +124,8 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/api/progress/", s.handleProgressGet)
 	mux.HandleFunc("/api/cmd/", s.handleCmd)
 	mux.HandleFunc("/api/transcode/", s.handleTranscode)
+	mux.HandleFunc("/api/transcodes", s.handleTranscodesJSON)
+	mux.HandleFunc("/api/transcodes/", s.handleTranscodesAdmin)
 	mux.HandleFunc("/api/live/", s.handleLive)
 	mux.HandleFunc("/api/sub/", s.handleSubUpload)
 	// 第三方前端库：build 时打进二进制，局域网离线可用
@@ -140,6 +142,7 @@ func RunServer(cfg *Config, db *DB) error {
 	mux.HandleFunc("/fanart/", s.handleImage(false))
 	mux.HandleFunc("/item/", s.handleItemPage)
 	mux.HandleFunc("/play/", s.handlePlayPage)
+	mux.HandleFunc("/transcodes", s.handleTranscodesPage)
 	mux.HandleFunc("/settings", s.handleSettings)
 	mux.HandleFunc("/", s.handleIndex)
 
@@ -629,6 +632,143 @@ func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ---------- 音轨转码管理 ----------
+
+// tcRow 是管理页的一行：运行中带进度，已缓存带体积与完成时间。
+type tcRow struct {
+	ID          string `json:"id"`
+	Track       int    `json:"track"`
+	Title       string `json:"title"`
+	Link        bool   `json:"-"`
+	TrackLabel  string `json:"track_label"`
+	State       string `json:"state,omitempty"`
+	ProgressPct int    `json:"progress_pct"`
+	Size        string `json:"size,omitempty"`
+	When        string `json:"when,omitempty"`
+}
+
+// tcRowFor 填片名与音轨描述。条目或音轨探测不到时退回序号，不挡管理操作。
+func (s *Server) tcRowFor(id string, track int) tcRow {
+	row := tcRow{ID: id, Track: track, Title: "未知条目", TrackLabel: fmt.Sprintf("音轨 %d", track+1)}
+	if it, err := s.db.GetItem(id); err == nil && it != nil {
+		row.Title, row.Link = it.Title, true
+		tracks, _ := s.audioTracks(*it)
+		if track >= 0 && track < len(tracks) {
+			row.TrackLabel = audioTrackLabel(tracks[track])
+		}
+	}
+	return row
+}
+
+func (s *Server) transcodeRunningRows() []tcRow {
+	jobs := s.tc.Running()
+	rows := make([]tcRow, 0, len(jobs))
+	for _, j := range jobs {
+		row := s.tcRowFor(j.ID, j.Track)
+		row.State = j.State
+		row.ProgressPct = int(j.Progress*100 + 0.5)
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (s *Server) transcodeCachedRows() ([]tcRow, int64) {
+	files := s.tc.Cached()
+	rows := make([]tcRow, 0, len(files))
+	var total int64
+	for _, f := range files {
+		row := s.tcRowFor(f.ID, f.Track)
+		row.Size = humanSize(f.Size)
+		row.When = f.Mod.Format("2006-01-02 15:04")
+		total += f.Size
+		rows = append(rows, row)
+	}
+	return rows, total
+}
+
+func humanSize(n int64) string {
+	if n < 1024 {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	units := [...]string{"KB", "MB", "GB", "TB"}
+	f := float64(n) / 1024
+	i := 0
+	for f >= 1024 && i < len(units)-1 {
+		f /= 1024
+		i++
+	}
+	if f >= 100 {
+		return fmt.Sprintf("%.0f %s", f, units[i])
+	}
+	return fmt.Sprintf("%.1f %s", f, units[i])
+}
+
+// handleTranscodesJSON 给管理页轮询用（运行中任务的进度会变）。
+func (s *Server) handleTranscodesJSON(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "只支持 GET")
+		return
+	}
+	cached, total := s.transcodeCachedRows()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"running":   s.transcodeRunningRows(),
+		"cached":    cached,
+		"total":     humanSize(total),
+		"cache_dir": s.tc.Dir(),
+	})
+}
+
+// handleTranscodesAdmin 管理页的打断 / 删除：
+//
+//	DELETE /api/transcodes/{id}?track=N            打断运行中的任务
+//	DELETE /api/transcodes/{id}?track=N&purge=1    打断（如有）并删除缓存文件
+func (s *Server) handleTranscodesAdmin(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(r.URL.Path, "/api/transcodes/")
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "id 必须是 16 位十六进制")
+		return
+	}
+	if r.Method != http.MethodDelete {
+		writeErr(w, http.StatusMethodNotAllowed, "只支持 DELETE")
+		return
+	}
+	track := trackParam(r)
+	if r.URL.Query().Get("purge") == "1" {
+		cancelled, removed := s.tc.Remove(id, track)
+		if !cancelled && !removed {
+			writeErr(w, http.StatusNotFound, "这条音轨没有转码任务或缓存")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cancelled": cancelled, "removed": removed})
+		return
+	}
+	if !s.tc.Cancel(id, track) {
+		writeErr(w, http.StatusConflict, "没有正在进行的转码任务")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleTranscodesPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/transcodes" && r.URL.Path != "/transcodes/" {
+		http.NotFound(w, r)
+		return
+	}
+	cached, total := s.transcodeCachedRows()
+	data := pageData{
+		Title: s.cfg.UI.Title, Theme: s.pageTheme(),
+		TranscodeRunning: s.transcodeRunningRows(),
+		TranscodeCached:  cached,
+		TranscodeTotal:   humanSize(total),
+		TranscodeDir:     s.tc.Dir(),
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tpl.ExecuteTemplate(w, "transcodes.html", data); err != nil {
+		warnf("渲染转码管理页失败：%v", err)
+	}
+}
+
 // handleSub 统一字幕出口：
 //
 //	/sub/{id}?sub=N      外挂字幕（按扫描顺序，N 从 0 起）
@@ -819,6 +959,11 @@ type pageData struct {
 	LiveReady bool
 	// Subs 是合并后的字幕清单（外挂/导入/内嵌），详情页与播放页共用
 	Subs []SubDTO
+	// 转码管理页：运行中任务、已缓存音轨与汇总
+	TranscodeRunning []tcRow
+	TranscodeCached  []tcRow
+	TranscodeTotal   string
+	TranscodeDir     string
 }
 
 // AudioTrackDTO 是播放页「声音」面板里的一条音轨。

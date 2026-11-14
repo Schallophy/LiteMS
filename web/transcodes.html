@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="{{if eq .Theme "light"}}light{{else if eq .Theme "dark"}}dark{{else}}auto{{end}}">
+<head>
+{{template "head" .}}
+{{template "css" .}}
+<style>
+.tc-wrap{max-width:900px}
+.tclist{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.tcrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;padding:14px 0;border-bottom:1px solid var(--line)}
+.tcmain{flex:1 1 220px;min-width:0}
+.tctitle{font-family:var(--serif);font-size:16px;letter-spacing:.02em}
+a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
+.tcmeta{margin:3px 0 0;font-size:12.5px;color:var(--ink-3);line-height:1.5}
+.tcbar{flex:1 1 160px;max-width:260px;height:3px;background:var(--surface-2);overflow:hidden}
+.tcbar>span{display:block;height:100%;width:0;background:var(--burn);transition:width .4s var(--ease)}
+.tcpct{flex:none;width:42px;text-align:right;font-size:12.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.tcfacts{flex:none;font-size:12.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.tcwhen{min-width:112px;text-align:right;color:var(--ink-3)}
+.tcact{flex:none;margin-left:auto}
+.tcact button{
+  background:none;border:1px solid var(--line);border-radius:1px;
+  color:var(--ink-2);padding:6px 13px;cursor:pointer;
+  font:400 12.5px var(--sans);
+  transition:border-color .18s var(--ease),color .18s var(--ease);
+}
+.tcact button:hover{border-color:var(--ink);color:var(--ink)}
+.tcact button[data-armed]{border-color:var(--burn);color:var(--burn)}
+.tcact button[disabled]{opacity:.4;pointer-events:none}
+.tc-empty{margin:14px 0 0;font-size:13px;color:var(--ink-3)}
+.tc-sum{margin:12px 0 0;font-size:12.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.tc-path{margin:18px 0 0;font-size:11.5px;color:var(--ink-3);word-break:break-all}
+@media (max-width:719px){
+  .tcrow{gap:8px 14px}
+  .tcbar{order:1;flex-basis:100%;max-width:none}
+  .tcpct{order:1;width:auto}
+  .tcwhen{display:none}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <a class="rail-top" href="/" title="回到片库">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="wordmark">{{.Title}}</span>
+    </a>
+    <a class="rail-set" href="/transcodes" aria-current="page">转码</a>
+    <a class="rail-set" href="/settings">设置</a>
+  </aside>
+
+  <main class="main">
+    <div class="mbar">
+      <a class="brand" href="/" title="回到片库"><i aria-hidden="true"></i>{{.Title}}</a>
+      <a class="mset" href="/settings">设置</a>
+    </div>
+
+    <header class="set-head">
+      <h1>音轨转码</h1>
+      <p>网页播放时把浏览器解不了的音轨转成 AAC。进行中的任务可以打断，已缓存的文件可以删除，播放时会按需重转。</p>
+    </header>
+
+    <div class="tc-wrap">
+      <p id="tcMsg" class="msg err" hidden></p>
+
+      <section class="sec">
+        <h2>进行中</h2>
+        {{if .TranscodeRunning}}
+        <ul class="tclist">
+          {{range .TranscodeRunning}}
+          <li class="tcrow" data-job="{{.ID}}@{{.Track}}" data-state="{{.State}}">
+            <div class="tcmain">
+              {{if .Link}}<a class="tctitle" href="/item/{{.ID}}">{{.Title}}</a>{{else}}<span class="tctitle">{{.Title}}</span>{{end}}
+              <p class="tcmeta"><span class="tcstate">{{if eq .State "cancelling"}}取消中…{{else}}转码中{{end}}</span> · {{.TrackLabel}}</p>
+            </div>
+            <div class="tcbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{.ProgressPct}}"><span style="width:{{.ProgressPct}}%"></span></div>
+            <span class="tcpct">{{.ProgressPct}}%</span>
+            <div class="tcact">
+              <button type="button" data-act="cancel" data-id="{{.ID}}" data-track="{{.Track}}"{{if eq .State "cancelling"}} disabled{{end}}>打断</button>
+            </div>
+          </li>
+          {{end}}
+        </ul>
+        {{else}}
+        <p class="tc-empty">没有进行中的转码任务。</p>
+        {{end}}
+      </section>
+
+      <section class="sec">
+        <h2>已缓存</h2>
+        {{if .TranscodeCached}}
+        <ul class="tclist">
+          {{range .TranscodeCached}}
+          <li class="tcrow" data-cache="{{.ID}}@{{.Track}}">
+            <div class="tcmain">
+              {{if .Link}}<a class="tctitle" href="/item/{{.ID}}">{{.Title}}</a>{{else}}<span class="tctitle">{{.Title}}</span>{{end}}
+              <p class="tcmeta">{{.TrackLabel}}</p>
+            </div>
+            <span class="tcfacts">{{.Size}}</span>
+            <span class="tcfacts tcwhen">{{.When}}</span>
+            <div class="tcact">
+              <button type="button" data-act="purge" data-id="{{.ID}}" data-track="{{.Track}}">删除</button>
+            </div>
+          </li>
+          {{end}}
+        </ul>
+        <p class="tc-sum">共 {{len .TranscodeCached}} 条 · {{.TranscodeTotal}}</p>
+        {{else}}
+        <p class="tc-empty">还没有转码缓存。</p>
+        {{end}}
+        <p class="tc-path">{{.TranscodeDir}}</p>
+      </section>
+    </div>
+  </main>
+</div>
+<script>
+(function(){
+  var msg = document.getElementById('tcMsg');
+  var runRows = Array.prototype.slice.call(document.querySelectorAll('[data-job]'));
+
+  function showErr(text){
+    if (!text) { msg.hidden = true; return; }
+    msg.textContent = text;
+    msg.hidden = false;
+  }
+
+  // 断点：运行中任务集合 + 缓存文件集合。任何一项变化都重载页面，
+  // 只有进度数字在同一批任务里前进时才就地更新。
+  function sigOf(data){
+    var run = (data.running || []).map(function(j){ return j.id + '@' + j.track + ':' + j.state; }).sort().join('|');
+    var cache = (data.cached || []).map(function(c){ return c.id + '@' + c.track; }).join('|');
+    return run + '#' + cache;
+  }
+  var cur = runRows.map(function(el){ return el.dataset.job + ':' + el.dataset.state; }).sort().join('|') + '#'
+    + Array.prototype.map.call(document.querySelectorAll('[data-cache]'), function(el){ return el.dataset.cache; }).join('|');
+
+  function paint(data){
+    var map = {};
+    (data.running || []).forEach(function(j){ map[j.id + '@' + j.track] = j; });
+    runRows.forEach(function(el){
+      var j = map[el.dataset.job];
+      if (!j) return;
+      var pct = Math.max(0, Math.min(100, j.progress_pct | 0));
+      var bar = el.querySelector('.tcbar');
+      var fill = el.querySelector('.tcbar > span');
+      var num = el.querySelector('.tcpct');
+      if (fill) fill.style.width = pct + '%';
+      if (bar) bar.setAttribute('aria-valuenow', pct);
+      if (num) num.textContent = pct + '%';
+    });
+  }
+
+  function tick(){
+    fetch('/api/transcodes', {cache:'no-store', headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(data){
+        if (!data) return;
+        if (sigOf(data) !== cur) { location.reload(); return; }
+        paint(data);
+      })
+      .catch(function(){});
+  }
+  setInterval(tick, 2000);
+
+  document.addEventListener('click', function(e){
+    var b = e.target.closest('button[data-act]');
+    if (!b || b.disabled) return;
+    var act = b.dataset.act;
+    if (act === 'purge' && !b.dataset.armed) {
+      b.dataset.armed = '1';
+      b.textContent = '确认删除';
+      setTimeout(function(){
+        if (b.isConnected) { delete b.dataset.armed; b.textContent = '删除'; }
+      }, 4000);
+      return;
+    }
+    var url = '/api/transcodes/' + b.dataset.id + '?track=' + b.dataset.track;
+    if (act === 'purge') url += '&purge=1';
+    b.disabled = true;
+    showErr('');
+    fetch(url, {method:'DELETE'})
+      .then(function(r){
+        if (r.ok) { location.reload(); return; }
+        return r.json().then(function(d){ throw new Error(d.error || '操作失败'); });
+      })
+      .catch(function(err){ b.disabled = false; showErr(err.message); });
+  });
+})();
+</script>
+</body>
+</html>

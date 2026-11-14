@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,6 +69,94 @@ func (t *Transcoder) CachePath(id string, track int) string {
 
 func tcKey(id string, track int) string {
 	return id + "@" + strconv.Itoa(track)
+}
+
+// reCacheFile 匹配缓存目录里的成品文件名（.part 不匹配，半成品不进列表）。
+var reCacheFile = regexp.MustCompile(`^([0-9a-f]{16})(?:\.a([0-9]+))?\.m4a$`)
+
+// TcFile 是缓存目录里一条已完成的音轨。
+type TcFile struct {
+	ID    string
+	Track int
+	Size  int64
+	Mod   time.Time
+}
+
+// TcJob 是运行中任务的快照（含已经点了取消、ffmpeg 还在收尾的）。
+type TcJob struct {
+	ID       string
+	Track    int
+	State    string
+	Progress float64
+}
+
+// Dir 返回缓存目录（管理页显示用）。
+func (t *Transcoder) Dir() string { return t.cacheDir }
+
+// Cached 列出已完成缓存，按完成时间从新到旧。
+func (t *Transcoder) Cached() []TcFile {
+	entries, err := os.ReadDir(t.cacheDir)
+	if err != nil {
+		return nil
+	}
+	out := make([]TcFile, 0, len(entries))
+	for _, e := range entries {
+		m := reCacheFile.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.Size() == 0 {
+			continue
+		}
+		track := 0
+		if m[2] != "" {
+			track, _ = strconv.Atoi(m[2])
+		}
+		out = append(out, TcFile{ID: m[1], Track: track, Size: info.Size(), Mod: info.ModTime()})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Mod.After(out[j].Mod) })
+	return out
+}
+
+// Running 列出正在运行的任务（state 为 running / cancelling）。
+func (t *Transcoder) Running() []TcJob {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]TcJob, 0, len(t.cancels))
+	for key, j := range t.jobs {
+		if j.State != "running" && j.State != "cancelling" {
+			continue
+		}
+		id, n, ok := strings.Cut(key, "@")
+		if !ok {
+			continue
+		}
+		track, _ := strconv.Atoi(n)
+		out = append(out, TcJob{ID: id, Track: track, State: j.State, Progress: j.Progress})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ID != out[j].ID {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Track < out[j].Track
+	})
+	return out
+}
+
+// Remove 打断运行中的任务（如果有）并删除缓存文件。返回是否打断了任务、
+// 是否删掉了文件，让调用方能区分「本来就没有」和「删成功了」。
+func (t *Transcoder) Remove(id string, track int) (cancelled, removed bool) {
+	cancelled = t.Cancel(id, track)
+	if err := os.Remove(t.CachePath(id, track)); err == nil {
+		removed = true
+	}
+	if !cancelled {
+		t.mu.Lock()
+		delete(t.jobs, tcKey(id, track))
+		t.mu.Unlock()
+	}
+	return cancelled, removed
 }
 
 // Has 返回音轨缓存是否存在（播放页据此决定用「预转码」还是「实时转码」）。

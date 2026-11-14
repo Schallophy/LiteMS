@@ -97,6 +97,53 @@ func TestTranscodeEndToEnd(t *testing.T) {
 	}
 }
 
+// 缓存列表只认成品文件名；.part 和陌生文件不进列表；Remove 删文件并清状态。
+func TestTranscoderCachedAndRemove(t *testing.T) {
+	dir := t.TempDir()
+	tc, err := NewTranscoder(filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "0123456789abcdef"
+	if err := os.WriteFile(tc.CachePath(id, 0), []byte("aaa"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tc.CachePath(id, 2), []byte("bbbb"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tc.CachePath(id, 1)+".part", []byte("part"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tc.cacheDir, "junk.m4a"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files := tc.Cached()
+	if len(files) != 2 {
+		t.Fatalf("Cached 返回 %d 条，want 2: %+v", len(files), files)
+	}
+	sizes := map[string]int64{}
+	for _, f := range files {
+		sizes[tcKey(f.ID, f.Track)] = f.Size
+	}
+	if sizes[id+"@0"] != 3 || sizes[id+"@2"] != 4 {
+		t.Errorf("缓存项不对: %+v", sizes)
+	}
+
+	if cancelled, removed := tc.Remove(id, 2); cancelled || !removed {
+		t.Errorf("Remove(track 2) = cancelled=%v removed=%v, want false/true", cancelled, removed)
+	}
+	if tc.Has(id, 2) {
+		t.Error("删除后缓存文件还在")
+	}
+	if got := tc.Status(id, 2); got.State != "none" {
+		t.Errorf("删除后 Status = %s, want none", got.State)
+	}
+	if cancelled, removed := tc.Remove(id, 2); cancelled || removed {
+		t.Errorf("重复 Remove = cancelled=%v removed=%v, want false/false", cancelled, removed)
+	}
+}
+
 // 无 ffmpeg 时 Start 报错而不是启动任务。
 func TestTranscodeNoFFmpeg(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err == nil {
@@ -212,6 +259,9 @@ func TestTranscodeCancel(t *testing.T) {
 	if _, err := tc.Start("cancel1", 0, src, false); err != nil {
 		t.Fatal(err)
 	}
+	if got := tc.Running(); len(got) != 1 || got[0].ID != "cancel1" || got[0].Track != 0 {
+		t.Fatalf("Running = %+v, want cancel1@0", got)
+	}
 	// 等 ffmpeg 真正开始写产物，再取消
 	part := tc.CachePath("cancel1", 0) + ".part"
 	deadline := time.Now().Add(10 * time.Second)
@@ -245,6 +295,9 @@ func TestTranscodeCancel(t *testing.T) {
 	}
 	if m, _ := filepath.Glob(tc.CachePath("cancel1", 0) + ".part"); len(m) > 0 {
 		t.Errorf("取消后残留 .part: %v", m)
+	}
+	if got := tc.Running(); len(got) != 0 {
+		t.Errorf("取消收尾后 Running = %+v, want 空", got)
 	}
 	// 取消后仍能重新起任务
 	if _, err := tc.Start("cancel1", 0, src, false); err != nil {
