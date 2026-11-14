@@ -351,7 +351,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
         {{range .AudioTracks}}
         <li><label>
           <input type="radio" name="atrack" value="{{.N}}" data-ok="{{if .OK}}1{{else}}0{{end}}" data-ready="{{if .Ready}}1{{else}}0{{end}}" data-label="{{.Label}}"{{if eq .N $.AudioDefault}} checked{{end}}>
-          {{.Label}}<span class="src">{{if .Default}}默认{{else if .OK}}可直连{{else}}需转码{{end}}</span>
+          {{.Label}}<span class="src">{{if .Default}}默认{{else if .OK}}可解码{{else}}需转码{{end}}</span>
         </label></li>
         {{end}}
       </ul>
@@ -714,6 +714,14 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     }
   }
 
+  // 直连播的是容器默认轨：选中项跟着回到默认轨，别让单选框停在别的音轨上
+  function selectDefaultTrack(){
+    trackN = A_DEFAULT;
+    var r = document.querySelector('#trackOpts input[name=atrack][value="' + trackN + '"]');
+    if (r) r.checked = true;
+    savePrefs();
+  }
+
   function switchMode(next, at){
     if (next === 'audio' && !MULTI_TRACK && AUDIO_OK) { toast('原生音轨可以直接播放，不需要 AAC 音轨。'); return; }
     if (next === 'live' && !LIVE_READY) { toast('ffmpeg 未安装，实时转码不可用。'); return; }
@@ -722,11 +730,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     var paused = v.paused;
     if (next === 'live') { startLive(now, !paused); return; }
     if (next === 'direct') {
-      // 直连播的是容器默认轨，选中项跟着回到默认轨
-      trackN = A_DEFAULT;
-      var rd = document.querySelector('#trackOpts input[name=atrack][value="' + trackN + '"]');
-      if (rd) rd.checked = true;
-      savePrefs();
+      selectDefaultTrack();
       useDirect(now);
       if (paused) v.pause();
       return;
@@ -740,6 +744,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
      转码可以取消：提示条里的「取消」按钮，或换到另一条未就绪音轨时自动打断。 */
   var polling = null;
   var pendingTrack = null;   // 正在转的音轨序号
+  var prepGen = 0;           // 作废在途的预转码启动（切走模式后别再偷偷起任务）
   function markTrackReady(n){
     var r = document.querySelector('#trackOpts input[name=atrack][value="' + n + '"]');
     if (r) r.dataset.ready = '1';
@@ -749,10 +754,20 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     if (pendingTrack === track) pendingTrack = null;
     return fetch('/api/transcode/' + ID + '?track=' + track, {method:'DELETE'}).catch(function(){});
   }
+  // 离开预转码模式时调用：停轮询、打断正在转的那条
+  function abortPrep(){
+    prepGen++;
+    clearInterval(polling);
+    var old = pendingTrack;
+    pendingTrack = null;
+    if (old !== null) cancelTranscode(old);
+  }
   function prepAudio(track, at, paused){
     clearInterval(polling);
     var old = pendingTrack;
+    var gen = ++prepGen;
     var begin = function(){
+      if (gen !== prepGen) return;
       pendingTrack = track;
       notice.innerHTML = '';
       var p = document.createElement('b');
@@ -778,6 +793,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
       fetch(base, {method:'POST'})
         .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
         .then(function(job){
+          if (gen !== prepGen) { cancelTranscode(track); return; }   // 已经切走了，别把刚起的任务留在后台
           var done = function(){
             clearInterval(polling);
             if (pendingTrack === track) pendingTrack = null;
@@ -789,6 +805,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
           };
           if (job.state === 'done') { done(); return; }
           polling = setInterval(function(){
+            if (gen !== prepGen) { clearInterval(polling); return; }
             fetch(base).then(function(r){ return r.json(); }).then(function(j){
               if (j.state === 'done') {
                 toast('音轨好了，已经切过去。');
@@ -811,6 +828,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
           }, 2000);
         })
         .catch(function(e){
+          if (gen !== prepGen) return;
           if (pendingTrack === track) pendingTrack = null;
           st.textContent = ' ' + (e.message || '启动失败');
         });
@@ -822,13 +840,21 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     begin();
   }
 
+  var liveSeq = 0;          // /api/live 响应序号：快速切轨时只认最后一次
   function teardownLive(){
     if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
+    // 切回直连/预转码后让服务端立刻收掉 ffmpeg，不用等 90 秒 janitor
+    if (live && live.token) {
+      fetch('/api/live/' + ID + '?ctl=stop&token=' + encodeURIComponent(live.token), {keepalive: true}).catch(function(){});
+    }
+    liveSeq++;   // 作废在途的 /api/live 响应
     live = null;
   }
 
   function startLive(at, autoplay){
+    abortPrep();   // 切到实时转码：别再让预转码在后台占着 CPU
     teardownLive();
+    var seq = liveSeq;
     var wasAudio = mode === 'audio';
     mode = 'live';
     pendingLive = false;
@@ -844,6 +870,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     fetch('/api/live/' + ID + '?start=' + Math.max(0, at).toFixed(2) + '&track=' + trackN)
       .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
       .then(function(d){
+        if (seq !== liveSeq) return;   // 又换了轨/切走了，这份响应已经过期
         live = {token: d.token, start: d.start || 0, total: d.total || 0};
         clearNotice();
         if (window.Hls && window.Hls.isSupported()) {
@@ -862,6 +889,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
         else syncPlayIcon();
       })
       .catch(function(e){
+        if (seq !== liveSeq) return;
         notice.innerHTML = '';
         var b = document.createElement('b');
         b.textContent = '实时转码起不来：';
@@ -869,11 +897,26 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
         notice.appendChild(document.createTextNode(e.message || '未知错误'));
         notice.hidden = false;
         liveFailed = true;
-        if (wasAudio) useAudio(v.currentTime); else useDirect(v.currentTime);
+        // 退回原来那条路：有可用的预转码音轨就继续用，否则回默认轨直连
+        if (wasAudio && trackReady(trackN)) useAudio(v.currentTime);
+        else { selectDefaultTrack(); useDirect(v.currentTime); }
       });
   }
 
   /* ── 播放控制 ───────────────────────────────────────────────── */
+  function resumeLive(){
+    if (!live) return;
+    var tok = live.token;
+    fetch('/api/live/' + ID + '?ctl=resume&token=' + encodeURIComponent(tok))
+      .then(function(r){
+        if (r.ok || !live || live.token !== tok) return;
+        // 会话已被回收（暂停太久）：按当前位置重开一个，别停在 404 上
+        toast('转码会话已回收，正在按当前位置重新起播。');
+        startLive(curSec(), true);
+      })
+      .catch(function(){});
+  }
+
   function syncPlayIcon(){
     var paused = v.paused;
     playBtn.innerHTML = paused ? ICON.play : ICON.pause;
@@ -881,7 +924,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     if (!paused) {
       wake();
       if (mode === 'audio' && a.paused) a.play().catch(function(){});
-      if (mode === 'live' && live) fetch('/api/live/' + ID + '?ctl=resume&token=' + encodeURIComponent(live.token)).catch(function(){});
+      if (mode === 'live') resumeLive();
     } else {
       // 暂停时也把位置存下来，退出页面就丢不了
       save();
@@ -1307,6 +1350,12 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     if (Math.abs(a.currentTime - v.currentTime) > 0.3) a.currentTime = v.currentTime;
     if (a.paused && !v.paused) a.play().catch(function(){});
   }, 1000);
+
+  // 暂停期间没有分段请求，会话会在 90 秒后被 janitor 回收；每 20 秒 ping 续命
+  setInterval(function(){
+    if (mode !== 'live' || !live || !v.paused) return;
+    fetch('/api/live/' + ID + '?ctl=ping&token=' + encodeURIComponent(live.token)).catch(function(){});
+  }, 20000);
 
   // 帧循环：字幕和进度条只在播放时跟着走
   (function loop(){
