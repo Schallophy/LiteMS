@@ -16,7 +16,7 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
 .tcpct{flex:none;width:42px;text-align:right;font-size:12.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .tcfacts{flex:none;font-size:12.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .tcwhen{min-width:112px;text-align:right;color:var(--ink-3)}
-.tcact{flex:none;margin-left:auto}
+.tcact{flex:none;margin-left:auto;display:flex;gap:8px}
 .tcact button{
   background:none;border:1px solid var(--line);border-radius:1px;
   color:var(--ink-2);padding:6px 13px;cursor:pointer;
@@ -163,6 +163,15 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
   }
   setInterval(tick, 2000);
 
+  function disarm(b){
+    if (!b || !b.dataset.armed) return;
+    delete b.dataset.armed;
+    b.textContent = '删除';
+    var c = b.parentNode.querySelector('.tc-cancel');
+    if (c) c.remove();
+    if (b._tcTimer) { clearTimeout(b._tcTimer); b._tcTimer = null; }
+  }
+
   document.addEventListener('click', function(e){
     var b = e.target.closest('button[data-act]');
     if (!b || b.disabled) return;
@@ -170,9 +179,13 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
     if (act === 'purge' && !b.dataset.armed) {
       b.dataset.armed = '1';
       b.textContent = '确认删除';
-      setTimeout(function(){
-        if (b.isConnected) { delete b.dataset.armed; b.textContent = '删除'; }
-      }, 4000);
+      var c = document.createElement('button');
+      c.type = 'button';
+      c.className = 'tc-cancel';
+      c.textContent = '取消';
+      c.addEventListener('click', function(){ disarm(b); });
+      b.after(c);
+      b._tcTimer = setTimeout(function(){ disarm(b); }, 4000);
       return;
     }
     var url = '/api/transcodes/' + b.dataset.id + '?track=' + b.dataset.track;
