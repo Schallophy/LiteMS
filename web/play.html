@@ -118,11 +118,15 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   opacity:0;transition:width .2s var(--ease),opacity .2s var(--ease);cursor:pointer;
 }
 .vol:hover input[type=range],.vol input[type=range]:focus{width:78px;opacity:1}
-.vol input[type=range]::-webkit-slider-runnable-track{height:3px;background:rgba(255,255,255,.28)}
+.vol input[type=range]::-webkit-slider-runnable-track{
+  height:3px;
+  background:linear-gradient(to right,rgba(255,255,255,.92) 0 var(--p,0%),rgba(255,255,255,.28) var(--p,0%) 100%)
+}
 .vol input[type=range]::-webkit-slider-thumb{
   -webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:#fff;margin-top:-3px
 }
 .vol input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.28)}
+.vol input[type=range]::-moz-range-progress{height:3px;background:rgba(255,255,255,.92)}
 
 /* 提示条：音轨可能没声音 */
 .notice{
@@ -803,6 +807,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 
   function volApply(){
     var val = +volEl.value;
+    volEl.style.setProperty('--p', val + '%');
     var silent = userMuted || val === 0;
     v.volume = val / 100;
     a.volume = val / 100;
