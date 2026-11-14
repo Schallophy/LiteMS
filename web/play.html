@@ -262,7 +262,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
       data-audio="{{if .AudioReady}}1{{else}}0{{end}}"
       data-live="{{if .LiveReady}}1{{else}}0{{end}}">
 
-  <video id="v" playsinline preload="metadata"{{if .Item.Fanart}} poster="{{.Item.Fanart}}"{{else if .Item.Poster}} poster="{{.Item.Poster}}"{{end}}></video>
+  <video id="v" playsinline preload="metadata"></video>
   <audio id="a" preload="auto"></audio>
   <div class="cue" aria-live="off"><span id="cue"></span></div>
 
