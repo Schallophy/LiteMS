@@ -92,7 +92,7 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
         {{if .TranscodeCached}}
         <ul class="tclist">
           {{range .TranscodeCached}}
-          <li class="tcrow" data-cache="{{.ID}}@{{.Track}}">
+          <li class="tcrow" data-cache="{{.ID}}@{{.Track}}" data-size="{{.Size}}" data-when="{{.When}}">
             <div class="tcmain">
               {{if .Link}}<a class="tctitle" href="/item/{{.ID}}">{{.Title}}</a>{{else}}<span class="tctitle">{{.Title}}</span>{{end}}
               <p class="tcmeta">{{.TrackLabel}}</p>
@@ -126,14 +126,20 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
   }
 
   // 断点：运行中任务集合 + 缓存文件集合。任何一项变化都重载页面，
-  // 只有进度数字在同一批任务里前进时才就地更新。
+  // 只有进度数字在同一批任务里前进时才就地更新。缓存项带上体积与时间，
+  // force 重转完成后（同一条音轨换了文件）也能及时刷新。
+  function cacheSig(c){
+    return c.id + '@' + c.track + ':' + (c.size || '') + ':' + (c.when || '');
+  }
   function sigOf(data){
     var run = (data.running || []).map(function(j){ return j.id + '@' + j.track + ':' + j.state; }).sort().join('|');
-    var cache = (data.cached || []).map(function(c){ return c.id + '@' + c.track; }).join('|');
+    var cache = (data.cached || []).map(cacheSig).join('|');
     return run + '#' + cache;
   }
   var cur = runRows.map(function(el){ return el.dataset.job + ':' + el.dataset.state; }).sort().join('|') + '#'
-    + Array.prototype.map.call(document.querySelectorAll('[data-cache]'), function(el){ return el.dataset.cache; }).join('|');
+    + Array.prototype.map.call(document.querySelectorAll('[data-cache]'), function(el){
+        return el.dataset.cache + ':' + (el.dataset.size || '') + ':' + (el.dataset.when || '');
+      }).join('|');
 
   function paint(data){
     var map = {};
