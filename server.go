@@ -502,9 +502,9 @@ func trackParam(r *http.Request) int {
 
 // handleLive 开/复用实时转码会话，返回 HLS 播放地址。
 //
-//	/api/live/{id}?start=秒
+//	/api/live/{id}?start=秒&track=N
 //
-// 同一时间点重复请求复用现有会话；拖动进度会因 start 变化而重启 ffmpeg。
+// 同一时间点、同一条音轨重复请求复用现有会话；换轨或拖动进度会重启 ffmpeg。
 func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(r.URL.Path, "/api/live/")
 	if !ok {
@@ -517,6 +517,13 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start, _ := strconv.ParseFloat(r.URL.Query().Get("start"), 64)
+	track := trackParam(r)
+	if track > 0 {
+		if tracks, _ := s.audioTracks(*it); track >= len(tracks) {
+			writeErr(w, http.StatusBadRequest, "没有这条音轨")
+			return
+		}
+	}
 	src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
 
 	// ?ctl=pause|resume：观众暂停/继续时同步掐停 ffmpeg，别让实时窗口滑过播放位置
@@ -528,7 +535,7 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := s.hls.Start(id, src, start)
+	sess, err := s.hls.Start(id, src, start, track)
 	if err != nil {
 		writeErr(w, http.StatusConflict, err.Error())
 		return

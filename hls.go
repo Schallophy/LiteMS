@@ -44,6 +44,7 @@ var hlsSegName = regexp.MustCompile(`^seg(\d{5})\.m4s$`)
 type HLSSession struct {
 	Token    string
 	Item     string
+	Track    int
 	Src      string
 	Start    float64
 	Dir      string
@@ -89,8 +90,9 @@ func NewHLSServer(dir string) (*HLSServer, error) {
 	return h, nil
 }
 
-// Start 为某条目开一个从 start 秒起的会话。同一位置重复调用复用现有会话。
-func (h *HLSServer) Start(item, src string, start float64) (*HLSSession, error) {
+// Start 为某条目开一个从 start 秒起、使用第 track 条音轨的会话。
+// 同一时刻同一位置且同一条音轨重复调用复用现有会话；换轨或拖动会重启 ffmpeg。
+func (h *HLSServer) Start(item, src string, start float64, track int) (*HLSSession, error) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return nil, errors.New("ffmpeg 未安装——Termux 上执行 pkg install ffmpeg")
 	}
@@ -110,14 +112,16 @@ func (h *HLSServer) Start(item, src string, start float64) (*HLSSession, error) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if s := h.byItem[item]; s != nil {
-		if d := s.Start - start; d > -2.5 && d < 2.5 {
-			s.touch()
-			return s, nil
+		if s.Track == track {
+			if d := s.Start - start; d > -2.5 && d < 2.5 {
+				s.touch()
+				return s, nil
+			}
 		}
 		h.stopLocked(s)
 	}
 
-	hasAudio := probeChannels(src) > 0
+	hasAudio := probeChannels(src, track) > 0
 	tok := newToken()
 	dir := filepath.Join(h.dir, tok)
 	for _, sub := range []string{"video", "audio"} {
@@ -126,7 +130,7 @@ func (h *HLSServer) Start(item, src string, start float64) (*HLSSession, error) 
 		}
 	}
 	s := &HLSSession{
-		Token: tok, Item: item, Src: src, Start: start,
+		Token: tok, Item: item, Track: track, Src: src, Start: start,
 		Dir: dir, HasAudio: hasAudio, last: time.Now(),
 	}
 
@@ -146,7 +150,7 @@ func (h *HLSServer) Start(item, src string, start float64) (*HLSSession, error) 
 		"-map", "0:v:0",
 	}
 	if hasAudio {
-		args = append(args, "-map", "0:a:0")
+		args = append(args, "-map", fmt.Sprintf("0:a:%d", track))
 	}
 	args = append(args, "-c:v", "copy")
 	// Chromium 的 MSE 只认 hvc1 这个 sample entry，ffmpeg 默认写 hev1，

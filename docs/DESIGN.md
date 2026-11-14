@@ -1294,7 +1294,9 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 `/audio/{id}?track=N`），逐轨转码独立缓存成 `<id>.aN.m4a`（序号 0 沿用 `<id>.m4a`）；
 `<video>` 本身只播容器的默认轨，所以播放页在「声音」里列出音轨，选中非默认轨时
 自动切成「静音画面 + 该轨独立的 `<audio>`」。默认轨能被浏览器直接解码时走原生
-直连，AAC 入口对单音轨片子禁用。
+直连，AAC 入口对单音轨片子禁用。选中一条**还没有预转码缓存**的音轨时默认走实时
+转码（`/api/live/{id}?start=秒&track=N`），不先等预转码；显式点「AAC 音轨」才
+启动预转码。实时会话按「条目 + 音轨」识别，换轨会重启 ffmpeg。
 
 **取消**：`DELETE /api/transcode/{id}?track=N` 中止正在跑的转码；ffmpeg 被杀后
 删掉 `.part`、绝不落正式文件，状态记为 `cancelled`；进程强杀/断电留下的 `.part`
@@ -1306,7 +1308,7 @@ LiteMS 不做容器级嗅探，改从文件名/容器名识别发布组惯标（
 删除的孤儿缓存也能在这里清掉。
 
 **实时转码（Direct Stream，Jellyfin 同款思路）**：
-`ffmpeg -ss <start> -readrate 1 -readrate_initial_burst 16 -i src -map 0:v:0 -map 0:a:0
+`ffmpeg -ss <start> -readrate 1 -readrate_initial_burst 16 -i src -map 0:v:0 -map 0:a:<track>
 -c:v copy -tag:v hvc1 -c:a aac -b:a <按声道> -ac <声道> -f hls -hls_time 4
 -hls_segment_type fmp4 -hls_list_size 45 -hls_flags delete_segments -var_stream_map ...`
 

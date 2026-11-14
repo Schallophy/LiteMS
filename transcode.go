@@ -392,9 +392,10 @@ func parseProgress(line string, durSec float64) float64 {
 	return -1
 }
 
-// probeChannels 取第一条音轨的声道数，拿不到返回 0。
-func probeChannels(src string) int {
-	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0",
+// probeChannels 取第 track 条音轨的声道数，拿不到返回 0。
+func probeChannels(src string, track int) int {
+	out, err := exec.Command("ffprobe", "-v", "error",
+		"-select_streams", fmt.Sprintf("a:%d", track),
 		"-show_entries", "stream=channels", "-of", "csv=p=0", src).Output()
 	if err != nil {
 		return 0
