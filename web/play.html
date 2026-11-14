@@ -1037,8 +1037,18 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   v.addEventListener('ended', function(){ save(); });
 
   playBtn.addEventListener('click', toggle);
+  // 双击切换全屏：单击暂停/继续要等一小会儿，确认不是双击再执行
+  var clickT = null;
   stage.addEventListener('click', function(e){
-    if (e.target === stage || e.target === v) toggle();
+    if (e.target !== stage && e.target !== v) return;
+    if (e.detail > 1) return;
+    clearTimeout(clickT);
+    clickT = setTimeout(toggle, 220);
+  });
+  stage.addEventListener('dblclick', function(e){
+    if (e.target !== stage && e.target !== v) return;
+    clearTimeout(clickT);
+    toggleFs();
   });
 
   seek.addEventListener('input', function(){
@@ -1084,7 +1094,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   function fsElement(){
     return document.fullscreenElement || document.webkitFullscreenElement || null;
   }
-  fsBtn.addEventListener('click', function(){
+  function toggleFs(){
     if (fsElement()) {
       var q;
       if (document.exitFullscreen) q = document.exitFullscreen();
@@ -1097,7 +1107,8 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     else if (stage.webkitRequestFullscreen) p = stage.webkitRequestFullscreen();
     else if (v.webkitEnterFullscreen) { v.webkitEnterFullscreen(); return; }
     if (p && p.catch) p.catch(function(){});
-  });
+  }
+  fsBtn.addEventListener('click', toggleFs);
   function onFsChange(){
     var full = !!fsElement();
     fsBtn.innerHTML = full ? ICON.exitfs : ICON.expand;
