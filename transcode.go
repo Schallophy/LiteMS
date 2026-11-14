@@ -70,6 +70,47 @@ func (t *Transcoder) CachePath(id string, track int) string {
 	return filepath.Join(t.cacheDir, fmt.Sprintf("%s.a%d.m4a", id, track))
 }
 
+// cacheMeta 记录缓存的来源源文件与完成时刻。缓存文件本身的 mtime 要对齐
+// 源文件（用于失效判断），所以完成时间单独存一份。
+type cacheMeta struct {
+	SrcMtimeUnixNano int64 `json:"src_mtime_ns"`
+	DoneAtUnixNano   int64 `json:"done_at_ns"`
+}
+
+func readCacheMeta(cachePath string) (cacheMeta, bool) {
+	var m cacheMeta
+	b, err := os.ReadFile(cachePath + ".meta")
+	if err != nil || json.Unmarshal(b, &m) != nil {
+		return cacheMeta{}, false
+	}
+	if m.SrcMtimeUnixNano == 0 {
+		return cacheMeta{}, false
+	}
+	return m, true
+}
+
+func writeCacheMeta(cachePath string, m cacheMeta) error {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	tmp := cachePath + ".meta.tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, cachePath+".meta"); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// dropCache 删除成品与元数据（force 重转、管理页删除共用）。
+func (t *Transcoder) dropCache(id string, track int) {
+	os.Remove(t.CachePath(id, track))
+	os.Remove(t.CachePath(id, track) + ".meta")
+}
+
 func tcKey(id string, track int) string {
 	return id + "@" + strconv.Itoa(track)
 }
@@ -116,7 +157,11 @@ func (t *Transcoder) Cached() []TcFile {
 		if m[2] != "" {
 			track, _ = strconv.Atoi(m[2])
 		}
-		out = append(out, TcFile{ID: m[1], Track: track, Size: info.Size(), Mod: info.ModTime()})
+		mod := info.ModTime()
+		if cm, ok := readCacheMeta(filepath.Join(t.cacheDir, e.Name())); ok {
+			mod = time.Unix(0, cm.DoneAtUnixNano)
+		}
+		out = append(out, TcFile{ID: m[1], Track: track, Size: info.Size(), Mod: mod})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mod.After(out[j].Mod) })
 	return out
@@ -151,9 +196,13 @@ func (t *Transcoder) Running() []TcJob {
 // 是否删掉了文件，让调用方能区分「本来就没有」和「删成功了」。
 func (t *Transcoder) Remove(id string, track int) (cancelled, removed bool) {
 	cancelled = t.Cancel(id, track)
-	if err := os.Remove(t.CachePath(id, track)); err == nil {
+	if _, err := os.Stat(t.CachePath(id, track)); err == nil {
 		removed = true
 	}
+	if _, err := os.Stat(t.CachePath(id, track) + ".meta"); err == nil {
+		removed = true
+	}
+	t.dropCache(id, track)
 	if !cancelled {
 		t.mu.Lock()
 		delete(t.jobs, tcKey(id, track))
@@ -169,9 +218,9 @@ func (t *Transcoder) Has(id string, track int) bool {
 }
 
 // Usable 判断缓存能否用于当前的源文件：存在，且不比源旧。
-// 转码完成时把缓存 mtime 对齐到了源文件，所以「缓存更新」就等于「内容对应
-// 同一个源」。播放页与 /audio 必须用它——只看文件在不在，源被替换后会
-// 出现新画面配旧声音。
+// 新缓存带 .meta（记录源 mtime，纳秒精度）；老缓存退回比较文件 mtime
+// （完成时对齐过）。播放页与 /audio 必须用它——只看文件在不在，源被替换后
+// 会出现新画面配旧声音。
 func (t *Transcoder) Usable(id string, track int, src string) bool {
 	cf, err := os.Stat(t.CachePath(id, track))
 	if err != nil || cf.Size() == 0 {
@@ -180,6 +229,9 @@ func (t *Transcoder) Usable(id string, track int, src string) bool {
 	sf, err := os.Stat(src)
 	if err != nil {
 		return false
+	}
+	if m, ok := readCacheMeta(t.CachePath(id, track)); ok {
+		return sf.ModTime().UnixNano() <= m.SrcMtimeUnixNano
 	}
 	return !sf.ModTime().After(cf.ModTime())
 }
@@ -205,66 +257,69 @@ func (t *Transcoder) Start(id string, track int, src string, force bool) (tcJob,
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return tcJob{}, errors.New("ffmpeg 未安装——Termux 上执行 pkg install ffmpeg")
 	}
-	if _, err := os.Stat(src); err != nil {
+	srcFi, err := os.Stat(src)
+	if err != nil {
 		return tcJob{}, errors.New("源文件不存在")
 	}
 	key := tcKey(id, track)
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	// 冲突检查必须在 force 删缓存之前：被拒绝的请求不能有副作用。
+	// 被取消的任务在 run 收尾前仍算 running，但新任务可以直接起——每个任务的
+	// .part 带自己的序号，收尾只删自己那份，不会误删新任务正在写的文件。
+	for jid, j := range t.jobs {
+		if j.State == "running" && jid != key {
+			t.mu.Unlock()
+			return tcJob{}, errors.New("已有转码任务在进行，等它完成后再试")
+		}
+	}
 	if force {
 		if j, ok := t.jobs[key]; ok && j.State == "running" {
-			return *j, nil // 正在转就别打断，等它自己结束
+			out := *j
+			t.mu.Unlock()
+			return out, nil // 正在转就别打断，等它自己结束
 		}
-		os.Remove(t.CachePath(id, track))
+		t.dropCache(id, track)
 		delete(t.jobs, key)
 	}
 	if j, ok := t.jobs[key]; ok {
 		switch j.State {
 		case "running":
-			return *j, nil
+			out := *j
+			t.mu.Unlock()
+			return out, nil
 		case "done":
-			// 源文件比缓存新 → 视为需要重转，否则命中缓存
-			if fi, err := os.Stat(src); err == nil {
-				if cf, err2 := os.Stat(t.CachePath(id, track)); err2 == nil && !fi.ModTime().After(cf.ModTime()) {
-					return *j, nil
-				}
+			if t.Usable(id, track, src) {
+				out := *j
+				t.mu.Unlock()
+				return out, nil
 			}
 		}
 	}
-	if t.Has(id, track) {
-		// 无记录但缓存文件在（服务重启后的 done 状态）：缓存与源同 mtime
-		// （完成时对齐过）说明有效，恢复为 done；源更新过则落到下面重转
-		if fi, err := os.Stat(src); err == nil {
-			if cf, err2 := os.Stat(t.CachePath(id, track)); err2 == nil && !fi.ModTime().After(cf.ModTime()) {
-				j := tcJob{State: "done", Progress: 1}
-				t.jobs[key] = &j
-				return j, nil
-			}
-		}
-	}
-	// 同一时刻只允许一个任务（手机 CPU）；被取消的任务在 run 收尾前仍算 running，
-	// 但新任务可以直接起——每个任务的 .part 带自己的序号，收尾只删自己那份，
-	// 不会误删新任务正在写的文件。
-	for jid, j := range t.jobs {
-		if j.State == "running" && jid != key {
-			return tcJob{}, errors.New("已有转码任务在进行，等它完成后再试")
-		}
+	if t.Usable(id, track, src) {
+		// 无记录但缓存有效（服务重启后的 done 状态）：恢复为 done
+		j := tcJob{State: "done", Progress: 1}
+		t.jobs[key] = &j
+		t.mu.Unlock()
+		return j, nil
 	}
 
-	fi, err := os.Stat(src)
-	if err != nil {
-		return tcJob{}, err
-	}
-	dur := probeDuration(src)
-
+	// 先占位，保证探测时长期间不会有第二个任务起来
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &tcJob{State: "running"}
 	t.jobs[key] = job
 	t.cancels[key] = cancel
+	t.mu.Unlock()
+
+	// ffprobe 可能因弱存储/网络挂载慢到超时，不能持锁跑
+	dur := probeDuration(src)
 	part := fmt.Sprintf("%s.%d.part", t.CachePath(id, track), atomic.AddUint64(&t.seq, 1))
-	go t.run(ctx, key, id, track, src, fi.ModTime(), dur, job, part)
-	return *job, nil
+	go t.run(ctx, key, id, track, src, srcFi.ModTime(), dur, job, part)
+
+	t.mu.Lock()
+	out := *job
+	t.mu.Unlock()
+	return out, nil
 }
 
 // Cancel 取消正在进行的转码；任务不存在或已结束返回 false。
@@ -359,8 +414,14 @@ func (t *Transcoder) run(ctx context.Context, key, id string, track int, src str
 		t.finish(key, job, tcJob{State: "error", Error: err.Error()})
 		return
 	}
-	// 让缓存的 mtime 跟源文件对齐（用于「源更新过就重转」判断）
+	// 让缓存的 mtime 跟源文件对齐（老缓存/兼容用），完成时刻另存 meta
 	os.Chtimes(final, srcMod, srcMod)
+	if err := writeCacheMeta(final, cacheMeta{
+		SrcMtimeUnixNano: srcMod.UnixNano(),
+		DoneAtUnixNano:   time.Now().UnixNano(),
+	}); err != nil {
+		warnf("写入转码缓存元数据失败：%v", err)
+	}
 	t.finish(key, job, tcJob{State: "done", Progress: 1})
 }
 
@@ -432,13 +493,19 @@ func probeChannels(src string, track int) int {
 	return doc.Streams[0].Channels
 }
 
-// durCache 缓存容器时长探测结果：key = 文件路径。实时转码每次重启会话都要
-// 把全片时长带给前端（进度条按全片折算），同一个文件反复 ffprobe 没有意义。
+// durCache 缓存容器时长探测结果：key = 路径 + size + mtime。实时转码每次
+// 重启会话都要把全片时长带给前端（进度条按全片折算），同一个文件反复
+// ffprobe 没有意义；源文件被替换后 key 变化，不会再拿旧时长。
 var durCache sync.Map
 
-// mediaDurationSec 取容器时长（秒），探测失败返回 0。结果进程内缓存。
+// mediaDurationSec 取容器时长（秒），探测失败返回 0 且不缓存失败结果。
 func mediaDurationSec(src string) int {
-	if v, ok := durCache.Load(src); ok {
+	fi, err := os.Stat(src)
+	if err != nil {
+		return 0
+	}
+	key := fmt.Sprintf("%s|%d|%d", src, fi.Size(), fi.ModTime().UnixNano())
+	if v, ok := durCache.Load(key); ok {
 		return v.(int)
 	}
 	n := 0
@@ -447,9 +514,9 @@ func mediaDurationSec(src string) int {
 	if err == nil {
 		if f, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64); err == nil && f > 0 {
 			n = int(f)
+			durCache.Store(key, n)
 		}
 	}
-	durCache.Store(src, n)
 	return n
 }
 
