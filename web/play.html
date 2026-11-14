@@ -541,7 +541,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     var ab = document.getElementById('mAudio');
     ab.setAttribute('aria-pressed', mode === 'audio');
     ab.disabled = AUDIO_OK;
-    ab.textContent = AUDIO_READY ? 'AAC 音轨' : '转成 AAC 音轨';
+    ab.textContent = (!AUDIO_OK && !AUDIO_READY) ? '转成 AAC 音轨' : 'AAC 音轨';
     document.getElementById('mLive').setAttribute('aria-pressed', mode === 'live');
     document.getElementById('mLive').disabled = !LIVE_READY;
     var line = document.getElementById('modeLine');
