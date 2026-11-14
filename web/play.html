@@ -124,17 +124,6 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
 }
 .vol input[type=range]::-moz-range-track{height:3px;background:rgba(255,255,255,.28)}
 
-/* 中央播放按钮（暂停时出现） */
-.bigplay{
-  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-  width:clamp(76px,5vw,96px);height:clamp(76px,5vw,96px);border-radius:50%;border:1px solid rgba(255,255,255,.4);
-  background:rgba(0,0,0,.42);color:#fff;display:grid;place-items:center;
-  cursor:pointer;transition:opacity .2s var(--ease),transform .2s var(--ease)
-}
-.bigplay:hover{background:rgba(0,0,0,.6);transform:translate(-50%,-50%) scale(1.04)}
-.bigplay svg{width:clamp(28px,1.85vw,36px);height:clamp(28px,1.85vw,36px);margin-left:3px}
-.bigplay[hidden]{display:none}
-
 /* 提示条：音轨可能没声音 */
 .notice{
   position:absolute;left:clamp(12px,2.4vw,26px);bottom:calc(96px + env(safe-area-inset-bottom));
@@ -279,10 +268,6 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     </button>
   </div>
 
-  <button class="bigplay" id="bigplay" type="button" aria-label="播放">
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
-  </button>
-
   <div class="notice" id="notice" hidden></div>
 
   <div class="ctl" id="ctl">
@@ -410,7 +395,6 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   var volEl = document.getElementById('vol');
   var ccBtn = document.getElementById('ccBtn');
   var fsBtn = document.getElementById('fsBtn');
-  var bigplay = document.getElementById('bigplay');
   var drawer = document.getElementById('drawer');
   var notice = document.getElementById('notice');
   var toastEl = document.getElementById('toast');
@@ -769,7 +753,6 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     var paused = v.paused;
     playBtn.innerHTML = paused ? ICON.play : ICON.pause;
     playBtn.setAttribute('aria-label', paused ? '播放' : '暂停');
-    bigplay.hidden = !paused;
     if (!paused) {
       wake();
       if (mode === 'audio' && a.paused) a.play().catch(function(){});
@@ -1025,7 +1008,6 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   });
   v.addEventListener('ended', function(){ save(); });
 
-  document.getElementById('bigplay').addEventListener('click', toggle);
   playBtn.addEventListener('click', toggle);
   stage.addEventListener('click', function(e){
     if (e.target === stage || e.target === v) toggle();
