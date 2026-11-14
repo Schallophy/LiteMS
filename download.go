@@ -19,11 +19,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"sort"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -125,6 +126,11 @@ func planMirror(entryPath, entryName, linkDir, dirName string) ([][2]string, err
 // applyMirror 落盘一条镜像。幂等：目标已是指向同一源头的链接（或同大小
 // 同 mtime 的副本）时跳过；落点被别的目录占用时停下报告，绝不递归删除。
 func applyMirror(src, dst, mode string) (created, skipped bool, err error) {
+	// 源与落点相同：再往下走会先删原文件再建链接，直接毁掉数据。
+	// 配置层已经拦截下载目录与媒体根重叠，这里是最后一道保险。
+	if filepath.Clean(src) == filepath.Clean(dst) {
+		return false, false, fmt.Errorf("镜像源与落点相同：%s", src)
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return false, false, err
 	}
@@ -146,6 +152,10 @@ func applySymlink(src, dst string) (created, skipped bool, err error) {
 		} else if fi.IsDir() {
 			return false, false, errDstIsDir(dst)
 		} else {
+			// 同一 inode（硬链接、或经软链父目录指向同一文件）也不能删
+			if si, serr := os.Stat(src); serr == nil && os.SameFile(si, fi) {
+				return false, false, fmt.Errorf("镜像落点与原文件是同一文件：%s", dst)
+			}
 			if err := os.Remove(dst); err != nil {
 				return false, false, err
 			}

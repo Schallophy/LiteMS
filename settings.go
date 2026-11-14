@@ -246,10 +246,13 @@ func (s *Server) applySettings(w http.ResponseWriter, r *http.Request, v *settin
 			v.Error = "下载目录里不允许出现 .."
 			return true
 		}
-		// 下载目录放进库根 = 绕开镜像机制，直接往做种目录写侧车文件
-		if underPath(libRoot, dlDir) || underPath(dlDir, libRoot) {
-			v.Error = "下载目录不能与媒体根互相包含（否则 scrape 会往做种目录写文件）"
-			return true
+		// 下载目录放进库根 = 绕开镜像机制，直接往做种目录写侧车文件；
+		// 与任何媒体根重合都会触发，额外根也要一起校验。
+		for _, r := range append([]string{libRoot}, libExtra...) {
+			if underPath(r, dlDir) || underPath(dlDir, r) {
+				v.Error = "下载目录不能与媒体根互相包含（否则 scrape 会往做种目录写文件）"
+				return true
+			}
 		}
 	}
 	dlMode := r.PostFormValue("dl_mode")

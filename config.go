@@ -227,6 +227,15 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("[library].download_mode 只能是 symlink 或 copy，收到 %q", c.Library.DownloadMode)
 	}
+	// 下载目录与任何媒体根互相包含时，镜像落点会与源目录重合（同一路径时
+	// 软链会覆盖原文件），或绕开镜像直接往做种目录写侧车文件。
+	if dl := c.Library.DownloadDir; dl != "" {
+		for _, r := range c.AllRoots() {
+			if underPath(r, dl) || underPath(dl, r) {
+				return fmt.Errorf("下载目录不能与媒体根互相包含：%s 与 %s", dl, r)
+			}
+		}
+	}
 	return nil
 }
 
