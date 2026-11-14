@@ -16,12 +16,11 @@ body{background:#07080A;overflow:hidden;overscroll-behavior:none}
 .stage{position:fixed;inset:0;overflow:hidden;overflow:clip;background:#000;cursor:default}
 .stage.idle{cursor:none}
 .stage.idle .top,.stage.idle .ctl{opacity:0;pointer-events:none}
-video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
+video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;display:block}
 
 /* 字幕：自己画，才能和排版一致，也才能随手调偏移。
    位置固定，不随控制条显隐上下跳——全屏时下沉容易被系统栏/画面下沿吃掉。
-   --cue-bottom 由脚本按实际画面（object-fit:contain 后的黑边）写入，
-   让字幕整块尽量落在画面下沿之外。 */
+   --cue-bottom 由脚本按视频实际画面尺寸写入，让字幕整块尽量落在画面下沿之外。 */
 .cue{
   position:absolute;left:0;right:0;
   bottom:calc(var(--cue-bottom,clamp(60px,8vh,84px)) + env(safe-area-inset-bottom));
@@ -860,15 +859,22 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     if (next !== cueEl.textContent) { cueEl.textContent = next; placeCue(); }
   }
 
-  /* 字幕整块落在画面之外：object-fit:contain 的画面上下黑边是对称的，
-     按视频像素尺寸算出实际画面高度，把字幕块顶边压在画面下沿下面。
-     黑边放不下整块时，改为整块挪到画面内、底边贴住画面下沿上方。 */
+  /* 字幕整块落在画面之外：画面上下黑边是对称的，按视频像素尺寸算出实际
+     画面高度，把字幕块顶边压在画面下沿下面；黑边放不下整块时，改为整块
+     挪到画面内、底边贴住画面下沿上方。
+     顺带把 video 缩到画面实际大小居中摆放：全屏时若让元素铺满屏幕、只靠
+     object-fit 留黑边，部分机器会把最后一帧的行向下拉成竖条拖影。 */
   function placeCue(){
     var W = stage.clientWidth, H = stage.clientHeight;
     var vw = v.videoWidth, vh = v.videoHeight;
     if (!W || !H || !vw || !vh) return;
-    var picH = vh * Math.min(W / vw, H / vh);
-    var bar = (H - picH) / 2;
+    var s = Math.min(W / vw, H / vh);
+    var pw = Math.round(vw * s), ph = Math.round(vh * s);
+    v.style.width = pw + 'px';
+    v.style.height = ph + 'px';
+    v.style.left = Math.round((W - pw) / 2) + 'px';
+    v.style.top = Math.round((H - ph) / 2) + 'px';
+    var bar = (H - ph) / 2;
     var textH = cueEl.offsetHeight;
     var gap = Math.min(18, Math.max(8, Math.round(H * 0.012)));
     var below = Math.round(bar - textH - gap);
