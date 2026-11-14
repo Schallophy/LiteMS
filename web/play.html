@@ -729,52 +729,88 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     else prepAudio(trackN, now, paused);
   }
 
-  /* 预转码某条音轨：POST 起任务，轮询到 done 再切（每条音轨独立缓存） */
+  /* 预转码某条音轨：POST 起任务，轮询到 done 再切（每条音轨独立缓存）。
+     转码可以取消：提示条里的「取消」按钮，或换到另一条未就绪音轨时自动打断。 */
   var polling = null;
+  var pendingTrack = null;   // 正在转的音轨序号
   function markTrackReady(n){
     var r = document.querySelector('#trackOpts input[name=atrack][value="' + n + '"]');
     if (r) r.dataset.ready = '1';
     if (n === A_DEFAULT) AUDIO_READY = true;
   }
+  function cancelTranscode(track){
+    if (pendingTrack === track) pendingTrack = null;
+    return fetch('/api/transcode/' + ID + '?track=' + track, {method:'DELETE'}).catch(function(){});
+  }
   function prepAudio(track, at, paused){
     clearInterval(polling);
-    notice.innerHTML = '';
-    var p = document.createElement('b');
-    p.textContent = '正在转音轨…';
-    notice.appendChild(p);
-    var st = document.createElement('span');
-    notice.appendChild(st);
-    notice.hidden = false;
-    var base = '/api/transcode/' + ID + '?track=' + track;
-    fetch(base, {method:'POST'})
-      .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
-      .then(function(job){
-        var done = function(){
-          clearInterval(polling);
-          markTrackReady(track);
-          clearNotice();
-          if (trackN !== track) { savePrefs(); return; }   // 等待期间又换了轨
-          useAudio(typeof at === 'number' ? at : v.currentTime);
-          if (paused) { v.pause(); a.pause(); }
-        };
-        if (job.state === 'done') { done(); return; }
-        polling = setInterval(function(){
-          fetch(base).then(function(r){ return r.json(); }).then(function(j){
-            if (j.state === 'done') {
-              toast('音轨好了，已经切过去。');
-              done();
-            } else if (j.state === 'error') {
-              clearInterval(polling);
-              st.textContent = ' 失败：' + (j.error || '未知错误');
-            } else {
-              st.textContent = ' ' + Math.round((j.progress || 0) * 100) + '%（转完会自动切换，可以继续看）';
-            }
-          });
-        }, 2000);
-      })
-      .catch(function(e){
-        st.textContent = ' ' + (e.message || '启动失败');
+    var old = pendingTrack;
+    var begin = function(){
+      pendingTrack = track;
+      notice.innerHTML = '';
+      var p = document.createElement('b');
+      p.textContent = '正在转音轨…';
+      notice.appendChild(p);
+      var st = document.createElement('span');
+      notice.appendChild(st);
+      var base = '/api/transcode/' + ID + '?track=' + track;
+      var nb = document.createElement('div');
+      nb.className = 'nb';
+      var cb = document.createElement('button');
+      cb.type = 'button';
+      cb.textContent = '取消';
+      cb.addEventListener('click', function(){
+        clearInterval(polling);
+        cancelTranscode(track);
+        clearNotice();
+        toast('已取消转码');
       });
+      nb.appendChild(cb);
+      notice.appendChild(nb);
+      notice.hidden = false;
+      fetch(base, {method:'POST'})
+        .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
+        .then(function(job){
+          var done = function(){
+            clearInterval(polling);
+            if (pendingTrack === track) pendingTrack = null;
+            markTrackReady(track);
+            clearNotice();
+            if (trackN !== track) { savePrefs(); return; }   // 等待期间又换了轨
+            useAudio(typeof at === 'number' ? at : v.currentTime);
+            if (paused) { v.pause(); a.pause(); }
+          };
+          if (job.state === 'done') { done(); return; }
+          polling = setInterval(function(){
+            fetch(base).then(function(r){ return r.json(); }).then(function(j){
+              if (j.state === 'done') {
+                toast('音轨好了，已经切过去。');
+                done();
+              } else if (j.state === 'cancelled') {
+                clearInterval(polling);
+                if (pendingTrack === track) pendingTrack = null;
+                st.textContent = ' 已取消';
+                setTimeout(clearNotice, 1500);
+              } else if (j.state === 'error') {
+                clearInterval(polling);
+                if (pendingTrack === track) pendingTrack = null;
+                st.textContent = ' 失败：' + (j.error || '未知错误');
+              } else {
+                st.textContent = ' ' + Math.round((j.progress || 0) * 100) + '%（转完会自动切换，可以继续看）';
+              }
+            });
+          }, 2000);
+        })
+        .catch(function(e){
+          if (pendingTrack === track) pendingTrack = null;
+          st.textContent = ' ' + (e.message || '启动失败');
+        });
+    };
+    if (old !== null && old !== track) {
+      cancelTranscode(old).then(begin);
+      return;
+    }
+    begin();
   }
 
   function teardownLive(){

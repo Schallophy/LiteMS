@@ -26,7 +26,7 @@ import (
 // （.part 残留文件在启动时清掉）；已完成的以缓存文件存在为准。
 
 type tcJob struct {
-	State    string  `json:"state"` // none / running / done / error
+	State    string  `json:"state"` // none / running / done / cancelled / error
 	Progress float64 `json:"progress"`
 	Error    string  `json:"error,omitempty"`
 }
@@ -34,8 +34,8 @@ type tcJob struct {
 type Transcoder struct {
 	mu       sync.Mutex
 	jobs     map[string]*tcJob
+	cancels  map[string]context.CancelFunc // key = tcKey(id, track)，只收运行中的任务
 	cacheDir string
-	cancel   context.CancelFunc
 }
 
 // NewTranscoder 建缓存目录并清掉上次中断留下的 .part 文件。
@@ -54,7 +54,7 @@ func NewTranscoder(cacheDir string) (*Transcoder, error) {
 		}
 		logf("已清理 %d 个旧版整片转码缓存（现在只缓存音轨）", len(old))
 	}
-	return &Transcoder{jobs: map[string]*tcJob{}, cacheDir: cacheDir}, nil
+	return &Transcoder{jobs: map[string]*tcJob{}, cancels: map[string]context.CancelFunc{}, cacheDir: cacheDir}, nil
 }
 
 // CachePath 返回某条音轨的缓存路径。track 0 沿用旧文件名，兼容已有缓存。
@@ -134,12 +134,11 @@ func (t *Transcoder) Start(id string, track int, src string, force bool) (tcJob,
 			}
 		}
 	}
-	if t.cancel != nil {
-		// 有任务在跑：找出是谁
-		for jid, j := range t.jobs {
-			if j.State == "running" && jid != key {
-				return tcJob{}, errors.New("已有转码任务在进行，等它完成后再试")
-			}
+	// 同一时刻只允许一个任务（手机 CPU）；被取消的任务在 run 收尾前仍算 running，
+	// 但新任务可以直接起——两者写的是不同文件，旧进程会立刻退出。
+	for jid, j := range t.jobs {
+		if j.State == "running" && jid != key {
+			return tcJob{}, errors.New("已有转码任务在进行，等它完成后再试")
 		}
 	}
 
@@ -152,12 +151,28 @@ func (t *Transcoder) Start(id string, track int, src string, force bool) (tcJob,
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &tcJob{State: "running"}
 	t.jobs[key] = job
-	t.cancel = cancel
-	go t.run(ctx, key, id, track, src, fi.ModTime(), dur)
+	t.cancels[key] = cancel
+	go t.run(ctx, key, id, track, src, fi.ModTime(), dur, job)
 	return *job, nil
 }
 
-func (t *Transcoder) run(ctx context.Context, key, id string, track int, src string, srcMod time.Time, durSec float64) {
+// Cancel 取消正在进行的转码；任务不存在或已结束返回 false。
+// 收尾由 run 完成：删 .part、状态置 cancelled，绝不落成正式文件。
+func (t *Transcoder) Cancel(id string, track int) bool {
+	key := tcKey(id, track)
+	t.mu.Lock()
+	c, ok := t.cancels[key]
+	if ok {
+		delete(t.cancels, key)
+	}
+	t.mu.Unlock()
+	if ok {
+		c()
+	}
+	return ok
+}
+
+func (t *Transcoder) run(ctx context.Context, key, id string, track int, src string, srcMod time.Time, durSec float64, job *tcJob) {
 	part := t.CachePath(id, track) + ".part"
 	final := t.CachePath(id, track)
 	os.Remove(part)
@@ -179,11 +194,16 @@ func (t *Transcoder) run(ctx context.Context, key, id string, track int, src str
 	cmd.Stderr = &errBuf
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		t.finish(key, tcJob{State: "error", Error: err.Error()})
+		t.finish(key, job, tcJob{State: "error", Error: err.Error()})
 		return
 	}
 	if err := cmd.Start(); err != nil {
-		t.finish(key, tcJob{State: "error", Error: err.Error()})
+		os.Remove(part)
+		if ctx.Err() != nil {
+			t.finish(key, job, tcJob{State: "cancelled"})
+			return
+		}
+		t.finish(key, job, tcJob{State: "error", Error: err.Error()})
 		return
 	}
 
@@ -195,7 +215,7 @@ func (t *Transcoder) run(ctx context.Context, key, id string, track int, src str
 				p = 1
 			}
 			t.mu.Lock()
-			if j, ok := t.jobs[key]; ok {
+			if j, ok := t.jobs[key]; ok && j == job {
 				j.Progress = p
 			}
 			t.mu.Unlock()
@@ -203,7 +223,9 @@ func (t *Transcoder) run(ctx context.Context, key, id string, track int, src str
 	}
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
-		t.finish(key, tcJob{State: "error", Error: "已取消"})
+		// 取消：ffmpeg 被杀时 .part 还在，必须删掉，别留半成品
+		os.Remove(part)
+		t.finish(key, job, tcJob{State: "cancelled"})
 		return
 	}
 	if waitErr != nil {
@@ -215,26 +237,28 @@ func (t *Transcoder) run(ctx context.Context, key, id string, track int, src str
 			}
 		}
 		os.Remove(part)
-		t.finish(key, tcJob{State: "error", Error: msg})
+		t.finish(key, job, tcJob{State: "error", Error: msg})
 		return
 	}
 	// 原子落位：完成后改回正式名字，部分文件绝不会冒充成品
 	if err := os.Rename(part, final); err != nil {
-		t.finish(key, tcJob{State: "error", Error: err.Error()})
+		t.finish(key, job, tcJob{State: "error", Error: err.Error()})
 		return
 	}
 	// 让缓存的 mtime 跟源文件对齐（用于「源更新过就重转」判断）
 	os.Chtimes(final, srcMod, srcMod)
-	t.finish(key, tcJob{State: "done", Progress: 1})
+	t.finish(key, job, tcJob{State: "done", Progress: 1})
 }
 
-func (t *Transcoder) finish(key string, j tcJob) {
+func (t *Transcoder) finish(key string, job *tcJob, final tcJob) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.jobs[key] = &j
-	if j.State != "running" {
-		t.cancel = nil
+	*job = final
+	// 只有当前登记的就是这次任务时才清 cancel：期间可能已经有新任务占了同一个 key
+	if cur, ok := t.jobs[key]; ok && cur == job {
+		delete(t.cancels, key)
 	}
+	t.jobs[key] = job
 }
 
 // probeDuration 用 ffprobe 拿总时长，供进度百分比计算；拿不到就返回 0

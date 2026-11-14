@@ -188,3 +188,70 @@ func TestTranscodeSecondTrack(t *testing.T) {
 		t.Errorf("输出音轨 = %s, want aac", got)
 	}
 }
+
+// 取消转码：状态变 cancelled，正式文件和 .part 都不留，之后还能重新起任务。
+func TestTranscodeCancel(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("无 ffmpeg，跳过")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mkv")
+	gen := exec.Command("ffmpeg", "-nostdin", "-y",
+		"-f", "lavfi", "-i", "testsrc=size=128x96:rate=10",
+		"-f", "lavfi", "-i", "sine=frequency=440",
+		"-t", "120",
+		"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "ac3", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("生成测试片失败: %v\n%s", err, out)
+	}
+
+	tc, err := NewTranscoder(filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tc.Start("cancel1", 0, src, false); err != nil {
+		t.Fatal(err)
+	}
+	// 等 ffmpeg 真正开始写产物，再取消
+	part := tc.CachePath("cancel1", 0) + ".part"
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(part); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("等 .part 出现超时")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !tc.Cancel("cancel1", 0) {
+		t.Fatal("Cancel 应返回 true")
+	}
+
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		st := tc.Status("cancel1", 0).State
+		if st == "cancelled" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("取消后状态 = %s，want cancelled", st)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if tc.Has("cancel1", 0) {
+		t.Error("取消后不该有正式缓存文件")
+	}
+	if m, _ := filepath.Glob(tc.CachePath("cancel1", 0) + ".part"); len(m) > 0 {
+		t.Errorf("取消后残留 .part: %v", m)
+	}
+	// 取消后仍能重新起任务
+	if _, err := tc.Start("cancel1", 0, src, false); err != nil {
+		t.Fatalf("取消后重新启动失败: %v", err)
+	}
+	tc.Cancel("cancel1", 0) // 别让测试进程拖着 ffmpeg
+	if tc.Cancel("cancel1", 0) {
+		t.Error("没有任务时 Cancel 应返回 false")
+	}
+}

@@ -618,8 +618,14 @@ func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, job)
+	case http.MethodDelete:
+		if !s.tc.Cancel(id, track) {
+			writeErr(w, http.StatusConflict, "没有正在进行的转码任务")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
-		writeErr(w, http.StatusMethodNotAllowed, "只支持 GET/POST")
+		writeErr(w, http.StatusMethodNotAllowed, "只支持 GET/POST/DELETE")
 	}
 }
 
