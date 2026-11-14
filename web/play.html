@@ -442,7 +442,9 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="3.4" height="14"/><rect x="13.6" y="5" width="3.4" height="14"/></svg>',
     vol: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.8 9.2h3.4L12.4 5v14L7.2 14.8H3.8z"/><path d="M15.6 9.3a4 4 0 010 5.4"/><path d="M18.1 7.2a7.4 7.4 0 010 9.6"/></svg>',
-    mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.8 9.2h3.4L12.4 5v14L7.2 14.8H3.8z"/><path d="M15.6 9.6l5 5M20.6 9.6l-5 5"/></svg>'
+    mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.8 9.2h3.4L12.4 5v14L7.2 14.8H3.8z"/><path d="M15.6 9.6l5 5M20.6 9.6l-5 5"/></svg>',
+    expand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg>',
+    exitfs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 4v5H4M15 20v-5h5M20 9h-5V4M4 15h5v5"/></svg>'
   };
 
   function toast(t, ms){
@@ -1084,7 +1086,10 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
     if (p && p.catch) p.catch(function(){});
   });
   function onFsChange(){
-    fsBtn.classList.toggle('on', !!fsElement());
+    var full = !!fsElement();
+    fsBtn.innerHTML = full ? ICON.exitfs : ICON.expand;
+    fsBtn.setAttribute('aria-label', full ? '退出全屏' : '全屏');
+    fsBtn.classList.toggle('on', full);
     stage.scrollLeft = 0; stage.scrollTop = 0;
     wake();
   }
