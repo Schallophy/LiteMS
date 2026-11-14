@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -393,18 +394,24 @@ func parseProgress(line string, durSec float64) float64 {
 }
 
 // probeChannels 取第 track 条音轨的声道数，拿不到返回 0。
+// 用 JSON 而不是 CSV：音轨带 side data 时 ffprobe 的 csv 输出会多一个逗号
+// （实测 a:1 输出 "2,"），按整数解析会误判成「没有音轨」。
 func probeChannels(src string, track int) int {
 	out, err := exec.Command("ffprobe", "-v", "error",
 		"-select_streams", fmt.Sprintf("a:%d", track),
-		"-show_entries", "stream=channels", "-of", "csv=p=0", src).Output()
+		"-show_entries", "stream=channels", "-of", "json", src).Output()
 	if err != nil {
 		return 0
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || n <= 0 {
+	var doc struct {
+		Streams []struct {
+			Channels int `json:"channels"`
+		} `json:"streams"`
+	}
+	if json.Unmarshal(out, &doc) != nil || len(doc.Streams) == 0 {
 		return 0
 	}
-	return n
+	return doc.Streams[0].Channels
 }
 
 // durCache 缓存容器时长探测结果：key = 文件路径。实时转码每次重启会话都要
