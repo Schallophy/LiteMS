@@ -64,9 +64,18 @@ func (r *Runner) renameToScrapedName(ctx context.Context, it *Item, dir string, 
 	}
 	it.ID, it.RelPath, it.PosterPath, it.FanartPath = newID, newRel, posterRel, fanartRel
 
-	// 按旧 ID 存的缓存搬到新 ID（不存在就静默跳过）
-	moveCache(filepath.Join(filepath.Dir(r.cfg.Database.Path), "transcode", oldID+".m4a"),
-		filepath.Join(filepath.Dir(r.cfg.Database.Path), "transcode", newID+".m4a"))
+	// 按旧 ID 存的缓存搬到新 ID（不存在就静默跳过）。多音轨缓存是
+	// <id>.aN.m4a，只搬 <id>.m4a 会把它们留成孤儿。
+	tcDir := filepath.Join(filepath.Dir(r.cfg.Database.Path), "transcode")
+	for _, pat := range []string{oldID + ".m4a", oldID + ".a*.m4a"} {
+		matches, _ := filepath.Glob(filepath.Join(tcDir, pat))
+		for _, src := range matches {
+			suffix := strings.TrimPrefix(filepath.Base(src), oldID)
+			dst := filepath.Join(tcDir, newID+suffix)
+			moveCache(src, dst)
+			moveCache(src+".meta", dst+".meta")
+		}
+	}
 	moveCache(filepath.Join(root, ".litems", "subs", oldID),
 		filepath.Join(root, ".litems", "subs", newID))
 
@@ -139,10 +148,12 @@ func sanitizeDirName(s string) string {
 
 // rewriteDirOf 把根相对路径里条目目录那段（倒数第二段）换成新目录名
 // （poster/fanart 用）：Downloads/<dir>/poster.jpg → Downloads/<new>/poster.jpg。
-// 路径为空或层级不够就原样返回。结果统一正斜杠（与库里 rel_path 的存法一致）。
+// 条目目录直接挂在媒体根下时同样要换（Movie/poster.jpg → New/poster.jpg）。
+// 只有 rel 本身是根目录下的裸文件名（没有条目目录）才原样返回。
+// 结果统一正斜杠（与库里 rel_path 的存法一致）。
 func rewriteDirOf(rel, dir string) string {
 	dirRel := filepath.Dir(rel)
-	if rel == "" || dirRel == "." || filepath.Dir(dirRel) == "." {
+	if rel == "" || dirRel == "." {
 		return rel
 	}
 	newDir := filepath.Join(filepath.Dir(dirRel), dir)
