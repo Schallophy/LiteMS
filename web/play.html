@@ -450,8 +450,10 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   }
   function durSec(){
     if (mode === 'live' && live) return live.total || 0;
-    if (DUR0 > 0) return DUR0 / 1000;
-    return isFinite(v.duration) ? v.duration : 0;
+    // 以播放器实测时长为准：服务端存的只是上次上报的进度快照，
+    // 片源还在下载时被打开过一次就会留下很短的假时长。
+    if (isFinite(v.duration) && v.duration > 0) return v.duration;
+    return DUR0 > 0 ? DUR0 / 1000 : 0;
   }
   function curSec(){
     if (mode === 'live' && live) return live.start + v.currentTime;
