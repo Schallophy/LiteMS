@@ -309,7 +309,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
         <li><label style="color:var(--ink-3);cursor:default">这条没有字幕轨<span class="src">0</span></label></li>
         {{end}}
       </ul>
-      <p class="dhint" id="subState">还没选字幕。点一条开始，会先按内嵌轨自动对齐。</p>
+      <p class="dhint" id="subState">还没选字幕。点一条开始。</p>
     </div>
 
     <div class="dsec">
@@ -337,7 +337,6 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
         <button type="button" data-nudge="-0.5">−0.5</button>
         <button type="button" data-nudge="0.5">+0.5</button>
         <button type="button" id="zeroBtn">归零</button>
-        <button type="button" id="autoBtn">自动对齐</button>
       </div>
       <p class="dhint">正值让字幕提前出现。0.01 秒一档，可以直接改数字。</p>
     </div>
@@ -397,7 +396,6 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   var subSeq = 0;           // 切轨/关闭时失效进行中的载入，避免旧结果盖新状态
   var off = 0;              // 正数 = 字幕提前
   var lastSave = 0;
-  var offCache = null;
   var liveFailed = false;   // 实时转码失败过就别再自动重试，免得死循环
 
   // 播放器偏好：按条目存完整快照，另存一份全局兜底给没看过的片
@@ -895,10 +893,10 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
         : '这条字幕里没解析出内容（可能是图形字幕）。';
       document.getElementById('offSec').hidden = cues.length === 0;
       // 恢复续播时套用上次偏移；同一轨关掉再开也保留手动调好的值；
-      // 只有换了字幕轨才归零并按内嵌参考轨重新自动对齐。
+      // 只有换了字幕轨才归零。
       if (typeof restoreOff === 'number') setOffset(restoreOff, true);
       else if (sameTrack) setOffset(off, true);
-      else { setOffset(0, true); autoAlign(u, url, true); }
+      else setOffset(0, true);
       savePrefs();
     }).catch(function(e){
       if (seq !== subSeq) return;
@@ -906,30 +904,13 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     });
   }
 
-  function setOffset(val, fromAuto){
+  function setOffset(val, silent){
     off = Math.round(val * 100) / 100;
     document.getElementById('offNum').value = off.toFixed(2);
     document.getElementById('offRange').value = String(Math.max(-30, Math.min(30, off)));
     renderCue(curSec());
-    if (!fromAuto && off !== 0) toast('字幕偏移 ' + (off > 0 ? '+' : '') + off.toFixed(2) + ' 秒');
+    if (!silent && off !== 0) toast('字幕偏移 ' + (off > 0 ? '+' : '') + off.toFixed(2) + ' 秒');
     savePrefs();
-  }
-
-  function autoAlign(fetchUrl, rawUrl, silent){
-    var seq = subSeq;
-    if (!offCache) {
-      offCache = fetch('/api/suboffset/' + ID).then(function(r){ return r.json(); }).catch(function(){ return null; });
-    }
-    offCache.then(function(plan){
-      if (seq !== subSeq) return;
-      if (!plan || !plan.offsets) { if (!silent) toast('算不出偏移，手动调吧。'); return; }
-      var key = rawUrl || fetchUrl.replace(/[&?]fmt=vtt/, '');
-      var val = plan.offsets[key];
-      if (typeof val !== 'number') { if (!silent) toast('这条没有自动偏移可用。'); return; }
-      setOffset(val, true);
-      document.getElementById('subState').textContent += ' 已相对基准轨自动对齐 ' + (val > 0 ? '+' : '') + val.toFixed(2) + ' 秒。';
-      if (!silent) toast('已套用自动偏移 ' + (val > 0 ? '+' : '') + val.toFixed(2) + ' 秒');
-    });
   }
 
   /* ── 字幕大小：固定 px 或跟随窗口，值并入播放器快照 ─────────── */
@@ -1140,11 +1121,6 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     setOffset(off + parseFloat(b.dataset.nudge));
   });
   document.getElementById('zeroBtn').addEventListener('click', function(){ setOffset(0); });
-  document.getElementById('autoBtn').addEventListener('click', function(){
-    var c = document.querySelector('#subOpts input[name=sub]:checked');
-    if (!c || !c.value) { toast('先选一条字幕。'); return; }
-    autoAlign(c.value + '&fmt=vtt', c.value, false);
-  });
 
   // 声音模式按钮
   document.getElementById('mDirect').addEventListener('click', function(){ switchMode('direct'); });
@@ -1241,7 +1217,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     showAudioNotice();
   }
 
-  // 字幕轨：恢复选中的那条，并套用上次手动调好的偏移（跳过自动对齐）
+  // 字幕轨：恢复选中的那条，并套用上次手动调好的偏移
   if (pref.sub) {
     var radios = document.querySelectorAll('#subOpts input[name=sub]');
     for (var i = 0; i < radios.length; i++) {
