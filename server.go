@@ -802,8 +802,12 @@ type pageData struct {
 	RootPath    string
 	HelperToken string
 	HelperPort  string
-	// AudioHint 播放页用：从文件名识别的音频标签提示等级（bad/maybe/""）
+	// AudioHint 详情页/播放页用：音轨可能放不出声的提示等级（bad/maybe/""）
 	AudioHint string
+	// AudioCodec 默认音轨的编码显示名（实测；探测失败为空）
+	AudioCodec string
+	// AudioMulti 容器里有多条音轨（详情页据此提示可以换轨）
+	AudioMulti bool
 	// AudioOK 默认音轨能被浏览器直接解码（ffprobe 实测）
 	AudioOK bool
 	// AudioTracks 容器里的全部音轨；AudioDefault 是默认轨的序号
@@ -882,12 +886,28 @@ func (s *Server) handleItemPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := s.toDTO(*it)
+	// 提示以容器里的实际音轨为准；探测失败才退回文件名标签
+	hint := audioHint(it.RelPath, it.Container)
+	codecLabel := ""
+	tracks, probed := s.audioTracks(*it)
+	if probed {
+		if dt, ok := defaultAudioTrack(tracks); ok && !browserAudioOK(dt.Codec) {
+			codecLabel = audioCodecLabel(dt.Codec)
+			if lvl := audioHint(strings.ToLower(dt.Codec)); lvl != "" {
+				hint = lvl
+			} else if hint == "" {
+				hint = "maybe"
+			}
+		} else {
+			hint = ""
+		}
+	}
 	data := pageData{
 		Title: s.cfg.UI.Title, Theme: s.pageTheme(), Item: &d,
 		Detail:      detailFor(s.roots, *it),
 		HelperToken: s.cfg.Launch.Token, HelperPort: helperPort(s.cfg.Launch.Listen),
-		AudioHint: audioHint(it.RelPath, it.Container),
-		Subs:      s.subsFor(*it),
+		AudioHint: hint, AudioCodec: codecLabel, AudioMulti: len(tracks) > 1,
+		Subs: s.subsFor(*it),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tpl.ExecuteTemplate(w, "item.html", data); err != nil {

@@ -63,8 +63,7 @@
 
             {{if .AudioHint}}
             <p class="note warn">
-              {{if eq .AudioHint "bad"}}文件名显示这条音轨（DTS / TrueHD / PCM 一类）浏览器多半解不出来，直接播可能没声音。{{else}}这条音轨是 AC3 / EAC3，部分浏览器不带解码器，播的时候可能没声音。{{end}}
-              播放页可以转成 AAC 音轨，或者改用实时转码。
+              {{if .AudioCodec}}默认音轨是 {{.AudioCodec}}{{else if eq .AudioHint "bad"}}文件名显示音轨是 DTS / TrueHD / PCM 一类{{else}}文件名显示音轨是 AC3 / EAC3{{end}}，{{if eq .AudioHint "bad"}}浏览器基本解不了，播放时没有声音{{else}}部分浏览器解不了，播放时可能没有声音{{end}}。进播放页可以{{if .AudioMulti}}切换音轨、{{end}}转成 AAC 音轨，或改用实时转码。
             </p>
             {{end}}
           </div>
