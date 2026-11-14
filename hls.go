@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -53,7 +54,8 @@ type HLSSession struct {
 	mu     sync.Mutex
 	cmd    *exec.Cmd
 	last   time.Time
-	master string // 惰性生成的 master.m3u8（带精确 CODECS）
+	master string      // 惰性生成的 master.m3u8（带精确 CODECS）
+	exited atomic.Bool // ffmpeg 已退出：会话不能再复用，也不会再有新分段
 }
 
 func (s *HLSSession) touch() {
@@ -112,13 +114,19 @@ func (h *HLSServer) Start(item, src string, start float64, track int) (*HLSSessi
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if s := h.byItem[item]; s != nil {
-		if s.Track == track {
+		// ffmpeg 已经自然结束（片尾/出错）的会话不再复用：它不会产出新分段，
+		// 复用会让新起播拿到旧窗口后一直卡住。
+		if s.exited.Load() {
+			h.stopLocked(s)
+		} else if s.Track == track {
 			if d := s.Start - start; d > -2.5 && d < 2.5 {
 				s.touch()
 				return s, nil
 			}
+			h.stopLocked(s)
+		} else {
+			h.stopLocked(s)
 		}
-		h.stopLocked(s)
 	}
 
 	hasAudio := probeChannels(src, track) > 0
@@ -192,7 +200,10 @@ func (h *HLSServer) Start(item, src string, start float64, track int) (*HLSSessi
 		return nil, err
 	}
 	s.cmd = cmd
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		_ = cmd.Wait()
+		s.exited.Store(true)
+	}()
 
 	h.byItem[item] = s
 	h.byTok[tok] = s
@@ -435,6 +446,41 @@ func newToken() string {
 		return strconv.FormatInt(time.Now().UnixNano(), 16)
 	}
 	return hex.EncodeToString(b)
+}
+
+// segmentGone 判断请求的分段是否已经不可能再出现：ffmpeg 已退出，或分段号
+// 早于当前播放列表的窗口起点（滑动窗口已经删掉）。这两种情况都不值得再等
+// 8 秒——请求堆着只会拖住后面的分段。
+func (s *HLSSession) segmentGone(name string) bool {
+	base := filepath.Base(name)
+	m := hlsSegName.FindStringSubmatch(base)
+	if m == nil {
+		return false
+	}
+	full := filepath.Join(s.Dir, filepath.FromSlash(name))
+	if fi, err := os.Stat(full); err == nil && fi.Size() > 0 {
+		return false
+	}
+	if s.exited.Load() {
+		return true
+	}
+	n, _ := strconv.Atoi(m[1])
+	dir := filepath.Dir(filepath.FromSlash(name))
+	pl, err := os.ReadFile(filepath.Join(s.Dir, dir, "index.m3u8"))
+	if err != nil {
+		return false
+	}
+	min := -1
+	for _, line := range strings.Split(string(pl), "\n") {
+		mm := hlsSegName.FindStringSubmatch(strings.TrimSpace(line))
+		if mm == nil {
+			continue
+		}
+		if v, err := strconv.Atoi(mm[1]); err == nil && (min < 0 || v < min) {
+			min = v
+		}
+	}
+	return min >= 0 && n < min
 }
 
 // waitFile 等 ffmpeg 把某个文件写出来（客户端可能比转码先到）。
