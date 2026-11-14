@@ -227,6 +227,25 @@ func (h *HLSServer) Pause(item, tok string, pause bool) bool {
 	return s.cmd.Process.Signal(sig) == nil
 }
 
+// Ping 只刷新会话的活跃时间，不改变 ffmpeg 状态。暂停期间前端靠它续命，
+// 否则 janitor 会把「没人请求」误判成没人看。
+func (h *HLSServer) Ping(item, tok string) bool {
+	return h.Lookup(item, tok) != nil
+}
+
+// Stop 立刻结束会话并清掉分段。切回直连 / 预转码后没必要等 janitor
+// 再让 ffmpeg 空转 90 秒。
+func (h *HLSServer) Stop(item, tok string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.byTok[tok]
+	if s == nil || s.Item != item {
+		return false
+	}
+	h.stopLocked(s)
+	return true
+}
+
 func (h *HLSServer) stopLocked(s *HLSSession) {
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
@@ -367,10 +386,10 @@ func keyframeAtOrBefore(src string, start float64) float64 {
 	if from < 0 {
 		from = 0
 	}
-	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
+	out, err := runProbe("-v", "error", "-select_streams", "v:0",
 		// 注意 Sprintf 里 %% 才能输出字面量 %
 		"-read_intervals", fmt.Sprintf("%.3f%%%.3f", from, start),
-		"-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", src).Output()
+		"-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", src)
 	if err != nil {
 		return start
 	}
@@ -396,8 +415,8 @@ func keyframeAtOrBefore(src string, start float64) float64 {
 
 // probeSize 取视频宽高（master 里的 RESOLUTION 用）。
 func probeSize(src string) (int, int) {
-	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
-		"-show_entries", "stream=width,height", "-of", "csv=p=0", src).Output()
+	out, err := runProbe("-v", "error", "-select_streams", "v:0",
+		"-show_entries", "stream=width,height", "-of", "csv=p=0", src)
 	if err != nil {
 		return 0, 0
 	}
