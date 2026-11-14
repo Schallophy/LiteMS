@@ -260,7 +260,8 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
       data-dur="{{.Item.DurationMS}}"
       data-hint="{{.AudioHint}}"
       data-audio="{{if .AudioReady}}1{{else}}0{{end}}"
-      data-live="{{if .LiveReady}}1{{else}}0{{end}}">
+      data-live="{{if .LiveReady}}1{{else}}0{{end}}"
+      data-fanart="{{.Item.Fanart}}">
 
   <video id="v" playsinline preload="metadata"{{if .Item.Poster}} poster="{{.Item.Poster}}"{{end}}></video>
   <audio id="a" preload="auto"></audio>
@@ -395,6 +396,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   var POS0 = parseInt(stage.dataset.pos, 10) || 0;
   var DUR0 = parseInt(stage.dataset.dur, 10) || 0;
   var HINT = stage.dataset.hint || '';
+  var FANART = stage.dataset.fanart || '';
   var AUDIO_READY = stage.dataset.audio === '1';
   var LIVE_READY = stage.dataset.live === '1';
 
@@ -417,6 +419,10 @@ video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
   var toastEl = document.getElementById('toast');
   var vtoast = document.getElementById('vtoast');
   var vtoastT = null;
+
+  // 起播到首帧出现前，海报位置显示剧照；没有剧照就沿用海报
+  function showStill(){ if (FANART) v.poster = FANART; }
+  v.addEventListener('play', showStill);
 
   var mode = 'direct';      // direct | audio | live
   var live = null;          // {token,start,total}
