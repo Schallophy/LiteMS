@@ -52,3 +52,25 @@ func TestAudioHintContainer(t *testing.T) {
 		t.Errorf("container hint = %q, want bad", got)
 	}
 }
+
+// 浏览器内核能直接解的音轨：这些编码下不需要 AAC 转码入口。
+func TestBrowserAudioOK(t *testing.T) {
+	cases := map[string]bool{
+		"aac":     true,
+		"mp3":     true,
+		"opus":    true,
+		"vorbis":  true,
+		"flac":    true,
+		"":        true, // 没有音轨
+		"ac3":     false,
+		"eac3":    false,
+		"dts":     false,
+		"truehd":  false,
+		"pcm_s16": false,
+	}
+	for codec, want := range cases {
+		if got := browserAudioOK(codec); got != want {
+			t.Errorf("browserAudioOK(%q) = %v, want %v", codec, got, want)
+		}
+	}
+}

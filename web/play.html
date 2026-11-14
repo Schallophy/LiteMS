@@ -211,6 +211,8 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
 .dbtns button[aria-pressed=true]{background:var(--ink);color:#0A0C0E;border-color:var(--ink)}
 .dbtns button:hover{border-color:var(--ink);color:var(--ink)}
 .dbtns button[aria-pressed=true]:hover{color:#0A0C0E}
+.dbtns button:disabled{opacity:.38;cursor:not-allowed}
+.dbtns button:disabled:hover{border-color:var(--line);color:var(--ink-2)}
 .toast{
   position:absolute;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%);
   background:rgba(12,16,19,.96);border:1px solid var(--line);
@@ -249,6 +251,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
       data-dur="{{.Item.DurationMS}}"
       data-hint="{{.AudioHint}}"
       data-audio="{{if .AudioReady}}1{{else}}0{{end}}"
+      data-audio-ok="{{if .AudioOK}}1{{else}}0{{end}}"
       data-live="{{if .LiveReady}}1{{else}}0{{end}}">
 
   <video id="v" playsinline preload="metadata"></video>
@@ -367,6 +370,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   var DUR0 = parseInt(stage.dataset.dur, 10) || 0;
   var HINT = stage.dataset.hint || '';
   var AUDIO_READY = stage.dataset.audio === '1';
+  var AUDIO_OK = stage.dataset.audioOk === '1';   // 原生音轨实测能直接解码
   var LIVE_READY = stage.dataset.live === '1';
 
   var v = document.getElementById('v');
@@ -523,19 +527,22 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     }
     // 全局兜底只沿用音量/静音/字号这类跨片习惯；
     // 声音模式、字幕轨、偏移只有这条片子自己的存档说了算。
-    // 没有本片存档（或旧存档没写 mode）时保留原逻辑：有 AAC 音轨就默认走它，
-    // 否则原生直连可能解不出声音。
+    // 原生音轨实测能直接播时一律走直连（AAC 转码入口也会禁用）；
+    // 否则有预转码音轨就默认走它，免得直连解不出声音。
     var hasMode = own && typeof own.mode === 'string';
-    if (!hasMode) p.mode = AUDIO_READY ? 'audio' : 'direct';
+    if (!hasMode) p.mode = (AUDIO_READY && !AUDIO_OK) ? 'audio' : 'direct';
+    if (p.mode === 'audio' && (AUDIO_OK || !AUDIO_READY)) p.mode = 'direct';
     return p;
   }
 
   /* ── 声音：原生直连 / AAC 音轨 / 实时转码 ────────────────────── */
   function setBadges(){
     document.getElementById('mDirect').setAttribute('aria-pressed', mode === 'direct');
-    document.getElementById('mAudio').setAttribute('aria-pressed', mode === 'audio');
+    var ab = document.getElementById('mAudio');
+    ab.setAttribute('aria-pressed', mode === 'audio');
+    ab.disabled = AUDIO_OK;
+    ab.textContent = AUDIO_READY ? 'AAC 音轨' : '转成 AAC 音轨';
     document.getElementById('mLive').setAttribute('aria-pressed', mode === 'live');
-    document.getElementById('mAudio').disabled = false;
     document.getElementById('mLive').disabled = !LIVE_READY;
     var line = document.getElementById('modeLine');
     if (mode === 'direct') line.textContent = '直接播原文件。视频和声音都来自本地文件，不占 CPU。';
@@ -638,6 +645,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   }
 
   function switchMode(next, at){
+    if (next === 'audio' && AUDIO_OK) { toast('原生音轨可以直接播放，不需要 AAC 音轨。'); return; }
     if (next === 'audio' && !AUDIO_READY) { prepAudio(); return; }
     if (next === 'live' && !LIVE_READY) { toast('ffmpeg 未安装，实时转码不可用。'); return; }
     pendingLive = false;   // 用户主动选了模式，别再挂着延迟转码
@@ -1129,7 +1137,6 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   document.getElementById('mDirect').addEventListener('click', function(){ switchMode('direct'); });
   document.getElementById('mAudio').addEventListener('click', function(){ switchMode('audio'); });
   document.getElementById('mLive').addEventListener('click', function(){ switchMode('live'); });
-  document.getElementById('mAudio').disabled = false;
 
   // 键盘
   document.addEventListener('keydown', function(e){
@@ -1200,7 +1207,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
 
   // 声音模式：实时转码不立刻起 ffmpeg，等用户点播放再接上
   var savedMode = pref.mode;
-  if (savedMode === 'audio' && AUDIO_READY) {
+  if (savedMode === 'audio' && AUDIO_READY && !AUDIO_OK) {
     useAudio(start, false);
   } else if (savedMode === 'live' && LIVE_READY) {
     mode = 'live';

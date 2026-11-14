@@ -782,6 +782,8 @@ type pageData struct {
 	HelperPort  string
 	// AudioHint 播放页用：从文件名识别的音频标签提示等级（bad/maybe/""）
 	AudioHint string
+	// AudioOK 原生音轨能被浏览器直接解码（ffprobe 实测），为真时不再提供 AAC 转码入口
+	AudioOK bool
 	// AudioReady 预转码音轨已就绪（/audio/{id} 可用）
 	AudioReady bool
 	// LiveReady 实时转码可用（ffmpeg 已安装）
@@ -870,19 +872,24 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := s.toDTO(*it)
+	// 真实音轨能直接播时，文件名标签的提示就不作数了；AAC 转码入口也随之禁用。
+	audioOK := s.nativeAudioOK(*it)
+	hint := audioHint(it.RelPath, it.Container)
+	if audioOK {
+		hint = ""
+	}
 	data := pageData{
 		Title:      s.cfg.UI.Title,
 		Theme:      s.pageTheme(),
 		Item:       &d,
-		AudioHint:  audioHint(it.RelPath, it.Container),
+		AudioHint:  hint,
+		AudioOK:    audioOK,
 		AudioReady: s.tc.Has(id),
 		LiveReady:  ffmpegReady(),
 		Subs:       s.subsFor(*it),
 	}
-	// 注意：这里**不能**因为转码缓存就绪就把 AudioHint 抹掉。播放页要拿它判断
-	// 「能不能直接播」——抹掉后就会误判成原生直连，而 /stream/ 永远是原文件，
-	// 结果画面正常、音轨依旧无声。缓存就绪时页面会自己走预转码，那条「没声音」
-	// 的提示在非原生模式下是隐藏的，不需要在这里替它消音。
+	// 注意：转码缓存就绪不代表原生音轨能解——/stream/ 永远给原文件，不能因为
+	// 缓存存在就把提示抹掉；这里只抹掉「实测能直放」的情况。
 	// 页面没有 ETag/Last-Modified，浏览器会启发式缓存，导致播放页更新后仍是旧版
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
