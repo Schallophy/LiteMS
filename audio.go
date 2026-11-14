@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // 浏览器内核（Chromium / Firefox / WebKit）自带的音频解码器只有 AAC、MP3、
@@ -58,12 +60,23 @@ type audioTrack struct {
 	Default  bool   `json:"default"` // 容器标记的默认轨：原生直连播的就是它
 }
 
+// probeTimeout 限制 ffprobe 的等待时间。媒体放在网络挂载或弱存储上时，
+// ffprobe 可能长时间不返回；探测只是辅助信息，不值得把请求一起拖住。
+const probeTimeout = 10 * time.Second
+
+// runProbe 带超时执行 ffprobe，只用于读元数据的短命令。
+func runProbe(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "ffprobe", args...).Output()
+}
+
 // probeAudioTracks 用 ffprobe 列出容器内所有音轨（只读头部）。
 func probeAudioTracks(path string) ([]audioTrack, error) {
-	out, err := exec.Command("ffprobe", "-v", "error",
+	out, err := runProbe("-v", "error",
 		"-select_streams", "a",
 		"-show_entries", "stream=index,codec_name,channels:stream_tags=language,title:stream_disposition=default",
-		"-of", "json", path).Output()
+		"-of", "json", path)
 	if err != nil {
 		return nil, err
 	}
@@ -144,8 +157,8 @@ func (s *Server) audioTracks(it Item) (tracks []audioTrack, probed bool) {
 	return tracks, true
 }
 
-// nativeAudioOK 报告默认音轨能否直接播。探测失败时按「能播」处理，
-// 宁可少禁一个入口，也不要把还能用的 AAC 选项锁掉。
+// nativeAudioOK 报告默认音轨能否直接播。探测失败按「不能直连」处理：
+// 宁可多留一个 AAC 转码入口，也不要把解不出声音的音轨当成能播。
 func (s *Server) nativeAudioOK(it Item) bool {
 	tracks, probed := s.audioTracks(it)
 	if !probed {

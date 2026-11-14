@@ -164,9 +164,9 @@ var textSubCodecs = map[string]bool{
 
 // probeSubTracks 用 ffprobe 读容器里的字幕轨（读头部，秒级以内）。
 func probeSubTracks(path string) []subTrack {
-	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "s",
+	out, err := runProbe("-v", "error", "-select_streams", "s",
 		"-show_entries", "stream=index,codec_name:stream_tags=language,title",
-		"-of", "json", path).Output()
+		"-of", "json", path)
 	if err != nil {
 		return nil
 	}
