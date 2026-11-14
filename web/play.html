@@ -989,6 +989,9 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   v.addEventListener('play', syncPlayIcon);
   v.addEventListener('pause', syncPlayIcon);
   v.addEventListener('loadedmetadata', function(){ paint(); placeCue(); });
+  // 暂停时的 seek（续播定位、拖动进度）完成后必须重画：帧循环只在播放时更新进度条
+  v.addEventListener('seeked', paint);
+  v.addEventListener('loadeddata', paint);
   v.addEventListener('resize', placeCue);
   window.addEventListener('resize', placeCue);
   window.addEventListener('orientationchange', placeCue);
