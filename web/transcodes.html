@@ -21,22 +21,10 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
   background:none;border:1px solid var(--line);border-radius:1px;
   color:var(--ink-2);padding:6px 13px;cursor:pointer;
   font:400 12.5px var(--sans);
-  transition:border-color .18s var(--ease),color .18s var(--ease),background .18s var(--ease),opacity .18s var(--ease);
+  transition:border-color .18s var(--ease),color .18s var(--ease);
 }
 .tcact button:hover{border-color:var(--ink);color:var(--ink)}
-.tcact button[data-armed]{
-  border-color:var(--burn);color:var(--burn);
-  animation:tcPulse .9s var(--ease);
-}
-@keyframes tcPulse{
-  0%{box-shadow:0 0 0 0 rgba(225,72,60,.32)}
-  100%{box-shadow:0 0 0 7px rgba(225,72,60,0)}
-}
-.tc-cancel{animation:tcIn .18s var(--ease)}
-.tc-cancel.out{animation:tcOut .16s var(--ease) forwards}
-@keyframes tcIn{from{opacity:0;transform:translateX(-5px)}to{opacity:1;transform:none}}
-@keyframes tcOut{to{opacity:0;transform:translateX(-5px)}}
-.tcrow.removing{opacity:0;transform:translateX(10px);transition:opacity .19s var(--ease),transform .19s var(--ease)}
+.tcact button[data-armed]{border-color:var(--burn);color:var(--burn)}
 .tcact button[disabled]{opacity:.4;pointer-events:none}
 .tc-empty{margin:14px 0 0;font-size:13px;color:var(--ink-3)}
 .tc-sum{margin:12px 0 0;font-size:12.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
@@ -130,7 +118,6 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
 (function(){
   var msg = document.getElementById('tcMsg');
   var runRows = Array.prototype.slice.call(document.querySelectorAll('[data-job]'));
-  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function showErr(text){
     if (!text) { msg.hidden = true; return; }
@@ -180,20 +167,9 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
     if (!b || !b.dataset.armed) return;
     delete b.dataset.armed;
     b.textContent = '删除';
-    if (b._tcTimer) { clearTimeout(b._tcTimer); b._tcTimer = null; }
     var c = b.parentNode.querySelector('.tc-cancel');
-    if (!c) return;
-    if (reduceMotion) { c.remove(); return; }
-    c.classList.add('out');
-    setTimeout(function(){ c.remove(); }, 170);
-  }
-
-  // 删除成功后让整行先淡出再刷新，避免列表「瞬间跳一下」
-  function dropRow(b){
-    var row = b.closest('.tcrow');
-    if (!row || reduceMotion) { location.reload(); return; }
-    row.classList.add('removing');
-    setTimeout(function(){ location.reload(); }, 200);
+    if (c) c.remove();
+    if (b._tcTimer) { clearTimeout(b._tcTimer); b._tcTimer = null; }
   }
 
   document.addEventListener('click', function(e){
@@ -201,8 +177,6 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
     if (!b || b.disabled) return;
     var act = b.dataset.act;
     if (act === 'purge' && !b.dataset.armed) {
-      var old = b.parentNode.querySelector('.tc-cancel');
-      if (old) old.remove();
       b.dataset.armed = '1';
       b.textContent = '确认删除';
       var c = document.createElement('button');
@@ -220,7 +194,7 @@ a.tctitle:hover{text-decoration:underline;text-underline-offset:4px}
     showErr('');
     fetch(url, {method:'DELETE'})
       .then(function(r){
-        if (r.ok) { if (act === 'purge') dropRow(b); else location.reload(); return; }
+        if (r.ok) { location.reload(); return; }
         return r.json().then(function(d){ throw new Error(d.error || '操作失败'); });
       })
       .catch(function(err){ b.disabled = false; showErr(err.message); });
