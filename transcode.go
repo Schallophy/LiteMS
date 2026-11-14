@@ -57,69 +57,79 @@ func NewTranscoder(cacheDir string) (*Transcoder, error) {
 	return &Transcoder{jobs: map[string]*tcJob{}, cacheDir: cacheDir}, nil
 }
 
-func (t *Transcoder) CachePath(id string) string {
-	return filepath.Join(t.cacheDir, id+".m4a")
+// CachePath 返回某条音轨的缓存路径。track 0 沿用旧文件名，兼容已有缓存。
+func (t *Transcoder) CachePath(id string, track int) string {
+	if track == 0 {
+		return filepath.Join(t.cacheDir, id+".m4a")
+	}
+	return filepath.Join(t.cacheDir, fmt.Sprintf("%s.a%d.m4a", id, track))
+}
+
+func tcKey(id string, track int) string {
+	return id + "@" + strconv.Itoa(track)
 }
 
 // Has 返回音轨缓存是否存在（播放页据此决定用「预转码」还是「实时转码」）。
-func (t *Transcoder) Has(id string) bool {
-	fi, err := os.Stat(t.CachePath(id))
+func (t *Transcoder) Has(id string, track int) bool {
+	fi, err := os.Stat(t.CachePath(id, track))
 	return err == nil && fi.Size() > 0
 }
 
 // Status 返回当前状态；内存里没有但缓存文件在 → done（服务重启后依然成立）。
-func (t *Transcoder) Status(id string) tcJob {
+func (t *Transcoder) Status(id string, track int) tcJob {
+	key := tcKey(id, track)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if j, ok := t.jobs[id]; ok {
+	if j, ok := t.jobs[key]; ok {
 		return *j
 	}
-	if t.Has(id) {
+	if t.Has(id, track) {
 		return tcJob{State: "done", Progress: 1}
 	}
 	return tcJob{State: "none"}
 }
 
-// Start 启动转码。同一 id：running/done 直接返回现状；error 允许重试；
+// Start 启动转码。同一 id+track：running/done 直接返回现状；error 允许重试；
 // 缓存比源文件旧（源被替换/更新）也重转。同一时刻只允许一个任务（手机 CPU）。
 // force=true 时丢掉已有缓存重转（音轨参数改过之后要靠它把旧产物换掉）。
-func (t *Transcoder) Start(id, src string, force bool) (tcJob, error) {
+func (t *Transcoder) Start(id string, track int, src string, force bool) (tcJob, error) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return tcJob{}, errors.New("ffmpeg 未安装——Termux 上执行 pkg install ffmpeg")
 	}
 	if _, err := os.Stat(src); err != nil {
 		return tcJob{}, errors.New("源文件不存在")
 	}
+	key := tcKey(id, track)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if force {
-		if j, ok := t.jobs[id]; ok && j.State == "running" {
+		if j, ok := t.jobs[key]; ok && j.State == "running" {
 			return *j, nil // 正在转就别打断，等它自己结束
 		}
-		os.Remove(t.CachePath(id))
-		delete(t.jobs, id)
+		os.Remove(t.CachePath(id, track))
+		delete(t.jobs, key)
 	}
-	if j, ok := t.jobs[id]; ok {
+	if j, ok := t.jobs[key]; ok {
 		switch j.State {
 		case "running":
 			return *j, nil
 		case "done":
 			// 源文件比缓存新 → 视为需要重转，否则命中缓存
 			if fi, err := os.Stat(src); err == nil {
-				if cf, err2 := os.Stat(t.CachePath(id)); err2 == nil && !fi.ModTime().After(cf.ModTime()) {
+				if cf, err2 := os.Stat(t.CachePath(id, track)); err2 == nil && !fi.ModTime().After(cf.ModTime()) {
 					return *j, nil
 				}
 			}
 		}
 	}
-	if t.Has(id) {
+	if t.Has(id, track) {
 		// 无记录但缓存文件在（服务重启后的 done 状态）：缓存与源同 mtime
 		// （完成时对齐过）说明有效，恢复为 done；源更新过则落到下面重转
 		if fi, err := os.Stat(src); err == nil {
-			if cf, err2 := os.Stat(t.CachePath(id)); err2 == nil && !fi.ModTime().After(cf.ModTime()) {
+			if cf, err2 := os.Stat(t.CachePath(id, track)); err2 == nil && !fi.ModTime().After(cf.ModTime()) {
 				j := tcJob{State: "done", Progress: 1}
-				t.jobs[id] = &j
+				t.jobs[key] = &j
 				return j, nil
 			}
 		}
@@ -127,7 +137,7 @@ func (t *Transcoder) Start(id, src string, force bool) (tcJob, error) {
 	if t.cancel != nil {
 		// 有任务在跑：找出是谁
 		for jid, j := range t.jobs {
-			if j.State == "running" && jid != id {
+			if j.State == "running" && jid != key {
 				return tcJob{}, errors.New("已有转码任务在进行，等它完成后再试")
 			}
 		}
@@ -141,22 +151,22 @@ func (t *Transcoder) Start(id, src string, force bool) (tcJob, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &tcJob{State: "running"}
-	t.jobs[id] = job
+	t.jobs[key] = job
 	t.cancel = cancel
-	go t.run(ctx, id, src, fi.ModTime(), dur)
+	go t.run(ctx, key, id, track, src, fi.ModTime(), dur)
 	return *job, nil
 }
 
-func (t *Transcoder) run(ctx context.Context, id, src string, srcMod time.Time, durSec float64) {
-	part := t.CachePath(id) + ".part"
-	final := t.CachePath(id)
+func (t *Transcoder) run(ctx context.Context, key, id string, track int, src string, srcMod time.Time, durSec float64) {
+	part := t.CachePath(id, track) + ".part"
+	final := t.CachePath(id, track)
 	os.Remove(part)
 
 	args := []string{
 		"-y", "-nostdin",
 		"-i", src,
 		"-vn",
-		"-map", "0:a:0?",
+		"-map", fmt.Sprintf("0:a:%d?", track),
 		"-c:a", "aac", "-b:a", audioBitrate(),
 		// -ac 必须显式给：5.1(side) 这类布局 ffmpeg 默认写 channelConfig=0（要读 PCE），
 		// Chromium 的 mp4 解析器不认，<audio> 会直接放不出来。理由同 hls.go。
@@ -169,11 +179,11 @@ func (t *Transcoder) run(ctx context.Context, id, src string, srcMod time.Time, 
 	cmd.Stderr = &errBuf
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		t.finish(id, tcJob{State: "error", Error: err.Error()})
+		t.finish(key, tcJob{State: "error", Error: err.Error()})
 		return
 	}
 	if err := cmd.Start(); err != nil {
-		t.finish(id, tcJob{State: "error", Error: err.Error()})
+		t.finish(key, tcJob{State: "error", Error: err.Error()})
 		return
 	}
 
@@ -185,7 +195,7 @@ func (t *Transcoder) run(ctx context.Context, id, src string, srcMod time.Time, 
 				p = 1
 			}
 			t.mu.Lock()
-			if j, ok := t.jobs[id]; ok {
+			if j, ok := t.jobs[key]; ok {
 				j.Progress = p
 			}
 			t.mu.Unlock()
@@ -193,7 +203,7 @@ func (t *Transcoder) run(ctx context.Context, id, src string, srcMod time.Time, 
 	}
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
-		t.finish(id, tcJob{State: "error", Error: "已取消"})
+		t.finish(key, tcJob{State: "error", Error: "已取消"})
 		return
 	}
 	if waitErr != nil {
@@ -205,23 +215,23 @@ func (t *Transcoder) run(ctx context.Context, id, src string, srcMod time.Time, 
 			}
 		}
 		os.Remove(part)
-		t.finish(id, tcJob{State: "error", Error: msg})
+		t.finish(key, tcJob{State: "error", Error: msg})
 		return
 	}
 	// 原子落位：完成后改回正式名字，部分文件绝不会冒充成品
 	if err := os.Rename(part, final); err != nil {
-		t.finish(id, tcJob{State: "error", Error: err.Error()})
+		t.finish(key, tcJob{State: "error", Error: err.Error()})
 		return
 	}
 	// 让缓存的 mtime 跟源文件对齐（用于「源更新过就重转」判断）
 	os.Chtimes(final, srcMod, srcMod)
-	t.finish(id, tcJob{State: "done", Progress: 1})
+	t.finish(key, tcJob{State: "done", Progress: 1})
 }
 
-func (t *Transcoder) finish(id string, j tcJob) {
+func (t *Transcoder) finish(key string, j tcJob) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.jobs[id] = &j
+	t.jobs[key] = &j
 	if j.State != "running" {
 		t.cancel = nil
 	}

@@ -479,12 +479,22 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "id 必须是 16 位十六进制")
 		return
 	}
-	if !s.tc.Has(id) {
-		writeErr(w, http.StatusNotFound, "还没有音轨缓存")
+	track := trackParam(r)
+	if !s.tc.Has(id, track) {
+		writeErr(w, http.StatusNotFound, "还没有这条音轨的缓存")
 		return
 	}
 	w.Header().Set("Content-Type", "audio/mp4")
-	http.ServeFile(w, r, s.tc.CachePath(id))
+	http.ServeFile(w, r, s.tc.CachePath(id, track))
+}
+
+// trackParam 取 ?track=N（ffmpeg 音轨序号，0 起）；缺省或非法按 0。
+func trackParam(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("track"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // handleLive 开/复用实时转码会话，返回 HLS 播放地址。
@@ -590,13 +600,19 @@ func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
+	track := trackParam(r)
+	tracks, _ := s.audioTracks(*it)
+	if track >= len(tracks) {
+		writeErr(w, http.StatusBadRequest, "没有这条音轨")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, s.tc.Status(id))
+		writeJSON(w, http.StatusOK, s.tc.Status(id, track))
 	case http.MethodPost:
 		src := filepath.Join(s.roots[it.RootIdx], filepath.FromSlash(it.RelPath))
 		force := r.URL.Query().Get("force") == "1"
-		job, err := s.tc.Start(id, src, force)
+		job, err := s.tc.Start(id, track, src, force)
 		if err != nil {
 			writeErr(w, http.StatusConflict, err.Error())
 			return
@@ -782,14 +798,29 @@ type pageData struct {
 	HelperPort  string
 	// AudioHint 播放页用：从文件名识别的音频标签提示等级（bad/maybe/""）
 	AudioHint string
-	// AudioOK 原生音轨能被浏览器直接解码（ffprobe 实测），为真时不再提供 AAC 转码入口
+	// AudioOK 默认音轨能被浏览器直接解码（ffprobe 实测）
 	AudioOK bool
-	// AudioReady 预转码音轨已就绪（/audio/{id} 可用）
+	// AudioTracks 容器里的全部音轨；AudioDefault 是默认轨的序号
+	AudioTracks  []AudioTrackDTO
+	AudioDefault int
+	// AudioReady 默认音轨的预转码缓存已就绪（/audio/{id} 可用）
 	AudioReady bool
 	// LiveReady 实时转码可用（ffmpeg 已安装）
 	LiveReady bool
 	// Subs 是合并后的字幕清单（外挂/导入/内嵌），详情页与播放页共用
 	Subs []SubDTO
+}
+
+// AudioTrackDTO 是播放页「声音」面板里的一条音轨。
+type AudioTrackDTO struct {
+	N        int
+	Label    string
+	Lang     string
+	Codec    string
+	Channels int
+	OK       bool // 浏览器能直接解码
+	Ready    bool // 预转码 m4a 已就绪
+	Default  bool // 容器标记的默认轨
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -872,21 +903,36 @@ func (s *Server) handlePlayPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := s.toDTO(*it)
-	// 真实音轨能直接播时，文件名标签的提示就不作数了；AAC 转码入口也随之禁用。
+	// 真实音轨能直接播时，文件名标签的提示就不作数了。
 	audioOK := s.nativeAudioOK(*it)
 	hint := audioHint(it.RelPath, it.Container)
 	if audioOK {
 		hint = ""
 	}
+	tracks, _ := s.audioTracks(*it)
+	audioDefault := 0
+	if dt, ok := defaultAudioTrack(tracks); ok {
+		audioDefault = dt.N
+	}
+	atDTO := make([]AudioTrackDTO, 0, len(tracks))
+	for _, t := range tracks {
+		atDTO = append(atDTO, AudioTrackDTO{
+			N: t.N, Label: audioTrackLabel(t), Lang: t.Lang, Codec: t.Codec,
+			Channels: t.Channels, OK: browserAudioOK(t.Codec),
+			Ready: s.tc.Has(id, t.N), Default: t.Default,
+		})
+	}
 	data := pageData{
-		Title:      s.cfg.UI.Title,
-		Theme:      s.pageTheme(),
-		Item:       &d,
-		AudioHint:  hint,
-		AudioOK:    audioOK,
-		AudioReady: s.tc.Has(id),
-		LiveReady:  ffmpegReady(),
-		Subs:       s.subsFor(*it),
+		Title:        s.cfg.UI.Title,
+		Theme:        s.pageTheme(),
+		Item:         &d,
+		AudioHint:    hint,
+		AudioOK:      audioOK,
+		AudioTracks:  atDTO,
+		AudioDefault: audioDefault,
+		AudioReady:   s.tc.Has(id, audioDefault),
+		LiveReady:    ffmpegReady(),
+		Subs:         s.subsFor(*it),
 	}
 	// 注意：转码缓存就绪不代表原生音轨能解——/stream/ 永远给原文件，不能因为
 	// 缓存存在就把提示抹掉；这里只抹掉「实测能直放」的情况。

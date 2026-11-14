@@ -252,6 +252,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
       data-hint="{{.AudioHint}}"
       data-audio="{{if .AudioReady}}1{{else}}0{{end}}"
       data-audio-ok="{{if .AudioOK}}1{{else}}0{{end}}"
+      data-adefault="{{.AudioDefault}}"
       data-live="{{if .LiveReady}}1{{else}}0{{end}}">
 
   <video id="v" playsinline preload="metadata"></video>
@@ -346,6 +347,14 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
 
     <div class="dsec">
       <h3>声音</h3>
+      <ul class="opts" id="trackOpts"{{if le (len .AudioTracks) 1}} hidden{{end}}>
+        {{range .AudioTracks}}
+        <li><label>
+          <input type="radio" name="atrack" value="{{.N}}" data-ok="{{if .OK}}1{{else}}0{{end}}" data-ready="{{if .Ready}}1{{else}}0{{end}}" data-label="{{.Label}}"{{if eq .N $.AudioDefault}} checked{{end}}>
+          {{.Label}}<span class="src">{{if .Default}}默认{{else if .OK}}可直连{{else}}需转码{{end}}</span>
+        </label></li>
+        {{end}}
+      </ul>
       <div class="dbtns">
         <button type="button" id="mDirect" aria-pressed="false">原生直连</button>
         <button type="button" id="mAudio" aria-pressed="false">AAC 音轨</button>
@@ -370,8 +379,25 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   var DUR0 = parseInt(stage.dataset.dur, 10) || 0;
   var HINT = stage.dataset.hint || '';
   var AUDIO_READY = stage.dataset.audio === '1';
-  var AUDIO_OK = stage.dataset.audioOk === '1';   // 原生音轨实测能直接解码
+  var AUDIO_OK = stage.dataset.audioOk === '1';   // 默认音轨实测能直接解码
   var LIVE_READY = stage.dataset.live === '1';
+  var A_DEFAULT = parseInt(stage.dataset.adefault, 10) || 0;  // 直连播放的默认音轨
+  var trackRadios = document.querySelectorAll('#trackOpts input[name=atrack]');
+  var MULTI_TRACK = trackRadios.length > 1;
+  var trackN = A_DEFAULT;         // 当前选中的音轨序号
+
+  function trackInfo(n){
+    for (var i = 0; i < trackRadios.length; i++) {
+      if (+trackRadios[i].value !== n) continue;
+      var r = trackRadios[i];
+      return {ok: r.dataset.ok === '1', ready: r.dataset.ready === '1', label: r.dataset.label || ''};
+    }
+    // 单音轨（没有列表）或列表里没有这条：按页面数据兜底
+    return {ok: AUDIO_OK, ready: AUDIO_READY, label: ''};
+  }
+  function trackOK(n){ return trackInfo(n).ok; }
+  function trackReady(n){ return trackInfo(n).ready; }
+  function trackLabel(n){ return trackInfo(n).label; }
 
   var v = document.getElementById('v');
   var a = document.getElementById('a');
@@ -479,6 +505,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
       vol: +volEl.value,
       muted: userMuted,
       mode: mode,
+      atrack: trackN,
       sub: c ? c.value : '',
       subLast: ccBtn.dataset.last || '',
       off: off,
@@ -504,7 +531,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
       g = JSON.parse(localStorage.getItem(LAST_KEY) || 'null');
       own = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
     } catch (e) {}
-    var p = {vol: 100, muted: false, mode: 'direct', sub: '', subLast: '', off: 0, size: null};
+    var p = {vol: 100, muted: false, mode: 'direct', atrack: A_DEFAULT, sub: '', subLast: '', off: 0, size: null};
     if (g && typeof g === 'object') {
       if (typeof g.vol === 'number') p.vol = g.vol;
       if (typeof g.muted === 'boolean') p.muted = g.muted;
@@ -517,6 +544,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
       if (typeof own.sub === 'string') p.sub = own.sub;
       if (typeof own.subLast === 'string') p.subLast = own.subLast;
       if (typeof own.off === 'number') p.off = own.off;
+      if (typeof own.atrack === 'number') p.atrack = own.atrack;
       if (own.size === null || typeof own.size === 'number') { p.size = own.size; hasSize = true; }
     }
     // 兼容旧版只存了字幕大小的浏览器
@@ -528,28 +556,36 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
       } catch (e) {}
     }
     // 全局兜底只沿用音量/静音/字号这类跨片习惯；
-    // 声音模式、字幕轨、偏移只有这条片子自己的存档说了算。
-    // 原生音轨实测能直接播时一律走直连（AAC 转码入口也会禁用）；
+    // 声音模式、音轨、字幕轨、偏移只有这条片子自己的存档说了算。
+    // 单音轨且原生音轨实测能直接播时一律走直连（AAC 转码入口也会禁用）；
     // 否则有预转码音轨就默认走它，免得直连解不出声音。
     var hasMode = own && typeof own.mode === 'string';
-    if (!hasMode) p.mode = (AUDIO_READY && !AUDIO_OK) ? 'audio' : 'direct';
-    if (p.mode === 'audio' && (AUDIO_OK || !AUDIO_READY)) p.mode = 'direct';
+    if (!MULTI_TRACK) {
+      if (!hasMode) p.mode = (AUDIO_READY && !AUDIO_OK) ? 'audio' : 'direct';
+      if (p.mode === 'audio' && (AUDIO_OK || !AUDIO_READY)) p.mode = 'direct';
+    }
     return p;
   }
 
-  /* ── 声音：原生直连 / AAC 音轨 / 实时转码 ────────────────────── */
+  /* ── 声音：音轨选择 / 原生直连 / AAC 音轨 / 实时转码 ──────────── */
   function setBadges(){
     document.getElementById('mDirect').setAttribute('aria-pressed', mode === 'direct');
     var ab = document.getElementById('mAudio');
     ab.setAttribute('aria-pressed', mode === 'audio');
-    ab.disabled = AUDIO_OK;
-    ab.textContent = (!AUDIO_OK && !AUDIO_READY) ? '转成 AAC 音轨' : 'AAC 音轨';
+    ab.disabled = !MULTI_TRACK && AUDIO_OK;
+    ab.textContent = (!MULTI_TRACK && !AUDIO_OK && !AUDIO_READY) ? '转成 AAC 音轨' : 'AAC 音轨';
     document.getElementById('mLive').setAttribute('aria-pressed', mode === 'live');
     document.getElementById('mLive').disabled = !LIVE_READY;
     var line = document.getElementById('modeLine');
-    if (mode === 'direct') line.textContent = '直接播原文件。视频和声音都来自本地文件，不占 CPU。';
-    else if (mode === 'audio') line.textContent = '画面来自原文件（静音），声音走预转码的 AAC 音轨。';
-    else line.textContent = '整条流由 ffmpeg 实时转码，占用 CPU，拖动后要等几秒重新起播。';
+    if (mode === 'direct') {
+      line.textContent = '直接播原文件' + (MULTI_TRACK ? '（默认音轨：' + trackLabel(A_DEFAULT) + '）' : '') +
+        '。视频和声音都来自本地文件，不占 CPU。';
+    } else if (mode === 'audio') {
+      var lb = trackLabel(trackN);
+      line.textContent = '画面来自原文件（静音），声音走预转码的 AAC 音轨' + (lb ? '（' + lb + '）' : '') + '。';
+    } else {
+      line.textContent = '整条流由 ffmpeg 实时转码，占用 CPU，拖动后要等几秒重新起播。';
+    }
     if (!LIVE_READY) line.textContent += ' 这台机器没装 ffmpeg，实时转码不可用。';
     savePrefs();
   }
@@ -570,7 +606,12 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     wrap.className = 'nb';
     var acc = document.createElement('button');
     acc.className = 'primary'; acc.type = 'button'; acc.textContent = '转成 AAC 音轨';
-    acc.addEventListener('click', function(){ prepAudio(); });
+    acc.addEventListener('click', function(){
+      trackN = A_DEFAULT;
+      var r = document.querySelector('#trackOpts input[name=atrack][value="' + A_DEFAULT + '"]');
+      if (r) r.checked = true;
+      prepAudio(A_DEFAULT, curSec(), v.paused);
+    });
     wrap.appendChild(acc);
     if (LIVE_READY) {
       var lv = document.createElement('button');
@@ -624,7 +665,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     mode = 'audio';
     teardownLive();
     if (!v.src || !v.src.endsWith('/stream/' + ID)) v.src = '/stream/' + ID;
-    a.src = '/audio/' + ID;
+    a.src = '/audio/' + ID + '?track=' + trackN;
     volApply();
     var t = typeof at === 'number' ? at : v.currentTime;
     // 画面和音轨必须从同一个点起，否则一开播就错位
@@ -635,6 +676,10 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     };
     v.addEventListener('loadedmetadata', seekBoth);
     if (v.readyState >= 1) seekBoth();
+    // 播放中换音轨时视频早已就绪，不会再触发上面的 seekBoth，等音轨自己加载完再对齐
+    a.addEventListener('loadedmetadata', function(){
+      try { a.currentTime = v.currentTime; } catch (e) {}
+    }, {once: true});
     setBadges(); clearNotice();
     if (autoplay) {
       Promise.all([
@@ -646,21 +691,52 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     }
   }
 
+  // 选中一条音轨：默认轨能直放就走直连，其余走「静音画面 + 单独 AAC 音轨」。
+  function pickTrack(n, at){
+    trackN = n;
+    var r = document.querySelector('#trackOpts input[name=atrack][value="' + n + '"]');
+    if (r) r.checked = true;
+    savePrefs();
+    var now = typeof at === 'number' ? at : curSec();
+    var paused = v.paused;
+    if (n === A_DEFAULT && trackOK(n)) {
+      if (mode !== 'direct') { useDirect(now); if (paused) v.pause(); }
+      return;
+    }
+    if (trackReady(n)) { useAudio(now); if (paused) { v.pause(); a.pause(); } }
+    else prepAudio(n, now, paused);
+  }
+
   function switchMode(next, at){
-    if (next === 'audio' && AUDIO_OK) { toast('原生音轨可以直接播放，不需要 AAC 音轨。'); return; }
-    if (next === 'audio' && !AUDIO_READY) { prepAudio(); return; }
+    if (next === 'audio' && !MULTI_TRACK && AUDIO_OK) { toast('原生音轨可以直接播放，不需要 AAC 音轨。'); return; }
     if (next === 'live' && !LIVE_READY) { toast('ffmpeg 未安装，实时转码不可用。'); return; }
     pendingLive = false;   // 用户主动选了模式，别再挂着延迟转码
     var now = typeof at === 'number' ? at : curSec();
     var paused = v.paused;
-    if (next === 'live') { startLive(now, !paused); }
-    else if (next === 'audio') { useAudio(now); if (paused) { v.pause(); a.pause(); } }
-    else { useDirect(now); if (paused) v.pause(); }
+    if (next === 'live') { startLive(now, !paused); return; }
+    if (next === 'direct') {
+      // 直连播的是容器默认轨，选中项跟着回到默认轨
+      trackN = A_DEFAULT;
+      var rd = document.querySelector('#trackOpts input[name=atrack][value="' + trackN + '"]');
+      if (rd) rd.checked = true;
+      savePrefs();
+      useDirect(now);
+      if (paused) v.pause();
+      return;
+    }
+    // audio：用当前选中的音轨；没转就先转
+    if (trackReady(trackN)) { useAudio(now); if (paused) { v.pause(); a.pause(); } }
+    else prepAudio(trackN, now, paused);
   }
 
-  /* 预转码 AAC 音轨：POST 起任务，轮询到 done 再切 */
+  /* 预转码某条音轨：POST 起任务，轮询到 done 再切（每条音轨独立缓存） */
   var polling = null;
-  function prepAudio(){
+  function markTrackReady(n){
+    var r = document.querySelector('#trackOpts input[name=atrack][value="' + n + '"]');
+    if (r) r.dataset.ready = '1';
+    if (n === A_DEFAULT) AUDIO_READY = true;
+  }
+  function prepAudio(track, at, paused){
     clearInterval(polling);
     notice.innerHTML = '';
     var p = document.createElement('b');
@@ -669,16 +745,24 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     var st = document.createElement('span');
     notice.appendChild(st);
     notice.hidden = false;
-    fetch('/api/transcode/' + ID, {method:'POST'})
+    var base = '/api/transcode/' + ID + '?track=' + track;
+    fetch(base, {method:'POST'})
       .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
       .then(function(job){
-        if (job.state === 'done') { AUDIO_READY = true; useAudio(v.currentTime); return; }
+        var done = function(){
+          clearInterval(polling);
+          markTrackReady(track);
+          clearNotice();
+          if (trackN !== track) { savePrefs(); return; }   // 等待期间又换了轨
+          useAudio(typeof at === 'number' ? at : v.currentTime);
+          if (paused) { v.pause(); a.pause(); }
+        };
+        if (job.state === 'done') { done(); return; }
         polling = setInterval(function(){
-          fetch('/api/transcode/' + ID).then(function(r){ return r.json(); }).then(function(j){
+          fetch(base).then(function(r){ return r.json(); }).then(function(j){
             if (j.state === 'done') {
-              clearInterval(polling); AUDIO_READY = true;
               toast('音轨好了，已经切过去。');
-              useAudio(v.currentTime);
+              done();
             } else if (j.state === 'error') {
               clearInterval(polling);
               st.textContent = ' 失败：' + (j.error || '未知错误');
@@ -1121,6 +1205,11 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     if (e.target.value) ccBtn.dataset.last = e.target.value;
     setSub(e.target.value, e.target.dataset.label || '');
   });
+  var trackOptsEl = document.getElementById('trackOpts');
+  if (trackOptsEl) trackOptsEl.addEventListener('change', function(e){
+    if (e.target.name !== 'atrack') return;
+    pickTrack(+e.target.value);
+  });
   document.getElementById('offNum').addEventListener('change', function(){
     var n = parseFloat(this.value);
     setOffset(isFinite(n) ? n : 0);
@@ -1199,6 +1288,15 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
   // 上次字幕是关着的：记住那条轨，重新打开时才算「同一条」，偏移不至于白白归零
   subURL = pref.subLast || '';
 
+  // 音轨：恢复上次选中的那条；文件换过、轨数变少时回落到默认轨
+  trackN = pref.atrack;
+  var trSel = document.querySelector('#trackOpts input[name=atrack][value="' + trackN + '"]');
+  if (!trSel) {
+    trackN = A_DEFAULT;
+    trSel = document.querySelector('#trackOpts input[name=atrack][value="' + trackN + '"]');
+  }
+  if (trSel) trSel.checked = true;
+
   // 音量 / 静音 / 字号
   volEl.value = pref.vol;
   userMuted = pref.muted;
@@ -1209,7 +1307,7 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
 
   // 声音模式：实时转码不立刻起 ffmpeg，等用户点播放再接上
   var savedMode = pref.mode;
-  if (savedMode === 'audio' && AUDIO_READY && !AUDIO_OK) {
+  if (savedMode === 'audio' && trackReady(trackN)) {
     useAudio(start, false);
   } else if (savedMode === 'live' && LIVE_READY) {
     mode = 'live';
@@ -1222,6 +1320,10 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     document.getElementById('modeLine').textContent += ' 上次用的实时转码，点播放后接着转。';
   } else {
     mode = 'direct';
+    // 直连播的是默认轨，选中项跟着回到默认轨
+    trackN = A_DEFAULT;
+    var rd = document.querySelector('#trackOpts input[name=atrack][value="' + trackN + '"]');
+    if (rd) rd.checked = true;
     v.src = '/stream/' + ID;
     if (v.readyState >= 1) seekToStartOnce();
     else v.addEventListener('loadedmetadata', seekToStartOnce);

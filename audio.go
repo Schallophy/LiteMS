@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -46,43 +48,167 @@ func browserAudioOK(codec string) bool {
 	return false
 }
 
-// probeAudioCodec 用 ffprobe 读第一条音轨的编码名（只读头部，很快）。
-func probeAudioCodec(path string) (string, error) {
-	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0",
-		"-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", path).Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+type audioTrack struct {
+	N        int    `json:"n"`     // ffmpeg -map 0:a:N 的序号（按音轨出现顺序，0 起）
+	Index    int    `json:"index"` // 容器里的 stream index
+	Codec    string `json:"codec"`
+	Lang     string `json:"lang"`
+	Title    string `json:"title,omitempty"`
+	Channels int    `json:"channels"`
+	Default  bool   `json:"default"` // 容器标记的默认轨：原生直连播的就是它
 }
 
-type audioCodecEntry struct {
-	mtime int64
-	size  int64
-	ok    bool
+// probeAudioTracks 用 ffprobe 列出容器内所有音轨（只读头部）。
+func probeAudioTracks(path string) ([]audioTrack, error) {
+	out, err := exec.Command("ffprobe", "-v", "error",
+		"-select_streams", "a",
+		"-show_entries", "stream=index,codec_name,channels:stream_tags=language,title:stream_disposition=default",
+		"-of", "json", path).Output()
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Streams []struct {
+			Index    int    `json:"index"`
+			Codec    string `json:"codec_name"`
+			Channels int    `json:"channels"`
+			Tags     struct {
+				Language string `json:"language"`
+				Title    string `json:"title"`
+			} `json:"tags"`
+			Disposition struct {
+				Default int `json:"default"`
+			} `json:"disposition"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return nil, err
+	}
+	tracks := make([]audioTrack, 0, len(doc.Streams))
+	for i, st := range doc.Streams {
+		tracks = append(tracks, audioTrack{
+			N: i, Index: st.Index, Codec: st.Codec,
+			Lang: st.Tags.Language, Title: st.Tags.Title,
+			Channels: st.Channels, Default: st.Disposition.Default == 1,
+		})
+	}
+	return tracks, nil
+}
+
+// defaultAudioTrack 返回容器标记的默认音轨；没有标记就用第一条。
+func defaultAudioTrack(tracks []audioTrack) (audioTrack, bool) {
+	for _, t := range tracks {
+		if t.Default {
+			return t, true
+		}
+	}
+	if len(tracks) > 0 {
+		return tracks[0], true
+	}
+	return audioTrack{}, false
+}
+
+type audioProbeEntry struct {
+	mtime  int64
+	size   int64
+	probed bool
+	tracks []audioTrack
 }
 
 var audioCacheMu sync.Mutex
-var audioCache = map[string]audioCodecEntry{}
+var audioCache = map[string]audioProbeEntry{}
 
-// nativeAudioOK 报告条目的原生音轨能否直接播；探测失败时按「能播」处理，
-// 宁可少禁一个入口，也不要把还能用的 AAC 选项锁掉。
-func (s *Server) nativeAudioOK(it Item) bool {
+// audioTracks 返回条目容器里的音轨列表；probed=false 表示探测失败（不缓存失败）。
+func (s *Server) audioTracks(it Item) (tracks []audioTrack, probed bool) {
 	p := s.itemPath(it)
 	fi, err := os.Stat(p)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	audioCacheMu.Lock()
 	c, cached := audioCache[it.ID]
 	audioCacheMu.Unlock()
 	if cached && c.mtime == fi.ModTime().Unix() && c.size == fi.Size() {
-		return c.ok
+		return c.tracks, true
 	}
-	codec, err := probeAudioCodec(p)
-	ok := err == nil && browserAudioOK(codec)
+	tracks, err = probeAudioTracks(p)
+	if err != nil {
+		return nil, false
+	}
+	if tracks == nil {
+		tracks = []audioTrack{}
+	}
 	audioCacheMu.Lock()
-	audioCache[it.ID] = audioCodecEntry{mtime: fi.ModTime().Unix(), size: fi.Size(), ok: ok}
+	audioCache[it.ID] = audioProbeEntry{mtime: fi.ModTime().Unix(), size: fi.Size(), probed: true, tracks: tracks}
 	audioCacheMu.Unlock()
-	return ok
+	return tracks, true
+}
+
+// nativeAudioOK 报告默认音轨能否直接播。探测失败时按「能播」处理，
+// 宁可少禁一个入口，也不要把还能用的 AAC 选项锁掉。
+func (s *Server) nativeAudioOK(it Item) bool {
+	tracks, probed := s.audioTracks(it)
+	if !probed {
+		return false
+	}
+	if len(tracks) == 0 {
+		return true // 没有音轨，也就没有要转的
+	}
+	t, ok := defaultAudioTrack(tracks)
+	return ok && browserAudioOK(t.Codec)
+}
+
+func audioCodecLabel(codec string) string {
+	switch strings.ToLower(codec) {
+	case "aac":
+		return "AAC"
+	case "ac3":
+		return "AC3"
+	case "eac3":
+		return "EAC3"
+	case "dts":
+		return "DTS"
+	case "truehd":
+		return "TrueHD"
+	case "flac":
+		return "FLAC"
+	case "opus":
+		return "Opus"
+	case "vorbis":
+		return "Vorbis"
+	case "mp3":
+		return "MP3"
+	case "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le":
+		return "PCM"
+	}
+	return strings.ToUpper(codec)
+}
+
+func audioChannelLabel(n int) string {
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return "单声道"
+	case 2:
+		return "立体声"
+	case 6:
+		return "5.1"
+	case 8:
+		return "7.1"
+	}
+	return strconv.Itoa(n) + " 声道"
+}
+
+// audioTrackLabel 拼设置面板里的音轨名：语言 · 编码 声道 · 标题。
+func audioTrackLabel(t audioTrack) string {
+	name := audioCodecLabel(t.Codec)
+	if ch := audioChannelLabel(t.Channels); ch != "" {
+		name += " " + ch
+	}
+	parts := []string{langLabel(t.Lang), name}
+	if t.Title != "" && t.Title != name {
+		parts = append(parts, t.Title)
+	}
+	return strings.Join(parts, " · ")
 }

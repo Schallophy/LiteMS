@@ -51,7 +51,7 @@ func TestTranscodeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := tc.Start("abc123", src, false)
+	job, err := tc.Start("abc123", 0, src, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestTranscodeEndToEnd(t *testing.T) {
 
 	deadline := time.Now().Add(90 * time.Second)
 	for {
-		j := tc.Status("abc123")
+		j := tc.Status("abc123", 0)
 		if j.State == "done" {
 			break
 		}
@@ -74,12 +74,12 @@ func TestTranscodeEndToEnd(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	if !tc.Has("abc123") {
+	if !tc.Has("abc123", 0) {
 		t.Fatal("完成后缓存文件不在")
 	}
 	// 音轨必须是 aac
 	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0",
-		"-show_entries", "stream=codec_name", "-of", "csv=p=0", tc.CachePath("abc123")).Output()
+		"-show_entries", "stream=codec_name", "-of", "csv=p=0", tc.CachePath("abc123", 0)).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestTranscodeEndToEnd(t *testing.T) {
 	}
 
 	// 完成后再 Start：命中缓存直接返回 done
-	job, err = tc.Start("abc123", src, false)
+	job, err = tc.Start("abc123", 0, src, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestTranscodeNoFFmpeg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tc.Start("abc123", filepath.Join(dir, "x.mkv"), false); err == nil {
+	if _, err := tc.Start("abc123", 0, filepath.Join(dir, "x.mkv"), false); err == nil {
 		t.Fatal("无 ffmpeg 应该报错")
 	}
 }
@@ -119,13 +119,72 @@ func TestTranscodeStatusAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tc.CachePath("abc123"), []byte("fake"), 0o644); err != nil {
+	if err := os.WriteFile(tc.CachePath("abc123", 0), []byte("fake"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if j := tc.Status("abc123"); j.State != "done" {
+	if j := tc.Status("abc123", 0); j.State != "done" {
 		t.Errorf("Status = %s, want done", j.State)
 	}
-	if j := tc.Status("nope"); j.State != "none" {
+	if j := tc.Status("nope", 0); j.State != "none" {
 		t.Errorf("Status = %s, want none", j.State)
+	}
+}
+
+// 多音轨：只转指定那条（0:a:1），产物与第 0 条分开缓存。
+func TestTranscodeSecondTrack(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("无 ffmpeg，跳过")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mkv")
+	gen := exec.Command("ffmpeg", "-nostdin", "-y",
+		"-f", "lavfi", "-i", "testsrc=size=128x96:rate=10",
+		"-f", "lavfi", "-i", "sine=frequency=440",
+		"-f", "lavfi", "-i", "sine=frequency=660",
+		"-t", "2",
+		"-map", "0:v", "-map", "1:a", "-map", "2:a",
+		"-c:v", "libx264", "-preset", "ultrafast",
+		"-c:a:0", "aac", "-c:a:1", "ac3", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("生成双音轨测试片失败: %v\n%s", err, out)
+	}
+
+	tc, err := NewTranscoder(filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tc.Start("multi01", 1, src, false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		j := tc.Status("multi01", 1)
+		if j.State == "done" {
+			break
+		}
+		if j.State == "error" {
+			t.Fatalf("转码失败: %s", j.Error)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("转码超时")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !tc.Has("multi01", 1) {
+		t.Fatal("第 2 条音轨缓存不在")
+	}
+	if tc.Has("multi01", 0) {
+		t.Error("没转的第 1 条音轨不该有缓存")
+	}
+	if got, want := tc.CachePath("multi01", 1), filepath.Join(dir, "cache", "multi01.a1.m4a"); got != want {
+		t.Errorf("缓存路径 = %s, want %s", got, want)
+	}
+	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0",
+		"-show_entries", "stream=codec_name", "-of", "csv=p=0", tc.CachePath("multi01", 1)).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "aac" {
+		t.Errorf("输出音轨 = %s, want aac", got)
 	}
 }
