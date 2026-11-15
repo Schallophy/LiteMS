@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -1226,17 +1227,22 @@ func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "条目不存在")
 		return
 	}
+	if !s.requireRoot(w, *it) {
+		return
+	}
 
 	host := r.Host
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	auth := ""
+	// 凭据要按 URL 组件转义：密码里的 @ / : 直接拼接会把地址截断
+	u := &url.URL{Scheme: scheme, Host: host}
 	if s.cfg.Server.AuthUser != "" {
-		auth = s.cfg.Server.AuthUser + ":" + s.cfg.Server.AuthPass + "@"
+		u.User = url.UserPassword(s.cfg.Server.AuthUser, s.cfg.Server.AuthPass)
 	}
-	base := fmt.Sprintf("%s://%s%s", scheme, auth, host)
+	base := u.String()
+	auth := u.User != nil
 
 	player := "mpv"
 	if len(s.cfg.Launch.Players) > 0 && s.cfg.Launch.Players[0].Command != "" {
@@ -1252,7 +1258,7 @@ func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"command":     cmd,
-		"has_auth":    auth != "",
+		"has_auth":    auth,
 		"auth_in_url": "凭据内嵌在 URL 中，注意命令会出现在 shell 历史里",
 	})
 }

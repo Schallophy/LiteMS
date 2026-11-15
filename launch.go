@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -214,17 +215,17 @@ func (l *Launcher) originAllowed(origin string) bool {
 // buildURLs 拼出视频与字幕地址；配置了认证时把凭据内嵌进 URL。
 func (l *Launcher) buildURLs(id, lang string) (video, sub string) {
 	base := l.server
-	prefix := ""
-	if l.cfg.Server.AuthUser != "" {
-		if i := strings.Index(base, "://"); i >= 0 {
-			prefix = l.cfg.Server.AuthUser + ":" + l.cfg.Server.AuthPass + "@"
-			base = base[:i+3] + prefix + base[i+3:]
+	if u, err := url.Parse(base); err == nil && u.Scheme != "" {
+		if l.cfg.Server.AuthUser != "" {
+			// 必须按 URL 组件转义，否则密码里的 @ / : 会把地址结构截断
+			u.User = url.UserPassword(l.cfg.Server.AuthUser, l.cfg.Server.AuthPass)
 		}
+		base = strings.TrimRight(u.String(), "/")
 	}
 	video = base + "/stream/" + id
 	sub = base + "/sub/" + id
 	if lang != "" {
-		sub += "?lang=" + lang
+		sub += "?lang=" + url.QueryEscape(lang)
 	}
 	return video, sub
 }
