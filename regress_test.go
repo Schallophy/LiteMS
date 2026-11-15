@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -43,6 +44,11 @@ func TestSubMatchesVideo(t *testing.T) {
 		{"Movie.2020.特效字幕", "Movie.2020", true},
 		{"Movie.2020.导演评论", "Movie.2020", false},
 		{"Movie.2020.加长版", "Movie.2020", false},
+		{"Movie.2020.zh_CN", "Movie.2020", true},
+		{"Movie.2020.en_US", "Movie.2020", true},
+		{"Movie.2020.chs&eng", "Movie.2020", true},
+		{"Movie.2020.chs_eng", "Movie.2020", true},
+		{"Movie.2020.简中_eng", "Movie.2020", true},
 	}
 	for _, c := range cases {
 		if got := subMatchesVideo(c.sub, c.video); got != c.want {
@@ -466,5 +472,217 @@ func TestHandleCmdRootAndCredentialEscaping(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "u:p%40ss@192.168.1.2:7788") {
 		t.Errorf("命令里的凭据未转义：%s", body)
+	}
+}
+
+func TestSuffixSubLangLocales(t *testing.T) {
+	cases := []struct{ sub, video, want string }{
+		{"Movie.zh_CN", "Movie", "chs"},
+		{"Movie.zh_TW", "Movie", "cht"},
+		{"Movie.en_US", "Movie", "eng"},
+		{"Movie.ja-JP", "Movie", "jpn"},
+		{"Movie.chs&eng", "Movie", "chs"},
+	}
+	for _, c := range cases {
+		if got := suffixSubLang(c.sub, c.video); got != c.want {
+			t.Errorf("suffixSubLang(%q)=%q want %q", c.sub, got, c.want)
+		}
+	}
+}
+
+type quotaTestScraper struct{ calls int }
+
+func (f *quotaTestScraper) Name() string { return "fake" }
+func (f *quotaTestScraper) Search(ctx context.Context, q Query) ([]Candidate, error) {
+	f.calls++
+	return nil, nil
+}
+func (f *quotaTestScraper) Detail(ctx context.Context, key string, kind Kind) (*Meta, error) {
+	f.calls++
+	return &Meta{}, nil
+}
+func (f *quotaTestScraper) Season(ctx context.Context, key string, season int) ([]EpisodeMeta, error) {
+	f.calls++
+	return nil, nil
+}
+func (f *quotaTestScraper) NativeKey(tmdbID int, imdbID string) string { return "" }
+
+func TestQuotaScraperStopsAtLimit(t *testing.T) {
+	inner := &quotaTestScraper{}
+	q := &quotaScraper{Scraper: inner, limit: 2}
+	for i := 0; i < 2; i++ {
+		if _, err := q.Search(context.Background(), Query{}); err != nil {
+			t.Fatalf("第 %d 次调用不应失败：%v", i+1, err)
+		}
+	}
+	if !q.Exhausted() {
+		t.Fatal("用满额度后 Exhausted 应为 true")
+	}
+	if _, err := q.Detail(context.Background(), "1", KindMovie); !errors.Is(err, ErrDailyLimit) {
+		t.Fatalf("超限调用应返回 ErrDailyLimit，实际 %v", err)
+	}
+	if inner.calls != 2 {
+		t.Fatalf("超限后不应再请求数据源，实际调用 %d 次", inner.calls)
+	}
+}
+
+func TestQuotaPersistsAcrossRunners(t *testing.T) {
+	db, err := OpenDB(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	inner := &quotaTestScraper{}
+	q1 := newQuotaScraper(db, inner, 2)
+	for i := 0; i < 2; i++ {
+		if _, err := q1.Search(context.Background(), Query{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q2 := newQuotaScraper(db, inner, 2)
+	if !q2.Exhausted() {
+		t.Fatal("重启后的 Runner 应恢复当天的已用次数")
+	}
+	if _, err := q2.Search(context.Background(), Query{}); !errors.Is(err, ErrDailyLimit) {
+		t.Fatalf("应返回 ErrDailyLimit，实际 %v", err)
+	}
+	// 换一天后额度重新计算
+	if err := db.SetKV(quotaDayKV, "2000-01-01"); err != nil {
+		t.Fatal(err)
+	}
+	q3 := newQuotaScraper(db, inner, 2)
+	if q3.Exhausted() {
+		t.Fatal("新的一天不应沿用昨天的已用次数")
+	}
+}
+
+func TestHostForURLRejectsInjection(t *testing.T) {
+	good := []string{"127.0.0.1:7788", "media.local", "[::1]:7788"}
+	for _, h := range good {
+		if _, ok := hostForURL(h); !ok {
+			t.Errorf("合法 Host 被拒：%q", h)
+		}
+	}
+	bad := []string{"", "a b", `x"; touch /tmp/pwned; echo "`, "user@host", "host/path"}
+	for _, h := range bad {
+		if _, ok := hostForURL(h); ok {
+			t.Errorf("非法 Host 被接受：%q", h)
+		}
+	}
+}
+
+func TestApplyCopyReplacesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mkv")
+	dst := filepath.Join(dir, "dst.mkv")
+	if err := os.WriteFile(src, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(src, dst); err != nil {
+		t.Skipf("当前环境不能建符号链接：%v", err)
+	}
+	created, skipped, err := applyCopy(src, dst)
+	if err != nil || !created || skipped {
+		t.Fatalf("applyCopy=%v/%v/%v，应实际复制", created, skipped, err)
+	}
+	fi, err := os.Lstat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("落点仍是符号链接，没有换成实体副本")
+	}
+	b, _ := os.ReadFile(dst)
+	if string(b) != "payload" {
+		t.Fatalf("副本内容不对：%q", b)
+	}
+}
+
+func TestReadNFOFileLimit(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "movie.nfo")
+	if err := os.WriteFile(p, make([]byte, nfoMaxBytes+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if info := readNFO(p); info.Exists {
+		t.Fatal("超大 NFO 应被拒绝")
+	}
+}
+
+func TestDetailDoesNotReadAboveRoot(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	season := filepath.Join(root, "season")
+	if err := os.MkdirAll(season, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 库根之外的同名剧集 NFO 不能被单集详情读到
+	outside := "<tvshow><genre>Outside</genre></tvshow>"
+	if err := os.WriteFile(filepath.Join(base, "tvshow.nfo"), []byte(outside), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(season, "ep1.nfo"),
+		[]byte("<episodedetails><title>E1</title><tagline>Local</tagline></episodedetails>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	it := Item{ID: "x", RootIdx: 0, RelPath: "season/ep1.mkv", Kind: KindEpisode}
+	d := detailFor([]string{root}, it)
+	if d == nil {
+		t.Fatal("单集自身 NFO 存在时应返回详情")
+	}
+	if len(d.Genres) != 0 {
+		t.Fatalf("读到了媒体根之外的 tvshow.nfo：%v", d.Genres)
+	}
+}
+
+func TestHLSInstancesDoNotClobber(t *testing.T) {
+	base := t.TempDir()
+	h1, err := NewHLSServer(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h1.dir, "keep.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h2, err := NewHLSServer(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h2.Close()
+	if h1.dir == h2.dir {
+		t.Fatal("两个实例共用了同一个会话目录")
+	}
+	if _, err := os.Stat(filepath.Join(h1.dir, "keep.txt")); err != nil {
+		t.Fatalf("第二个实例启动时清掉了第一个实例的文件：%v", err)
+	}
+	h1.Close()
+	if _, err := os.Stat(h1.dir); !os.IsNotExist(err) {
+		t.Fatal("Close 没清掉本实例目录")
+	}
+	if _, err := os.Stat(h2.dir); err != nil {
+		t.Fatalf("关闭第一个实例影响了第二个：%v", err)
+	}
+}
+
+func TestTranscoderKeepsFreshPartFiles(t *testing.T) {
+	dir := t.TempDir()
+	fresh := filepath.Join(dir, "abcdef0123456789.m4a.1.part")
+	old := filepath.Join(dir, "abcdef0123456789.m4a.2.part")
+	for _, p := range []string{fresh, old} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(old, past, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewTranscoder(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatal("启动时删掉了可能由其它实例正在写的 .part")
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatal("一天前的残留 .part 应被清理")
 	}
 }
