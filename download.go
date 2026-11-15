@@ -180,7 +180,10 @@ func applyCopy(src, dst string) (created, skipped bool, err error) {
 	if err != nil {
 		return false, false, err
 	}
-	if di, err := os.Stat(dst); err == nil &&
+	// 用 Lstat：镜像模式从 symlink 切换到 copy 时，落点还是个指向源的符号链接。
+	// os.Stat 会顺着链接看到源文件本身，于是判定「已经复制过」而跳过，
+	// 结果是永远不会生成真正的副本。
+	if di, err := os.Lstat(dst); err == nil &&
 		di.Mode().IsRegular() && di.Size() == si.Size() &&
 		di.ModTime().Sub(si.ModTime()).Abs() < time.Second {
 		return false, true, nil // 同大小同 mtime，视为已复制
