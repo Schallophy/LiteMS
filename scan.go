@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // ScanStats 是单次扫描的统计。
@@ -64,8 +65,10 @@ func (s *Scanner) Run() (ScanStats, error) {
 	s.stats.Roots = len(roots)
 
 	// ReconcileRoots 同时负责 upsert roots 表，必须在读取旧路径之前调用，
-	// 才能发现「根被删除/换址」并清掉对应条目。
-	if n, err := s.db.ReconcileRoots(roots); err != nil {
+	// 才能发现「根被删除/换址」并清掉对应条目。dry-run 承诺不写库，跳过。
+	if s.dry {
+		logf("dry-run：跳过媒体根对齐（不写索引）")
+	} else if n, err := s.db.ReconcileRoots(roots); err != nil {
 		return s.stats, err
 	} else if n > 0 {
 		logf("媒体根有增减或换址，已清理 %d 条失效索引", n)
@@ -482,6 +485,9 @@ func (s *Scanner) findSubtitles(dir, videoName string) []SubEntry {
 			continue
 		}
 		lang := NormalizeLang(SubtitleLang(e.Name()))
+		if lang == "" {
+			lang = cjkSubLang(subStem, stem)
+		}
 		out = append(out, SubEntry{Lang: lang, Path: normalizeRel(e.Name())})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -508,12 +514,66 @@ func subMatchesVideo(subStem, videoStem string) bool {
 	})
 	for _, t := range tokens {
 		t = strings.Trim(t, "-")
-		if t == "" || t == "forced" || t == "sdh" || t == "cc" || subLangs[t] {
+		if subTokenOK(t) {
 			continue
 		}
 		return false
 	}
 	return true
+}
+
+// subTokenOK 判断一个后缀 token 是否为字幕语言/属性标记。
+// 除了 ASCII 语言码，还要认发布组常见的中文写法（简中 / 繁英双语 / 特效字幕）。
+var subLangRunes = map[rune]bool{
+	'中': true, '简': true, '繁': true, '英': true, '双': true, '语': true,
+	'法': true, '日': true, '韩': true, '粤': true, '字': true, '幕': true,
+	'特': true, '效': true,
+}
+
+func subTokenOK(t string) bool {
+	if t == "" || t == "forced" || t == "sdh" || t == "cc" ||
+		t == "chinese" || t == "english" || t == "japanese" || t == "korean" ||
+		subLangs[t] {
+		return true
+	}
+	// 纯中文 token 只允许由语言/字幕相关字组成：「中文字幕」「简英双语」通过，
+	// 「加长版」「导演评论」这类版本/评论标记仍然拒绝。
+	sawHan := false
+	for _, r := range t {
+		if r < 0x80 || !unicode.Is(unicode.Han, r) {
+			return false
+		}
+		if !subLangRunes[r] {
+			return false
+		}
+		sawHan = true
+	}
+	return sawHan
+}
+
+// cjkLangTokens 把常见中文语言写法映射到库内语言码，供菜单显示。
+var cjkLangTokens = map[string]string{
+	"简": "chs", "简体": "chs", "简中": "chs", "简英": "chs",
+	"中字": "chs", "中文字幕": "chs", "中文": "chs", "中英": "chs", "双语": "chs",
+	"繁": "cht", "繁体": "cht", "繁中": "cht", "繁体中文": "cht", "粤语": "cht",
+	"英语": "eng", "英": "eng", "日语": "jpn", "日": "jpn", "韩语": "kor", "韩": "kor",
+}
+
+func cjkSubLang(subStem, videoStem string) string {
+	a, b := strings.ToLower(subStem), strings.ToLower(videoStem)
+	if !strings.HasPrefix(a, b) {
+		return ""
+	}
+	rest := strings.TrimLeft(a[len(b):], ".-_ []()")
+	for _, t := range strings.FieldsFunc(rest, func(r rune) bool {
+		return r == '.' || r == '_' || r == ' ' ||
+			r == '[' || r == ']' || r == '(' || r == ')'
+	}) {
+		if l, ok := cjkLangTokens[strings.Trim(t, "-")]; ok {
+			return l
+		}
+	}
+	return ""
 }
 
 // sameSubs 判断两版外挂字幕清单是否等价（顺序无关）。
@@ -558,8 +618,12 @@ func (s *Scanner) pruneRoot(idx int, root string) error {
 		if s.seen[fmt.Sprintf("%d:%s", idx, rel)] {
 			continue
 		}
-		// 双保险：磁盘上真的没了才删
+		// 双保险：磁盘上真的没了才删。stat 出错不等于文件不存在——
+		// 目录暂时无权限、存储 I/O 抖动时删掉索引会连带丢进度。
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			warnf("暂不清理（无法确认文件已消失）：%s（%v）", rel, err)
 			continue
 		}
 		if s.dry {
