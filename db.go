@@ -352,6 +352,12 @@ func (d *DB) ReconcileRoots(roots []string) (int, error) {
 	if _, err := tx.Exec(`DELETE FROM roots WHERE idx >= ?`, len(roots)); err != nil {
 		return 0, err
 	}
+	// roots.path 有 UNIQUE 约束：直接把路径改到另一个下标会撞上仍存在的旧行
+	// （例如 [A,B] → [B,A]）。先把所有旧路径改成不会与目标冲突的占位值，
+	// 再按新顺序 upsert；idx 不变，items 的外键不受影响。
+	if _, err := tx.Exec(`UPDATE roots SET path = ? || idx`, "\x00reconcile:"); err != nil {
+		return 0, err
+	}
 	for i, r := range roots {
 		if _, err := tx.Exec(`INSERT INTO roots(idx,path) VALUES(?,?)
 			ON CONFLICT(idx) DO UPDATE SET path=excluded.path`,
@@ -363,6 +369,27 @@ func (d *DB) ReconcileRoots(roots []string) (int, error) {
 		return 0, err
 	}
 	return cleaned, nil
+}
+
+// ResetIndex 清空索引与播放进度，保留数据库文件本身。serve 正在运行时
+// 删除库文件会让它的连接指向已 unlink 的 inode，进度与索引从此分叉。
+func (d *DB) ResetIndex() error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM progress`,
+		`DELETE FROM items`,
+		`DELETE FROM roots`,
+		`DELETE FROM kv`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // UpsertItem 插入或更新一条记录。已刮削的元数据不会被扫描覆盖。
