@@ -73,7 +73,7 @@ func detailFor(roots []string, it Item) *DetailInfo {
 
 	// 单集：沿目录向上找 tvshow.nfo，剧集层的字段补进来
 	if it.Kind == KindEpisode {
-		for up := dir; ; up = filepath.Dir(up) {
+		for up := dir; underPath(root, up); up = filepath.Dir(up) {
 			if show := readNFODetail(filepath.Join(up, "tvshow.nfo")); show != nil {
 				info.Genres = firstNonEmptyList(info.Genres, trimAll(show.Genres))
 				info.Countries = firstNonEmptyList(info.Countries, trimAll(show.Countries))

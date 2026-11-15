@@ -3,11 +3,32 @@ package main
 import (
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// nfoMaxBytes 是读取单个 NFO 的上限。正常 NFO 只有几十 KB，
+// 损坏或恶意构造的大文件不该把内存吃满。
+const nfoMaxBytes = 8 << 20
+
+func readNFOFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, nfoMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > nfoMaxBytes {
+		return nil, fmt.Errorf("文件超过 %d 字节", nfoMaxBytes)
+	}
+	return b, nil
+}
 
 // 本文件负责 NFO 的读写。格式遵循 Kodi 的 schema（文档第 7 章）：
 // 图片一律写相对文件名，`<art>` 用 Kodi 18+ 的写法，`<ratings>` 带 name 属性。
@@ -217,8 +238,11 @@ type nfoInfo struct {
 
 // readNFO 读取并解析 NFO；不存在时返回 Exists=false 而不是错误。
 func readNFO(path string) nfoInfo {
-	b, err := os.ReadFile(path)
+	b, err := readNFOFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			warnf("NFO 读取失败，忽略：%s（%v）", path, err)
+		}
 		return nfoInfo{}
 	}
 	var p nfoProbe
@@ -285,8 +309,11 @@ type nfoDetailXML struct {
 
 // readNFODetail 读取并解析 NFO 的展示字段；不存在或解析失败返回 nil。
 func readNFODetail(path string) *nfoDetailXML {
-	b, err := os.ReadFile(path)
+	b, err := readNFOFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			warnf("NFO 详情读取失败，忽略：%s（%v）", path, err)
+		}
 		return nil
 	}
 	var d nfoDetailXML

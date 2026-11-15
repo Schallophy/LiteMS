@@ -218,9 +218,9 @@ func (s *Server) embeddedSubs(it Item) []SubDTO {
 	subCacheMu.Lock()
 	cached, ok := subCache[it.ID]
 	subCacheMu.Unlock()
-	if !ok || cached.mtime != fi.ModTime().Unix() || cached.size != fi.Size() {
+	if !ok || cached.mtime != fi.ModTime().UnixNano() || cached.size != fi.Size() {
 		tracks := probeSubTracks(src)
-		cached = embedCache{mtime: fi.ModTime().Unix(), size: fi.Size(), tracks: tracks}
+		cached = embedCache{mtime: fi.ModTime().UnixNano(), size: fi.Size(), tracks: tracks}
 		subCacheMu.Lock()
 		subCache[it.ID] = cached
 		subCacheMu.Unlock()
@@ -361,11 +361,13 @@ func (s *Server) saveUploadedSub(it Item, r io.Reader, name string) (string, err
 	}
 	final := uniqueInDir(dir, name)
 	dst := filepath.Join(dir, final)
-	tmp := dst + ".part"
-	f, err := os.Create(tmp)
+	// 唯一临时名：同一目标并发上传时，固定 <dst>.part 会互相覆盖，
+	// 先完成的 rename 后另一份可能把别人的内容带进去。
+	f, err := os.CreateTemp(dir, ".upload-*")
 	if err != nil {
 		return "", err
 	}
+	tmp := f.Name()
 	n, err := io.Copy(f, io.LimitReader(r, maxSubBytes+1))
 	if err != nil {
 		f.Close()

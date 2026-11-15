@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -39,7 +40,7 @@ func NewOMDbClient(cfg *Config) *OMDbClient {
 				Proxy:       http.ProxyFromEnvironment,
 			},
 		},
-		delay:  time.Duration(cfg.Scrape.IntervalMS) * time.Millisecond,
+		delay: time.Duration(cfg.Scrape.IntervalMS) * time.Millisecond,
 	}
 }
 
@@ -127,8 +128,12 @@ func (c *OMDbClient) call(ctx context.Context, q url.Values) (*omdbResponse, err
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("OMDb 返回 %d", resp.StatusCode)
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, fmt.Errorf("读取 OMDb 响应失败: %w", err)
+	}
 	var out omdbResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("解析 OMDb 响应失败: %w", err)
 	}
 	if strings.EqualFold(out.Response, "False") {
