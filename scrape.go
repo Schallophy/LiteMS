@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -269,8 +270,14 @@ func NewRunner(cfg *Config, db *DB, sc Scraper, dry, force bool, onlyID string, 
 	}
 }
 
+// scrapeRunMu 串行化同一进程内的刮削。serve 的启动补刮与下载镜像后的补刮
+// 可能同时触发；两轮同时写同一批 NFO/图片会互相覆盖，SQLite 也会抢写锁。
+var scrapeRunMu sync.Mutex
+
 // Run 执行刮削。
 func (r *Runner) Run(ctx context.Context) (ScrapeStats, error) {
+	scrapeRunMu.Lock()
+	defer scrapeRunMu.Unlock()
 	start := time.Now()
 	items, err := r.db.ListForScrape(r.force, r.onlyID, r.limit)
 	if err != nil {
@@ -389,9 +396,11 @@ func (r *Runner) processMovie(ctx context.Context, it *Item, full, dir, stem str
 		Actors:        buildActorList(meta.Actors),
 		Art:           artOf(base, posterRel != "", fanartRel != ""),
 	}
-	if err := writeNFO(n, nfo); err != nil {
-		r.fail(it, err)
-		return
+	if r.cfg.Scrape.WriteNFO {
+		if err := writeNFO(n, nfo); err != nil {
+			r.fail(it, err)
+			return
+		}
 	}
 
 	it.Title = nfo.Title
@@ -404,7 +413,11 @@ func (r *Runner) processMovie(ctx context.Context, it *Item, full, dir, stem str
 	it.Overview = meta.Overview
 	it.PosterPath = posterRel
 	it.FanartPath = fanartRel
-	it.NfoMtimeUnix = mtimeOf(n)
+	if r.cfg.Scrape.WriteNFO {
+		it.NfoMtimeUnix = mtimeOf(n)
+	} else {
+		it.NfoMtimeUnix = 0
+	}
 	if err := r.db.UpdateScraped(it); err != nil {
 		r.fail(it, err)
 		return
@@ -450,7 +463,7 @@ func (r *Runner) processEpisode(ctx context.Context, it *Item, full, dir, stem s
 
 	// 单集截图
 	thumbName := ""
-	if ep.StillPath != "" {
+	if ep.StillPath != "" && r.cfg.Scrape.WriteImages {
 		if url := r.stillURL(ep.StillPath); url != "" {
 			name := stem + "-thumb.jpg"
 			if err := r.download(ctx, url, filepath.Join(dir, name)); err == nil {
@@ -478,9 +491,11 @@ func (r *Runner) processEpisode(ctx context.Context, it *Item, full, dir, stem s
 	if thumbName != "" {
 		nfo.Art = &nfoArt{Thumb: thumbName}
 	}
-	if err := writeNFO(n, nfo); err != nil {
-		r.fail(it, err)
-		return
+	if r.cfg.Scrape.WriteNFO {
+		if err := writeNFO(n, nfo); err != nil {
+			r.fail(it, err)
+			return
+		}
 	}
 
 	it.Title = show.meta.Title
@@ -493,7 +508,11 @@ func (r *Runner) processEpisode(ctx context.Context, it *Item, full, dir, stem s
 	it.Overview = ep.Overview
 	it.PosterPath = show.posterRel
 	it.FanartPath = show.fanartRel
-	it.NfoMtimeUnix = mtimeOf(n)
+	if r.cfg.Scrape.WriteNFO {
+		it.NfoMtimeUnix = mtimeOf(n)
+	} else {
+		it.NfoMtimeUnix = 0
+	}
 	if err := r.db.UpdateScraped(it); err != nil {
 		r.fail(it, err)
 		return
@@ -549,18 +568,28 @@ func (r *Runner) loadShow(ctx context.Context, it *Item, showDir string) *showSt
 	st.meta = meta
 
 	// 剧集级海报与背景图
-	if meta.PosterPath != "" {
-		url := r.posterURL(meta.PosterPath)
-		if err := r.download(ctx, url, filepath.Join(showDir, "poster.jpg")); err == nil {
-			st.posterRel = r.relTo(showDir, "poster.jpg")
-			r.stats.Images++
+	if r.cfg.Scrape.WriteImages {
+		if meta.PosterPath != "" {
+			url := r.posterURL(meta.PosterPath)
+			if err := r.download(ctx, url, filepath.Join(showDir, "poster.jpg")); err == nil {
+				st.posterRel = r.relTo(showDir, "poster.jpg")
+				r.stats.Images++
+			}
 		}
-	}
-	if meta.FanartPath != "" {
-		url := r.fanartURL(meta.FanartPath)
-		if err := r.download(ctx, url, filepath.Join(showDir, "fanart.jpg")); err == nil {
+		if meta.FanartPath != "" {
+			url := r.fanartURL(meta.FanartPath)
+			if err := r.download(ctx, url, filepath.Join(showDir, "fanart.jpg")); err == nil {
+				st.fanartRel = r.relTo(showDir, "fanart.jpg")
+				r.stats.Images++
+			}
+		}
+	} else {
+		// 不写图也要把磁盘上已有的图收进索引
+		if _, err := os.Stat(filepath.Join(showDir, "poster.jpg")); err == nil {
+			st.posterRel = r.relTo(showDir, "poster.jpg")
+		}
+		if _, err := os.Stat(filepath.Join(showDir, "fanart.jpg")); err == nil {
 			st.fanartRel = r.relTo(showDir, "fanart.jpg")
-			r.stats.Images++
 		}
 	}
 
@@ -584,7 +613,7 @@ func (r *Runner) loadShow(ctx context.Context, it *Item, showDir string) *showSt
 		Art:           artOf("", st.posterRel != "", st.fanartRel != ""),
 	}
 	// lockdata=true 的 tvshow.nfo 属于用户，不覆盖
-	if !locked {
+	if !locked && r.cfg.Scrape.WriteNFO {
 		if err := writeNFO(tvNFO, tv); err != nil {
 			warnf("写 tvshow.nfo 失败：%s（%v）", showDir, err)
 		}
@@ -701,29 +730,38 @@ func (r *Runner) altTitles(ctx context.Context, key string) ([]string, error) {
 // 已存在且非 force 时跳过下载，但依然返回路径——文件在就说明能用。
 func (r *Runner) saveMovieImages(ctx context.Context, it *Item, dir, stem string, vcount int, meta *Meta) (posterRel, fanartRel string, count int) {
 	base := imageBaseName(dir, stem, vcount)
+	// 磁盘上已有的图无论是否允许写都收进索引；下载才受 write_images 控制
+	usable := func(dest string) bool {
+		fi, err := os.Stat(dest)
+		return err == nil && fi.Mode().IsRegular() && fi.Size() >= 512
+	}
 
 	if meta.PosterPath != "" {
 		name := base + "poster.jpg"
 		dest := filepath.Join(dir, name)
-		if r.fileUsable(dest) {
+		if usable(dest) && (!r.force || !r.cfg.Scrape.WriteImages) {
 			posterRel = r.relTo(dir, name)
-		} else if err := r.download(ctx, r.posterURL(meta.PosterPath), dest); err == nil {
-			posterRel = r.relTo(dir, name)
-			count++
-		} else {
-			warnf("下载海报失败：%s（%v）", it.RelPath, err)
+		} else if r.cfg.Scrape.WriteImages {
+			if err := r.download(ctx, r.posterURL(meta.PosterPath), dest); err == nil {
+				posterRel = r.relTo(dir, name)
+				count++
+			} else {
+				warnf("下载海报失败：%s（%v）", it.RelPath, err)
+			}
 		}
 	}
 	if meta.FanartPath != "" {
 		name := base + "fanart.jpg"
 		dest := filepath.Join(dir, name)
-		if r.fileUsable(dest) {
+		if usable(dest) && (!r.force || !r.cfg.Scrape.WriteImages) {
 			fanartRel = r.relTo(dir, name)
-		} else if err := r.download(ctx, r.fanartURL(meta.FanartPath), dest); err == nil {
-			fanartRel = r.relTo(dir, name)
-			count++
-		} else {
-			warnf("下载背景图失败：%s（%v）", it.RelPath, err)
+		} else if r.cfg.Scrape.WriteImages {
+			if err := r.download(ctx, r.fanartURL(meta.FanartPath), dest); err == nil {
+				fanartRel = r.relTo(dir, name)
+				count++
+			} else {
+				warnf("下载背景图失败：%s（%v）", it.RelPath, err)
+			}
 		}
 	}
 	return posterRel, fanartRel, count
@@ -753,24 +791,32 @@ func (r *Runner) download(ctx context.Context, url, dest string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	tmp := dest + ".part"
-	f, err := os.Create(tmp)
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".dl-*")
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(f, io.LimitReader(resp.Body, 20<<20))
-	if cerr := f.Close(); err == nil {
+	tmpPath := tmp.Name()
+	n, err := io.Copy(tmp, io.LimitReader(resp.Body, 20<<20+1))
+	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
-		os.Remove(tmp)
+		os.Remove(tmpPath)
 		return err
 	}
+	if n > 20<<20 {
+		os.Remove(tmpPath)
+		return fmt.Errorf("图片超过 20MB（%d 字节），拒绝写入", n)
+	}
 	if n < 512 {
-		os.Remove(tmp)
+		os.Remove(tmpPath)
 		return fmt.Errorf("图片过小（%d 字节），可能是错误页", n)
 	}
-	return os.Rename(tmp, dest)
+	if err := os.Rename(tmpPath, dest); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 // fileUsable 判断文件是否已存在且看起来是张图。

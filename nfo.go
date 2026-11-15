@@ -175,12 +175,22 @@ func writeNFO(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append([]byte(nfoHeader), body...), 0o644); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".nfo-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(append([]byte(nfoHeader), body...)); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
 		return err
 	}
 	return nil
