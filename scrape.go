@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,6 +104,118 @@ type Scraper interface {
 	// NativeKey 把本地已有的 ID（TMDB 数字 / IMDb tt 号）转成该数据源的 key。
 	// 无法转换时返回空串，调用方会退回搜索。
 	NativeKey(tmdbID int, imdbID string) string
+}
+
+// ErrDailyLimit 表示本轮刮削已达到配置里的每日 API 调用上限。
+var ErrDailyLimit = errors.New("已达到每日刮削上限")
+
+const (
+	quotaDayKV   = "scrape_quota_day"
+	quotaCallsKV = "scrape_quota_calls"
+)
+
+func todayStamp() string { return time.Now().Format("2006-01-02") }
+
+// newQuotaScraper 从数据库恢复当天的已用次数：服务重启、一天内多轮补刮
+// 都不能把额度重新算一遍。
+func newQuotaScraper(db *DB, sc Scraper, limit int) *quotaScraper {
+	q := &quotaScraper{Scraper: sc, db: db, limit: limit, day: todayStamp()}
+	q.reload()
+	return q
+}
+
+func (q *quotaScraper) reload() {
+	if q.db == nil {
+		return
+	}
+	day, _ := q.db.GetKV(quotaDayKV)
+	used := 0
+	if day == todayStamp() {
+		if v, err := q.db.GetKV(quotaCallsKV); err == nil {
+			used, _ = strconv.Atoi(v)
+		}
+	}
+	q.mu.Lock()
+	q.day, q.used = todayStamp(), used
+	q.mu.Unlock()
+}
+
+// quotaScraper 在 Scraper 外面套一层计数，达到 daily_limit 后不再发请求。
+// 计数按接口调用算（重试不单独计），两种数据源用同一套规则；当天已用次数
+// 持久化在 kv 表里。
+type quotaScraper struct {
+	Scraper
+	db    *DB
+	mu    sync.Mutex
+	limit int
+	day   string
+	used  int
+}
+
+func (q *quotaScraper) take() error {
+	today := todayStamp()
+	q.mu.Lock()
+	if today != q.day {
+		q.day, q.used = today, 0
+	}
+	if q.used >= q.limit {
+		q.mu.Unlock()
+		return ErrDailyLimit
+	}
+	q.used++
+	used := q.used
+	q.mu.Unlock()
+	if q.db != nil {
+		// 写失败只影响跨进程的额度记忆，不影响本轮停止
+		_ = q.db.SetKV(quotaDayKV, today)
+		_ = q.db.SetKV(quotaCallsKV, strconv.Itoa(used))
+	}
+	return nil
+}
+
+func (q *quotaScraper) Exhausted() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.used >= q.limit
+}
+
+func (q *quotaScraper) Search(ctx context.Context, query Query) ([]Candidate, error) {
+	if err := q.take(); err != nil {
+		return nil, err
+	}
+	return q.Scraper.Search(ctx, query)
+}
+
+func (q *quotaScraper) Detail(ctx context.Context, key string, kind Kind) (*Meta, error) {
+	if err := q.take(); err != nil {
+		return nil, err
+	}
+	return q.Scraper.Detail(ctx, key, kind)
+}
+
+func (q *quotaScraper) Season(ctx context.Context, key string, season int) ([]EpisodeMeta, error) {
+	if err := q.take(); err != nil {
+		return nil, err
+	}
+	return q.Scraper.Season(ctx, key, season)
+}
+
+// ImageURL / latinTitle 不是 Scraper 接口的一部分，但 Runner 会按可选接口
+// 使用它们。包装层必须原样转发，否则图片下载与目录英文名会静默失效。
+func (q *quotaScraper) ImageURL(path, size string) string {
+	if p, ok := q.Scraper.(interface{ ImageURL(string, string) string }); ok {
+		return p.ImageURL(path, size)
+	}
+	return ""
+}
+
+func (q *quotaScraper) latinTitle(ctx context.Context, id int) string {
+	if p, ok := q.Scraper.(interface {
+		latinTitle(context.Context, int) string
+	}); ok {
+		return p.latinTitle(ctx, id)
+	}
+	return ""
 }
 
 // ---------- 匹配 ----------
@@ -215,6 +328,7 @@ type Runner struct {
 	cfg    *Config
 	db     *DB
 	sc     Scraper
+	quota  *quotaScraper
 	dry    bool
 	force  bool
 	onlyID string
@@ -251,8 +365,13 @@ func epKey(season, episode int) int { return season*10000 + episode }
 
 // NewRunner 构造刮削器。
 func NewRunner(cfg *Config, db *DB, sc Scraper, dry, force bool, onlyID string, limit int) *Runner {
+	var quota *quotaScraper
+	if sc != nil && cfg.Scrape.DailyLimit > 0 {
+		quota = newQuotaScraper(db, sc, cfg.Scrape.DailyLimit)
+		sc = quota
+	}
 	return &Runner{
-		cfg: cfg, db: db, sc: sc,
+		cfg: cfg, db: db, sc: sc, quota: quota,
 		dry: dry, force: force, onlyID: onlyID, limit: limit,
 		shows:  make(map[string]*showState),
 		videos: make(map[string]int),
@@ -278,6 +397,11 @@ var scrapeRunMu sync.Mutex
 func (r *Runner) Run(ctx context.Context) (ScrapeStats, error) {
 	scrapeRunMu.Lock()
 	defer scrapeRunMu.Unlock()
+	// 串行锁内重新读额度：两个 Runner 可能几乎同时构造，后跑的那个
+	// 必须看到先跑的那轮已经用掉的次数。
+	if r.quota != nil {
+		r.quota.reload()
+	}
 	start := time.Now()
 	items, err := r.db.ListForScrape(r.force, r.onlyID, r.limit)
 	if err != nil {
@@ -292,11 +416,15 @@ func (r *Runner) Run(ctx context.Context) (ScrapeStats, error) {
 		logf("dry-run：以下 %d 条会被刮削（不调用 API、不写文件）", len(items))
 	}
 
-	for _, it := range items {
+	for i := range items {
 		if err := ctx.Err(); err != nil {
 			return r.stats, err
 		}
-		r.processItem(ctx, &it)
+		r.processItem(ctx, &items[i])
+		if r.quota != nil && r.quota.Exhausted() && i+1 < len(items) {
+			warnf("已达到每日刮削上限（%d 次 API 调用），剩余 %d 条留到明天", r.cfg.Scrape.DailyLimit, len(items)-i-1)
+			break
+		}
 	}
 
 	r.writeUnmatched()

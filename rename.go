@@ -88,7 +88,9 @@ func (r *Runner) renameToScrapedName(ctx context.Context, it *Item, dir string, 
 func scrapedDirName(ctx context.Context, meta *Meta, sc Scraper) string {
 	name := meta.OriginalTitle
 	if !mostlyLatin(name) {
-		if tc, ok := sc.(*TMDBClient); ok && meta.TmdbID > 0 {
+		if tc, ok := sc.(interface {
+			latinTitle(context.Context, int) string
+		}); ok && meta.TmdbID > 0 {
 			name = tc.latinTitle(ctx, meta.TmdbID)
 		}
 	}
