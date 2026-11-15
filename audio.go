@@ -122,7 +122,7 @@ func defaultAudioTrack(tracks []audioTrack) (audioTrack, bool) {
 }
 
 type audioProbeEntry struct {
-	mtime  int64
+	mtime  int64 // UnixNano：同秒内替换且大小相同的文件也要失效
 	size   int64
 	probed bool
 	tracks []audioTrack
@@ -141,7 +141,7 @@ func (s *Server) audioTracks(it Item) (tracks []audioTrack, probed bool) {
 	audioCacheMu.Lock()
 	c, cached := audioCache[it.ID]
 	audioCacheMu.Unlock()
-	if cached && c.mtime == fi.ModTime().Unix() && c.size == fi.Size() {
+	if cached && c.mtime == fi.ModTime().UnixNano() && c.size == fi.Size() {
 		return c.tracks, true
 	}
 	tracks, err = probeAudioTracks(p)
@@ -152,7 +152,7 @@ func (s *Server) audioTracks(it Item) (tracks []audioTrack, probed bool) {
 		tracks = []audioTrack{}
 	}
 	audioCacheMu.Lock()
-	audioCache[it.ID] = audioProbeEntry{mtime: fi.ModTime().Unix(), size: fi.Size(), probed: true, tracks: tracks}
+	audioCache[it.ID] = audioProbeEntry{mtime: fi.ModTime().UnixNano(), size: fi.Size(), probed: true, tracks: tracks}
 	audioCacheMu.Unlock()
 	return tracks, true
 }
