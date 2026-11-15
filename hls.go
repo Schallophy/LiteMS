@@ -50,6 +50,7 @@ type HLSSession struct {
 	Start    float64
 	Dir      string
 	HasAudio bool
+	VCodec   string // 源视频编码（探一次，Master 复用，避免重复 ffprobe）
 
 	mu     sync.Mutex
 	cmd    *exec.Cmd
@@ -111,25 +112,35 @@ func (h *HLSServer) Start(item, src string, start float64, track int) (*HLSSessi
 		start = keyframeAtOrBefore(src, start)
 	}
 
+	// 先做一次不跑 ffprobe 的快速复用检查：同一位置重复请求不该每次都探测
+	h.mu.Lock()
+	if s := h.byItem[item]; s != nil && !s.exited.Load() && s.Track == track {
+		if d := s.Start - start; d > -2.5 && d < 2.5 {
+			s.touch()
+			h.mu.Unlock()
+			return s, nil
+		}
+	}
+	h.mu.Unlock()
+
+	// ffprobe 在弱存储/网络挂载上可能等到 10 秒超时；不能持全局锁跑，
+	// 否则 Lookup/Ping/其它起播请求全部被堵住。
+	hasAudio := probeChannels(src, track) > 0
+	vcodec := probeVideoCodec(src)
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// 探测期间可能已经有人建好了会话：仍按“可复用则复用”处理
 	if s := h.byItem[item]; s != nil {
-		// ffmpeg 已经自然结束（片尾/出错）的会话不再复用：它不会产出新分段，
-		// 复用会让新起播拿到旧窗口后一直卡住。
-		if s.exited.Load() {
-			h.stopLocked(s)
-		} else if s.Track == track {
+		if !s.exited.Load() && s.Track == track {
 			if d := s.Start - start; d > -2.5 && d < 2.5 {
 				s.touch()
 				return s, nil
 			}
-			h.stopLocked(s)
-		} else {
-			h.stopLocked(s)
 		}
+		h.stopLocked(s)
 	}
 
-	hasAudio := probeChannels(src, track) > 0
 	tok := newToken()
 	dir := filepath.Join(h.dir, tok)
 	for _, sub := range []string{"video", "audio"} {
@@ -139,7 +150,7 @@ func (h *HLSServer) Start(item, src string, start float64, track int) (*HLSSessi
 	}
 	s := &HLSSession{
 		Token: tok, Item: item, Track: track, Src: src, Start: start,
-		Dir: dir, HasAudio: hasAudio, last: time.Now(),
+		Dir: dir, HasAudio: hasAudio, VCodec: vcodec, last: time.Now(),
 	}
 
 	args := []string{
@@ -163,7 +174,7 @@ func (h *HLSServer) Start(item, src string, start float64, track int) (*HLSSessi
 	args = append(args, "-c:v", "copy")
 	// Chromium 的 MSE 只认 hvc1 这个 sample entry，ffmpeg 默认写 hev1，
 	// 会直接 MEDIA_ERR_SRC_NOT_SUPPORTED。HEVC 源必须显式改成 hvc1。
-	if probeVideoCodec(src) == "hevc" {
+	if vcodec == "hevc" {
 		args = append(args, "-tag:v", "hvc1")
 	}
 	if hasAudio {
@@ -288,43 +299,101 @@ func (h *HLSServer) janitor() {
 // 编码串从 init 段的 hvcC/avcC 里解析，保证和码流自洽。
 func (s *HLSSession) Master() string {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.master != "" {
-		return s.master
+		out := s.master
+		s.mu.Unlock()
+		return out
 	}
+	s.mu.Unlock()
 
-	video, audio := "", "mp4a.40.2"
+	// 读 init 段与探测尺寸都不在锁内：ffprobe 可能等满 10 秒，
+	// 持 s.mu 会连带堵住 janitor 的 idle 检查。
+	var initSeg []byte
 	if p := findInitFile(s.Dir); p != "" {
 		if b, err := os.ReadFile(p); err == nil {
-			switch probeVideoCodec(s.Src) {
-			case "hevc":
-				video = hevcCodecString(b)
-			case "h264":
-				video = avcCodecString(b)
-			}
+			initSeg = b
 		}
 	}
-	if video == "" {
-		video = "hvc1.2.4.L150.B0"
+	video := videoCodecString(s.VCodec, initSeg)
+	codecs, codecAttr, audioAttr := "", "", ""
+	if video != "" {
+		codecs = video
+		if s.HasAudio {
+			codecs += ",mp4a.40.2"
+		}
+		codecAttr = ",CODECS=\"" + codecs + "\""
 	}
-	codecs := video
 	media := ""
 	if s.HasAudio {
-		codecs += "," + audio
 		media = "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"audio\",DEFAULT=YES,URI=\"audio/index.m3u8\"\n"
+		audioAttr = ",AUDIO=\"aud\""
 	}
 	res := ""
 	if w, h := probeSize(s.Src); w > 0 {
 		res = fmt.Sprintf(",RESOLUTION=%dx%d", w, h)
 	}
-	audioAttr := ""
-	if s.HasAudio {
-		audioAttr = ",AUDIO=\"aud\""
-	}
-	s.master = "#EXTM3U\n#EXT-X-VERSION:7\n" + media +
-		"#EXT-X-STREAM-INF:BANDWIDTH=8000000,CODECS=\"" + codecs + "\"" + res + audioAttr + "\n" +
+	master := "#EXTM3U\n#EXT-X-VERSION:7\n" + media +
+		"#EXT-X-STREAM-INF:BANDWIDTH=8000000" + codecAttr + res + audioAttr + "\n" +
 		"video/index.m3u8\n"
-	return s.master
+
+	s.mu.Lock()
+	if s.master == "" {
+		s.master = master
+	}
+	out := s.master
+	s.mu.Unlock()
+	return out
+}
+
+// videoCodecString 按源编码生成 RFC 6381 编码串。无法识别时返回空串，
+// 让 master 省掉 CODECS 属性——宁可让 hls.js 从 init 段自行判断，
+// 也不能把 AV1/VP9 谎报成 HEVC。
+func videoCodecString(codec string, initSeg []byte) string {
+	switch codec {
+	case "hevc":
+		if v := hevcCodecString(initSeg); v != "" {
+			return v
+		}
+		return "hvc1.2.4.L150.B0"
+	case "h264":
+		if v := avcCodecString(initSeg); v != "" {
+			return v
+		}
+		return "avc1.42E01E"
+	case "av1":
+		if v := av1CodecString(initSeg); v != "" {
+			return v
+		}
+		return "av01.0.05M.08"
+	case "vp9":
+		return "vp09.00.10.08"
+	case "mpeg4":
+		return "mp4v.20.8"
+	}
+	return ""
+}
+
+// av1CodecString 从 av1C 盒构造 av01.P.LLT.DD。
+func av1CodecString(b []byte) string {
+	i := bytes.Index(b, []byte("av1C"))
+	if i < 0 || i+4+3 > len(b) {
+		return ""
+	}
+	p := b[i+4:]
+	profile := p[1] >> 5
+	level := p[1] & 0x1f
+	tier := byte('M')
+	if p[2]&0x80 != 0 {
+		tier = 'H'
+	}
+	depth := 8
+	if p[2]&0x40 != 0 {
+		depth = 10
+	}
+	if p[2]&0x20 != 0 {
+		depth = 12
+	}
+	return fmt.Sprintf("av01.%d.%02d%c.%02d", profile, level, tier, depth)
 }
 
 // hevcCodecString 从 hvcC 盒构造 RFC 6381 的 HEVC 编码串（hvc1.2.4.L150.B0 这种）。
