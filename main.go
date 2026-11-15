@@ -139,11 +139,20 @@ func cmdScan(args []string) {
 	cfg := loadAndCheck(*cfgPath, false)
 
 	if *reindex {
-		for _, s := range []string{"", "-wal", "-shm"} {
-			if err := os.Remove(cfg.Database.Path + s); err == nil {
-				logf("已删除 %s", cfg.Database.Path+s)
-			}
+		// 不要删库文件：serve 可能正在运行，它的连接会指向已 unlink 的 inode，
+		// 之后扫描/进度各写各的。清空表内容即可达到“从文件系统重建”的效果。
+		db, err := OpenDB(cfg.Database.Path)
+		if err != nil {
+			errf("打开数据库失败：%v", err)
+			os.Exit(1)
 		}
+		if err := db.ResetIndex(); err != nil {
+			db.Close()
+			errf("清空索引失败：%v", err)
+			os.Exit(1)
+		}
+		db.Close()
+		logf("已清空索引（数据库文件保留）")
 	}
 
 	db, err := OpenDB(cfg.Database.Path)
@@ -276,7 +285,6 @@ func cmdScrape(args []string) {
 	}
 }
 
-
 // autoScrape 启动补刮：没刮过的、上次失败的、以及「状态是成功但海报文件实际不在」的条目，
 // 在 serve 启动后自动补一轮。用户不需要记住 scrape 或 --force——重启一次服务就把欠账补上。
 //
@@ -301,8 +309,10 @@ func autoScrape(ctx context.Context, cfg *Config, db *DB) {
 		switch {
 		case it.ScrapedAt == 0, it.ScrapeStatus == "error":
 			ids = append(ids, it.ID)
-		case it.ScrapeStatus != "miss" && it.ScrapeStatus != "manual" && !posterUsable(roots, it):
-			// 元数据有了，海报文件却不在——多半是当时下载中断，捡回来
+		case it.ScrapeStatus != "miss" && it.ScrapeStatus != "manual" &&
+			it.PosterPath != "" && !posterUsable(roots, it):
+			// 只捡「记录里有海报、文件却不见了」的条目。海报路径为空可能是
+			// 数据源本来就没有图，反复重刮只会烧配额。
 			ids = append(ids, it.ID)
 		}
 	}
