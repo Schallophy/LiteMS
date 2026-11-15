@@ -246,6 +246,15 @@ func (s *Server) applySettings(w http.ResponseWriter, r *http.Request, v *settin
 			v.Error = "下载目录里不允许出现 .."
 			return true
 		}
+	}
+	// 服务启动时会把 ~ 展开成 $HOME；重叠判断必须用展开后的真实路径，
+	// 否则「~/Media」与「/home/xxx/Media/Downloads」会被放行，重启后直接起不来。
+	libRoot = ExpandPath(libRoot)
+	for i := range libExtra {
+		libExtra[i] = ExpandPath(libExtra[i])
+	}
+	if dlDir != "" {
+		dlDir = ExpandPath(dlDir)
 		// 下载目录放进库根 = 绕开镜像机制，直接往做种目录写侧车文件；
 		// 与任何媒体根重合都会触发，额外根也要一起校验。
 		for _, r := range append([]string{libRoot}, libExtra...) {
