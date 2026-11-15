@@ -82,15 +82,38 @@ func NewHLSServer(dir string) (*HLSServer, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建实时转码目录失败: %w", err)
 	}
-	// 启动时清掉上次残留的会话目录
+	// 每个进程用独立的实例目录：多个 serve 共用同一个数据库目录时，
+	// 谁启动都不能清掉别人正在写、正在播的分段。崩溃残留下来的目录
+	// （含旧版本直接放在根下的 token 目录）只清理一天以前的。
 	if entries, err := os.ReadDir(dir); err == nil {
 		for _, e := range entries {
-			os.RemoveAll(filepath.Join(dir, e.Name()))
+			if !e.IsDir() {
+				continue
+			}
+			if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > 24*time.Hour {
+				os.RemoveAll(filepath.Join(dir, e.Name()))
+			}
 		}
 	}
-	h := &HLSServer{dir: dir, byItem: map[string]*HLSSession{}, byTok: map[string]*HLSSession{}}
+	root := filepath.Join(dir, "inst-"+newToken())
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, fmt.Errorf("创建实时转码实例目录失败: %w", err)
+	}
+	h := &HLSServer{dir: root, byItem: map[string]*HLSSession{}, byTok: map[string]*HLSSession{}}
 	go h.janitor()
 	return h, nil
+}
+
+// Close 结束所有会话并清掉本实例的分段目录。进程退出前必须调用，
+// 否则 ffmpeg 会变成孤儿进程，继续转码、继续占 CPU。
+func (h *HLSServer) Close() {
+	h.mu.Lock()
+	for _, s := range h.byTok {
+		h.stopLocked(s)
+	}
+	root := h.dir
+	h.mu.Unlock()
+	os.RemoveAll(root)
 }
 
 // Start 为某条目开一个从 start 秒起、使用第 track 条音轨的会话。
@@ -550,6 +573,21 @@ func (s *HLSSession) segmentGone(name string) bool {
 		}
 	}
 	return min >= 0 && n < min
+}
+
+// waitInitFile 等视频 rendition 的 init 段落盘。ffmpeg 用 -var_stream_map 时
+// 文件名叫 init_0.mp4，不能用固定文件名等。
+func waitInitFile(sessionDir string, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if p := findInitFile(sessionDir); p != "" {
+			if fi, err := os.Stat(p); err == nil && fi.Size() > 0 {
+				return true
+			}
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+	return false
 }
 
 // waitFile 等 ffmpeg 把某个文件写出来（客户端可能比转码先到）。

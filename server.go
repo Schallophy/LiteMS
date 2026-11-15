@@ -178,6 +178,7 @@ func RunServer(cfg *Config, db *DB) error {
 	select {
 	case err := <-errCh:
 		close(scanStop)
+		s.closeJobs()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
@@ -187,7 +188,20 @@ func RunServer(cfg *Config, db *DB) error {
 		close(scanStop)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return srv.Shutdown(ctx)
+		shutdownErr := srv.Shutdown(ctx)
+		s.closeJobs()
+		return shutdownErr
+	}
+}
+
+// closeJobs 停掉实时转码与预转码的 ffmpeg。HTTP 服务退出后它们已经没人消费，
+// 不主动结束就会变成孤儿进程继续占 CPU、继续写盘。
+func (s *Server) closeJobs() {
+	if s.hls != nil {
+		s.hls.Close()
+	}
+	if s.tc != nil {
+		s.tc.Close()
 	}
 }
 
@@ -625,6 +639,9 @@ func (s *Server) handleHLS(w http.ResponseWriter, r *http.Request) {
 	// master 是现场生成的（带 CODECS），不是磁盘上的文件
 	if name == "master.m3u8" {
 		waitFile(filepath.Join(sess.Dir, "video", "index.m3u8"), 8*time.Second)
+		// Master 从 init 段解析 CODECS；init 没落盘就生成会退回默认值，
+		// 并被缓存住，后续即使 init 到位也不再更新。
+		waitInitFile(sess.Dir, 8*time.Second)
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(sess.Master()))
@@ -1211,6 +1228,20 @@ func helperPort(listen string) string {
 	return "9876"
 }
 
+// hostForURL 校验 Host 头。命令文本会被用户粘进 shell，Host 里出现引号、
+// 分号、反引号之类就会从「地址」变成「命令」；同时也拒绝导入 userinfo。
+func hostForURL(raw string) (string, bool) {
+	host := strings.TrimSpace(raw)
+	if host == "" || strings.ContainsAny(host, " \t\r\n\"'`\\$&|;<>(){}") {
+		return "", false
+	}
+	u, err := url.Parse("//" + host)
+	if err != nil || u.User != nil || u.Host != host || u.Hostname() == "" || u.Path != "" {
+		return "", false
+	}
+	return host, true
+}
+
 // handleCmd 返回一行可直接粘贴的播放命令（文档 10.4，helper 的降级通道）。
 func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(r.URL.Path, "/api/cmd/")
@@ -1231,7 +1262,11 @@ func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	host := r.Host
+	host, ok := hostForURL(r.Host)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "Host 头非法")
+		return
+	}
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"

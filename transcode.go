@@ -49,9 +49,13 @@ func NewTranscoder(cacheDir string) (*Transcoder, error) {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建转码缓存目录失败: %w", err)
 	}
+	// 只清一天以前的半成品：另一个 serve 实例可能正在写新文件，
+	// 启动时无条件删除会把别人正在转的音轨抹掉。
 	matches, _ := filepath.Glob(filepath.Join(cacheDir, "*.part*"))
 	for _, m := range matches {
-		os.Remove(m)
+		if fi, err := os.Stat(m); err == nil && time.Since(fi.ModTime()) > 24*time.Hour {
+			os.Remove(m)
+		}
 	}
 	if old, _ := filepath.Glob(filepath.Join(cacheDir, "*.mkv")); len(old) > 0 {
 		for _, m := range old {
@@ -341,6 +345,24 @@ func (t *Transcoder) Cancel(id string, track int) bool {
 		c()
 	}
 	return ok
+}
+
+// Close 取消所有运行中的转码，供进程退出时调用。ffmpeg 由 context
+// 取消后杀掉，不留在后台继续占用 CPU 和磁盘。
+func (t *Transcoder) Close() {
+	t.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(t.cancels))
+	for key, c := range t.cancels {
+		cancels = append(cancels, c)
+		delete(t.cancels, key)
+		if j, ok := t.jobs[key]; ok {
+			j.State = "cancelling"
+		}
+	}
+	t.mu.Unlock()
+	for _, c := range cancels {
+		c()
+	}
 }
 
 func (t *Transcoder) run(ctx context.Context, key, id string, track int, src string, srcMod time.Time, durSec float64, job *tcJob, part string) {

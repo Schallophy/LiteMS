@@ -347,7 +347,7 @@ func TestTranscoderUsable(t *testing.T) {
 	}
 }
 
-// 启动清扫要能认出带任务序号的半成品。
+// 启动清扫要能认出带任务序号的半成品，同时不能碰另一个实例正在写的文件。
 func TestTranscoderCleanupParts(t *testing.T) {
 	dir := t.TempDir()
 	cacheDir := filepath.Join(dir, "cache")
@@ -358,10 +358,21 @@ func TestTranscoderCleanupParts(t *testing.T) {
 	if err := os.WriteFile(part, []byte("half"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	fresh := filepath.Join(cacheDir, "0123456789abcdef.a1.m4a.8.part")
+	if err := os.WriteFile(fresh, []byte("half"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(part, past, past); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := NewTranscoder(cacheDir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(part); err == nil {
-		t.Error("启动后残留的半成品应被清掉")
+		t.Error("一天前的半成品应被清掉")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Error("刚写的半成品可能属于另一个实例，不能清掉")
 	}
 }
