@@ -872,7 +872,13 @@ video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;b
     fetch('/api/live/' + ID + '?start=' + Math.max(0, at).toFixed(2) + '&track=' + trackN)
       .then(function(r){ return r.json().then(function(d){ if (!r.ok) throw new Error(d.error || r.status); return d; }); })
       .then(function(d){
-        if (seq !== liveSeq) return;   // 又换了轨/切走了，这份响应已经过期
+        if (seq !== liveSeq) {
+          // 已经切走了：这个会话没人看，立刻收掉，别让 ffmpeg 空转 90 秒
+          if (d && d.token) {
+            fetch('/api/live/' + ID + '?ctl=stop&token=' + encodeURIComponent(d.token), {keepalive: true}).catch(function(){});
+          }
+          return;
+        }
         live = {token: d.token, start: d.start || 0, total: d.total || 0};
         clearNotice();
         if (window.Hls && window.Hls.isSupported()) {

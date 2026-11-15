@@ -29,9 +29,9 @@
       {{if .Sort}}<input type="hidden" name="sort" value="{{.Sort}}">{{end}}
 
       <nav class="filters" aria-label="类型">
-        <a href="/?{{if .Query}}q={{.Query}}&{{end}}{{if .Sort}}sort={{.Sort}}{{end}}"{{if not .Kind}} aria-current="page"{{end}}>全部</a>
-        <a href="/?{{if .Query}}q={{.Query}}&{{end}}kind=movie{{if .Sort}}&sort={{.Sort}}{{end}}"{{if eq .Kind "movie"}} aria-current="page"{{end}}>电影</a>
-        <a href="/?{{if .Query}}q={{.Query}}&{{end}}kind=episode{{if .Sort}}&sort={{.Sort}}{{end}}"{{if eq .Kind "episode"}} aria-current="page"{{end}}>剧集</a>
+        <a href="/?{{if .Query}}q={{urlquery .Query}}&{{end}}{{if .Sort}}sort={{urlquery .Sort}}{{end}}"{{if not .Kind}} aria-current="page"{{end}}>全部</a>
+        <a href="/?{{if .Query}}q={{urlquery .Query}}&{{end}}kind=movie{{if .Sort}}&sort={{urlquery .Sort}}{{end}}"{{if eq .Kind "movie"}} aria-current="page"{{end}}>电影</a>
+        <a href="/?{{if .Query}}q={{urlquery .Query}}&{{end}}kind=episode{{if .Sort}}&sort={{urlquery .Sort}}{{end}}"{{if eq .Kind "episode"}} aria-current="page"{{end}}>剧集</a>
       </nav>
 
       <div class="sort">
@@ -88,11 +88,11 @@
     {{if .Items}}
     <nav class="pager" aria-label="翻页">
       {{if gt .Page 1}}
-      <a href="/?page={{.PrevPage}}{{if .Query}}&q={{.Query}}{{end}}{{if .Kind}}&kind={{.Kind}}{{end}}{{if .Sort}}&sort={{.Sort}}{{end}}">上一页</a>
+      <a href="/?page={{.PrevPage}}{{if .Query}}&q={{urlquery .Query}}{{end}}{{if .Kind}}&kind={{urlquery .Kind}}{{end}}{{if .Sort}}&sort={{urlquery .Sort}}{{end}}">上一页</a>
       {{else}}<span class="off">上一页</span>{{end}}
       <span class="at">第 {{.Page}} 页 · 共 {{.Total}} 部</span>
       {{if gt .NextPage 0}}
-      <a href="/?page={{.NextPage}}{{if .Query}}&q={{.Query}}{{end}}{{if .Kind}}&kind={{.Kind}}{{end}}{{if .Sort}}&sort={{.Sort}}{{end}}">下一页</a>
+      <a href="/?page={{.NextPage}}{{if .Query}}&q={{urlquery .Query}}{{end}}{{if .Kind}}&kind={{urlquery .Kind}}{{end}}{{if .Sort}}&sort={{urlquery .Sort}}{{end}}">下一页</a>
       {{else}}<span class="off">下一页</span>{{end}}
     </nav>
     {{end}}
