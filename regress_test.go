@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,6 +38,11 @@ func TestSubMatchesVideo(t *testing.T) {
 		{"Movie.2020.Extended.chs", "Movie.2020", false},
 		{"Movie.20202.chs", "Movie.2020", false},
 		{"Other.chs", "Movie.2020", false},
+		{"Movie.2020.简中", "Movie.2020", true},
+		{"Movie.2020.繁英双语", "Movie.2020", true},
+		{"Movie.2020.特效字幕", "Movie.2020", true},
+		{"Movie.2020.导演评论", "Movie.2020", false},
+		{"Movie.2020.加长版", "Movie.2020", false},
 	}
 	for _, c := range cases {
 		if got := subMatchesVideo(c.sub, c.video); got != c.want {
@@ -255,5 +263,208 @@ func TestRenameMovesAllTrackCaches(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".litems", "subs", newID, "a.chs.srt")); err != nil {
 		t.Errorf("导入字幕未迁移：%v", err)
+	}
+}
+
+// 媒体根换序时 roots.path 的唯一约束不能挡住对齐（[A,B] → [B,A]）。
+func TestReconcileRootsSupportsReorder(t *testing.T) {
+	dir := t.TempDir()
+	db, err := OpenDB(filepath.Join(dir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rootA := filepath.Join(dir, "A")
+	rootB := filepath.Join(dir, "B")
+	if err := db.SyncRoots([]string{rootA, rootB}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ReconcileRoots([]string{rootB, rootA}); err != nil {
+		t.Fatalf("换序后对齐失败：%v", err)
+	}
+	rows, err := db.sql.Query(`SELECT idx,path FROM roots ORDER BY idx`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	want := []string{filepath.ToSlash(rootB), filepath.ToSlash(rootA)}
+	i := 0
+	for rows.Next() {
+		var idx int
+		var path string
+		if err := rows.Scan(&idx, &path); err != nil {
+			t.Fatal(err)
+		}
+		if i < len(want) && path != want[i] {
+			t.Errorf("idx %d path=%q want %q", idx, path, want[i])
+		}
+		i++
+	}
+	if i != len(want) {
+		t.Errorf("roots 行数 = %d, want %d", i, len(want))
+	}
+}
+
+// 下载目录里的空目录/只含未完成文件的目录不能让镜像流程崩溃。
+func TestSyncDownloadsSkipsEmptyDir(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "lib")
+	dl := filepath.Join(base, "dl")
+	if err := os.MkdirAll(filepath.Join(dl, "empty-torrent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := OpenDB(filepath.Join(base, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cfg := DefaultConfig()
+	cfg.Library.Root = root
+	cfg.Library.DownloadDir = dl
+	created, err := syncDownloads(cfg, db)
+	if err != nil {
+		t.Fatalf("syncDownloads: %v", err)
+	}
+	if created != 0 {
+		t.Errorf("created = %d, want 0", created)
+	}
+}
+
+// master 的 CODECS 必须跟源码编码一致，不能把 AV1/VP9 报成 HEVC。
+func TestVideoCodecStringBySource(t *testing.T) {
+	if got := videoCodecString("av1", nil); got != "av01.0.05M.08" {
+		t.Errorf("av1 fallback = %q", got)
+	}
+	if got := videoCodecString("vp9", nil); got != "vp09.00.10.08" {
+		t.Errorf("vp9 = %q", got)
+	}
+	if got := videoCodecString("unknown", nil); got != "" {
+		t.Errorf("unknown 应返回空串，得到 %q", got)
+	}
+}
+
+// 内嵌凭据必须按 URL 组件转义，密码里的 @ / : 不能截断地址。
+func TestBuildURLsEscapesCredentials(t *testing.T) {
+	cfg := &Config{}
+	cfg.Server.AuthUser = "u"
+	cfg.Server.AuthPass = "p@ss:w/rd"
+	l := &Launcher{cfg: cfg, server: "http://192.168.1.2:7788"}
+	video, sub := l.buildURLs("0123456789abcdef", "chs")
+	u, err := url.Parse(video)
+	if err != nil {
+		t.Fatalf("视频 URL 解析失败：%v", err)
+	}
+	if u.User == nil || u.User.Username() != "u" {
+		t.Fatalf("URL 未带用户名：%s", video)
+	}
+	if pass, _ := u.User.Password(); pass != "p@ss:w/rd" {
+		t.Errorf("密码被破坏：%q", pass)
+	}
+	if u.Host != "192.168.1.2:7788" {
+		t.Errorf("host = %q", u.Host)
+	}
+	if sub != "http://u:p%40ss%3Aw%2Frd@192.168.1.2:7788/sub/0123456789abcdef?lang=chs" {
+		t.Errorf("字幕 URL = %q", sub)
+	}
+}
+
+// write_images=false 时不下载新图，但磁盘上已有的图仍要收进索引。
+func TestSaveMovieImagesHonorsWriteImages(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "Movie")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "poster.jpg"), make([]byte, 1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfg.Library.Root = base
+	cfg.Scrape.WriteImages = false
+	r := &Runner{cfg: cfg, roots: []string{base}, videos: map[string]int{}}
+	it := Item{RelPath: "Movie/x.mkv"}
+	poster, fanart, n := r.saveMovieImages(context.Background(), &it, dir, "x", 1,
+		&Meta{PosterPath: "p.jpg", FanartPath: "f.jpg"})
+	if poster != "Movie/poster.jpg" {
+		t.Errorf("已有海报未进索引：%q", poster)
+	}
+	if fanart != "" || n != 0 {
+		t.Errorf("write_images=false 仍写了图：fanart=%q n=%d", fanart, n)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "fanart.jpg")); err == nil {
+		t.Error("write_images=false 不应生成 fanart.jpg")
+	}
+}
+
+// 设置页必须先展开 ~ 再判断重叠，否则会保存出重启即失败的配置。
+func TestSettingsExpandsPathsBeforeOverlapCheck(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("没有 HOME")
+	}
+	cfg := DefaultConfig()
+	s := &Server{cfg: cfg, settingsToken: "tok"}
+	form := url.Values{
+		"token":    {"tok"},
+		"lib_root": {"~"},
+		"dl_dir":   {filepath.Join(home, "Downloads")},
+		"dl_mode":  {"symlink"},
+		"provider": {cfg.Scrape.Provider},
+		"language": {cfg.Scrape.Language},
+	}
+	req := httptest.NewRequest("POST", "/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	var v settingsView
+	s.applySettings(httptest.NewRecorder(), req, &v, filepath.Join(t.TempDir(), "config.toml"))
+	if !strings.Contains(v.Error, "互相包含") {
+		t.Errorf("展开后重叠应被拒绝，得到：%q", v.Error)
+	}
+}
+
+// 失效根条目不能再返回播放命令；有效条目带认证时凭据必须转义。
+func TestHandleCmdRootAndCredentialEscaping(t *testing.T) {
+	base := t.TempDir()
+	db, err := OpenDB(filepath.Join(base, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	roots := []string{filepath.Join(base, "A"), filepath.Join(base, "B"),
+		filepath.Join(base, "C"), filepath.Join(base, "D")}
+	if err := db.SyncRoots(roots); err != nil {
+		t.Fatal(err)
+	}
+	stale := Item{ID: ItemID(roots[3], "x.mkv"), RootIdx: 3, RelPath: "x.mkv",
+		Kind: KindMovie, Title: "X", SizeBytes: 1, MtimeUnix: 1}
+	if err := db.UpsertItem(&stale); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{db: db, roots: []string{roots[0]}}
+	req := httptest.NewRequest("GET", "/api/cmd/"+stale.ID, nil)
+	rec := httptest.NewRecorder()
+	s.handleCmd(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("失效根条目状态 = %d, want 404", rec.Code)
+	}
+
+	ok := Item{ID: ItemID(roots[0], "y.mkv"), RootIdx: 0, RelPath: "y.mkv",
+		Kind: KindMovie, Title: "Y", SizeBytes: 1, MtimeUnix: 1}
+	if err := db.UpsertItem(&ok); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfg.Server.AuthUser = "u"
+	cfg.Server.AuthPass = "p@ss"
+	s.cfg = cfg
+	req = httptest.NewRequest("GET", "/api/cmd/"+ok.ID, nil)
+	req.Host = "192.168.1.2:7788"
+	rec = httptest.NewRecorder()
+	s.handleCmd(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "u:p%40ss@192.168.1.2:7788") {
+		t.Errorf("命令里的凭据未转义：%s", body)
 	}
 }
