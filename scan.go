@@ -486,7 +486,7 @@ func (s *Scanner) findSubtitles(dir, videoName string) []SubEntry {
 		}
 		lang := NormalizeLang(SubtitleLang(e.Name()))
 		if lang == "" {
-			lang = cjkSubLang(subStem, stem)
+			lang = suffixSubLang(subStem, stem)
 		}
 		out = append(out, SubEntry{Lang: lang, Path: normalizeRel(e.Name())})
 	}
@@ -508,18 +508,68 @@ func subMatchesVideo(subStem, videoStem string) bool {
 	if rest == "" {
 		return true
 	}
-	tokens := strings.FieldsFunc(rest, func(r rune) bool {
-		return r == '.' || r == '_' || r == ' ' ||
-			r == '[' || r == ']' || r == '(' || r == ')'
-	})
-	for _, t := range tokens {
-		t = strings.Trim(t, "-")
+	for _, t := range subSuffixTokens(rest) {
 		if subTokenOK(t) {
 			continue
 		}
 		return false
 	}
 	return true
+}
+
+// subSuffixTokens 切分字幕后缀。下划线不切开：zh_CN / chs_eng 这类写法
+// 要先整体判断，整体不成立时 subTokenOK 再逐段拆。
+func subSuffixTokens(rest string) []string {
+	raw := strings.FieldsFunc(rest, func(r rune) bool {
+		return r == '.' || r == ' ' || r == '&' ||
+			r == '[' || r == ']' || r == '(' || r == ')'
+	})
+	out := raw[:0]
+	for _, t := range raw {
+		if t = strings.Trim(t, "-"); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// localeLang 把地区后缀（zh_CN / en_US / ja-JP…）映射到库内语言码。
+func localeLang(t string) string {
+	u := strings.ToLower(strings.ReplaceAll(strings.Trim(t, "-"), "_", "-"))
+	switch u {
+	case "zh-cn", "zh-sg", "zh-hans":
+		return "chs"
+	case "zh-tw", "zh-hk", "zh-hant":
+		return "cht"
+	}
+	if !strings.Contains(u, "-") {
+		return ""
+	}
+	switch strings.SplitN(u, "-", 2)[0] {
+	case "en":
+		return "eng"
+	case "ja":
+		return "jpn"
+	case "ko":
+		return "kor"
+	case "fr":
+		return "fre"
+	case "de":
+		return "ger"
+	case "es":
+		return "spa"
+	case "it":
+		return "ita"
+	case "ru":
+		return "rus"
+	case "pt":
+		return "por"
+	case "th":
+		return "tha"
+	case "vi":
+		return "vie"
+	}
+	return ""
 }
 
 // subTokenOK 判断一个后缀 token 是否为字幕语言/属性标记。
@@ -531,9 +581,31 @@ var subLangRunes = map[rune]bool{
 }
 
 func subTokenOK(t string) bool {
+	t = strings.Trim(t, "-")
 	if t == "" || t == "forced" || t == "sdh" || t == "cc" ||
 		t == "chinese" || t == "english" || t == "japanese" || t == "korean" ||
 		subLangs[t] {
+		return true
+	}
+	if u := strings.ReplaceAll(t, "_", "-"); u != t {
+		if subLangs[u] || localeLang(u) != "" {
+			return true
+		}
+		// chs_eng / 简中_eng：整体不认识时按段拆开，每段都得是语言标记
+		if strings.Contains(t, "_") {
+			ok := true
+			for _, p := range strings.Split(t, "_") {
+				if !subTokenOK(p) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return true
+			}
+		}
+	}
+	if localeLang(t) != "" {
 		return true
 	}
 	// 纯中文 token 只允许由语言/字幕相关字组成：「中文字幕」「简英双语」通过，
@@ -559,18 +631,23 @@ var cjkLangTokens = map[string]string{
 	"英语": "eng", "英": "eng", "日语": "jpn", "日": "jpn", "韩语": "kor", "韩": "kor",
 }
 
-func cjkSubLang(subStem, videoStem string) string {
+// suffixSubLang 从字幕后缀推断语言码：中文写法（简中 / 繁体）、地区码
+// （zh_CN / en_US）以及普通语言码都按同一套 token 规则处理。
+func suffixSubLang(subStem, videoStem string) string {
 	a, b := strings.ToLower(subStem), strings.ToLower(videoStem)
 	if !strings.HasPrefix(a, b) {
 		return ""
 	}
 	rest := strings.TrimLeft(a[len(b):], ".-_ []()")
-	for _, t := range strings.FieldsFunc(rest, func(r rune) bool {
-		return r == '.' || r == '_' || r == ' ' ||
-			r == '[' || r == ']' || r == '(' || r == ')'
-	}) {
-		if l, ok := cjkLangTokens[strings.Trim(t, "-")]; ok {
+	for _, t := range subSuffixTokens(rest) {
+		if l, ok := cjkLangTokens[t]; ok {
 			return l
+		}
+		if l := localeLang(t); l != "" {
+			return l
+		}
+		if subLangs[t] {
+			return NormalizeLang(t)
 		}
 	}
 	return ""

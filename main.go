@@ -136,6 +136,11 @@ func cmdScan(args []string) {
 		os.Exit(2)
 	}
 
+	if *reindex && *dry {
+		errf("--reindex 会清空索引，不能与 --dry-run 同用")
+		os.Exit(2)
+	}
+
 	cfg := loadAndCheck(*cfgPath, false)
 
 	if *reindex {
