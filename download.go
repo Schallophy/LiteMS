@@ -317,6 +317,11 @@ func syncDownloads(cfg *Config, db *DB) (int, error) {
 			warnf("下载镜像：跳过 %s（%v）", name, err)
 			continue
 		}
+		// 空目录、或只有未完成文件的目录没有任何可镜像内容。必须在这里跳过：
+		// 后面「目标是否已存在」的判定要取 items[0]。
+		if len(items) == 0 {
+			continue
+		}
 		// 推导的目标不在、又没有记录过改名 → 找现居目录并记下来
 		if dirName == "" {
 			if _, err := os.Lstat(items[0][1]); err != nil {
